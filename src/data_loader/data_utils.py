@@ -2,7 +2,7 @@ import cv2
 import albumentations as A
 import numpy as np
 
-base_aug_policy_dict = {
+base_augmentation_policy_dict = {
     "positional": True,
     "noise": True,
     "elastic": True,

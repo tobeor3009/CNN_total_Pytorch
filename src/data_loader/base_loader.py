@@ -14,15 +14,15 @@ import albumentations as A
 class BaseDataset(data.Dataset):
 
     def __init__(self):
-        self.image_path_dict = None
-        self.data_on_memory_dict = None
+        self.image_path_list = None
+        self.data_on_memory_list = None
         self.on_memory = False
         self.data_len = None
-        self.data_index_dict = None
+        self.data_index_list = None
 
     def __len__(self):
         if self.data_len is None:
-            self.data_len = len(self.image_path_dict)
+            self.data_len = len(self.image_path_list)
 
         return self.data_len
 
@@ -39,13 +39,16 @@ class BaseDataset(data.Dataset):
         progressbar_displayed = progressbar.ProgressBar(widgets=widgets,
                                                         maxval=len(self)).start()
         for index, data_tuple in enumerate(self):
-            self.data_on_memory_dict[index] = data_tuple
+            self.data_on_memory_list[index] = data_tuple
             progressbar_displayed.update(value=index + 1)
         self.is_data_ready = True
         progressbar_displayed.finish()
 
-    def check_class_dict_cached(self):
-        for _, value in self.class_dict.items():
+    def check_class_list_cached(self):
+        for value in self.class_list:
             if value is None:
                 return False
         return True
+
+    def shuffle(self):
+        self.data_index_list = syncron_shuffle(self.data_index_list)
