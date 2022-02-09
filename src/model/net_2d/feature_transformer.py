@@ -98,17 +98,19 @@ class CNNFeatureTransformer(nn.Module):
         )
 
     def forward(self, input_tensor):
+        batch_size = input_tensor.size(0)
         # input_tensor.shape: [B, C, Z, H, W]
         # feature_tensor.shape: [B*Z, C, H, W]
         feature_tensor = rearrange(input_tensor, 'b c z h w-> (b z) c h w')
         # feature_tensor.shape: [B*Z, C, H, W]
         feature_tensor = self.feature_model(feature_tensor)
+        # feature_tensor.shape: [B, Z, H, W, C]
+        feature_tensor = rearrange(
+            input_tensor, '(b z) c h w-> b z h w c', b=batch_size)
         # feature_tensor.shape: [B, (H*W*Z), C]
-        feature_tensor = rearrange(input_tensor, 'b c z h w-> (b z) c h w')
-
         feature_tensor = torch.flatten(feature_tensor,
-                                       start_dim=0, end_dim=- 1)
-        # transfomer_tensor.shape: [B, H * W, C]
+                                       start_dim=1, end_dim=3)
+        # transfomer_tensor.shape: [B, H*W*Z, C]
         transfomer_tensor = self.attn_layer_sequence(feature_tensor)
         # transfomer_tensor.shape: [B, num_class]
         output_tensor = self.final_linear_sequence(transfomer_tensor)
@@ -121,6 +123,7 @@ class CNNFeatureTransformer2D(CNNFeatureTransformer):
         super().__init__(*args, **kwargs)
 
     def forward(self, input_tensor):
+        batch_size = input_tensor.size(0)
         # input_tensor.shape: [B, 3*Z, H, W]
         # feature_tensor.shape: [B, C, H, W]
         feature_tensor = self.feature_model(input_tensor)
