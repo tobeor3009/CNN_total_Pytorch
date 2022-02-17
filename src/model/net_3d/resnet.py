@@ -111,6 +111,7 @@ class ResNet(nn.Module):
                  no_max_pool=False,
                  shortcut_type='B',
                  widen_factor=1.0,
+                 include_head=True,
                  n_classes=400):
         super().__init__()
 
@@ -118,7 +119,7 @@ class ResNet(nn.Module):
 
         self.in_planes = block_inplanes[0]
         self.no_max_pool = no_max_pool
-
+        self.include_head = include_head
         self.conv1 = nn.Conv3d(n_input_channels,
                                self.in_planes,
                                kernel_size=(conv1_t_size, 7, 7),
@@ -146,8 +147,9 @@ class ResNet(nn.Module):
                                        shortcut_type,
                                        stride=2)
 
-        self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
-        self.fc = nn.Linear(block_inplanes[3] * block.expansion, n_classes)
+        if self.include_head == True:
+            self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+            self.fc = nn.Linear(block_inplanes[3] * block.expansion, n_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
@@ -206,10 +208,10 @@ class ResNet(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
 
-        x = self.avgpool(x)
-
-        x = x.view(x.size(0), -1)
-        x = self.fc(x)
+        if self.include_head == True:
+            x = self.avgpool(x)
+            x = x.view(x.size(0), -1)
+            x = self.fc(x)
 
         return x
 
