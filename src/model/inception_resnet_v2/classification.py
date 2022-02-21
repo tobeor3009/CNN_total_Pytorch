@@ -8,7 +8,8 @@ from einops import rearrange
 class InceptionResNetV2Transformer3D(nn.Module):
     def __init__(self, n_input_channels, block_size=16,
                  padding='valid', z_channel_preserve=True,
-                 dropout_proba=0.3, num_class=2, include_context=False):
+                 dropout_proba=0.3, num_class=2, include_context=False,
+                 use_base=False):
         super().__init__()
         self.base_model = InceptionResNetV23D(n_input_channels=n_input_channels, block_size=block_size,
                                               padding=padding, z_channel_preserve=z_channel_preserve,
@@ -21,13 +22,21 @@ class InceptionResNetV2Transformer3D(nn.Module):
         # current feature shape: [3072 14 14]
         # current feature shape: [768 28 28]
         # current feature shape: [768 784]
-        attn_dim_list = [96 for _ in range(6)]
-        num_head_list = [8 for _ in range(6)]
-        for attn_dim, num_head in zip(attn_dim_list, num_head_list):
-            attn_layer = TransformerEncoder(heads=num_head, dim_head=attn_dim,
-                                            dropout=dropout_proba)
-            transformer_layer_list.append(attn_layer)
-        self.transformer_encoder = nn.Sequential(*transformer_layer_list)
+        # current feature shape: [784 768]
+        if not use_base:
+            attn_dim_list = [96 for _ in range(6)]
+            num_head_list = [8 for _ in range(6)]
+            for attn_dim, num_head in zip(attn_dim_list, num_head_list):
+                attn_layer = TransformerEncoder(heads=num_head, dim_head=attn_dim,
+                                                dropout=dropout_proba)
+                transformer_layer_list.append(attn_layer)
+        else:
+            self.transformer_encoder = nn.Sequential(*transformer_layer_list)
+
+            encoder_layers = nn.TransformerEncoderLayer(d_model=768,
+                                                        nhead=num_head_list[0], dim_feedforward=attn_dim_list[0],
+                                                        dropout=0.1)
+            self.transformer_encoder = nn.TransformerEncoder(encoder_layers, 6)
 
         self.final_linear_sequence = nn.Sequential(
             nn.Linear(768, 512),  # 512?
