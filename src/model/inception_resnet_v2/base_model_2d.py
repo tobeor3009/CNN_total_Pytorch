@@ -31,40 +31,39 @@ class ConvBlock2D(nn.Module):
         return act
 
 
-# TBD: layer Naming Issue
-class Inception_Resnet_Block(nn.Module):
+class Inception_Resnet_Block2D(nn.Module):
     def __init__(self, in_channels, scale, block_type,
                  activation='relu6', include_context=False, context_head_nums=8):
         super().__init__()
         if block_type == 'block35':
             branch_0 = ConvBlock2D(in_channels, 32, 1)
-            branch_1 = nn.ModuleDict({
-                'branch_1_1': ConvBlock2D(in_channels, 32, 1),
-                'branch_1_2': ConvBlock2D(32, 32, 3)
-            })
-            branch_2 = nn.ModuleDict({
-                'branch_2_1': ConvBlock2D(in_channels, 32, 1),
-                'branch_2_2': ConvBlock2D(32, 48, 3),
-                'branch_2_3': ConvBlock2D(48, 64, 3)
-            })
+            branch_1 = nn.Sequential(
+                ConvBlock2D(in_channels, 32, 1),
+                ConvBlock2D(32, 32, 3)
+            )
+            branch_2 = nn.Sequential(
+                ConvBlock2D(in_channels, 32, 1),
+                ConvBlock2D(32, 48, 3),
+                ConvBlock2D(48, 64, 3)
+            )
             mixed_channel = 128
             branches = [branch_0, branch_1, branch_2]
         elif block_type == 'block17':
             branch_0 = ConvBlock2D(in_channels, 192, 1)
-            branch_1 = nn.ModuleDict({
-                'branch_1_1': ConvBlock2D(in_channels, 128, 1),
-                'branch_1_2': ConvBlock2D(128, 160, [1, 7]),
-                'branch_1_3': ConvBlock2D(160, 192, [7, 1])
-            })
+            branch_1 = nn.Sequential(
+                ConvBlock2D(in_channels, 128, 1),
+                ConvBlock2D(128, 160, [1, 7]),
+                ConvBlock2D(160, 192, [7, 1])
+            )
             mixed_channel = 384
             branches = [branch_0, branch_1]
         elif block_type == 'block8':
             branch_0 = ConvBlock2D(in_channels, 192, 1)
-            branch_1 = nn.ModuleDict({
-                'branch_1_1': ConvBlock2D(in_channels, 192, 1),
-                'branch_1_2': ConvBlock2D(192, 224, [1, 3]),
-                'branch_1_3': ConvBlock2D(224, 256, [3, 1])
-            })
+            branch_1 = nn.Sequential(
+                ConvBlock2D(in_channels, 192, 1),
+                ConvBlock2D(192, 224, [1, 3]),
+                ConvBlock2D(224, 256, [3, 1])
+            )
             mixed_channel = 448
             branches = [branch_0, branch_1]
         else:
@@ -134,9 +133,9 @@ class InceptionResNetV2(nn.Module):
         self.mixed_5b = ConcatBlock(mixed_5b_branches)
         # 10x block35 (Inception-ResNet-A block): 35 x 35 x 320
         self.block_35 = nn.Sequential(*[
-            Inception_Resnet_Block(in_channels=320, scale=0.17,
-                                   block_type="block35",
-                                   include_context=include_context)
+            Inception_Resnet_Block2D(in_channels=320, scale=0.17,
+                                     block_type="block35",
+                                     include_context=include_context)
             for _ in range(1, 11)
         ])
         # Mixed 6a (Reduction-A block): 17 x 17 x 1088
@@ -153,9 +152,9 @@ class InceptionResNetV2(nn.Module):
         self.mixed_6a = ConcatBlock(mixed_6a_branches)
         # 20x block17 (Inception-ResNet-B block): 17 x 17 x 1088
         self.block_17 = nn.Sequential(*[
-            Inception_Resnet_Block(in_channels=1088, scale=0.1,
-                                   block_type="block17",
-                                   include_context=(include_context and block_idx == 20))
+            Inception_Resnet_Block2D(in_channels=1088, scale=0.1,
+                                     block_type="block17",
+                                     include_context=(include_context and block_idx == 20))
             for block_idx in range(1, 21)
         ])
         # Mixed 7a (Reduction-B block): 8 x 8 x 2080
@@ -179,9 +178,9 @@ class InceptionResNetV2(nn.Module):
         self.mixed_7a = ConcatBlock(mixed_7a_branches)
         # 10x block8 (Inception-ResNet-C block): 8 x 8 x 2080
         self.block_8 = nn.Sequential(*[
-            Inception_Resnet_Block(in_channels=2080, scale=0.2,
-                                   block_type="block8",
-                                   include_context=(include_context and block_idx == 10))
+            Inception_Resnet_Block2D(in_channels=2080, scale=0.2,
+                                     block_type="block8",
+                                     include_context=(include_context and block_idx == 10))
             for block_idx in range(1, 11)
         ])
         # Final convolution block: 8 x 8 x 1536
