@@ -1,5 +1,5 @@
 from .base_model_3d import InceptionResNetV2 as InceptionResNetV23D
-from .layers import TransformerEncoder
+from .layers import TransformerEncoder, PositionalEncoding
 from torch import nn
 from einops import rearrange
 
@@ -7,7 +7,7 @@ from einops import rearrange
 class InceptionResNetV2Transformer3D(nn.Module):
     def __init__(self, n_input_channels, block_size=16,
                  padding='valid', z_channel_preserve=True,
-                 dropout_proba=0.3, num_class=2, include_context=False,
+                 dropout_proba=0.1, num_class=2, include_context=False,
                  use_base=False):
         super().__init__()
         self.base_model = InceptionResNetV23D(n_input_channels=n_input_channels, block_size=block_size,
@@ -22,19 +22,22 @@ class InceptionResNetV2Transformer3D(nn.Module):
         # current feature shape: [768 28 28]
         # current feature shape: [768 784]
         # current feature shape: [784 768]
+        attn_dim_list = [96 for _ in range(6)]
+        num_head_list = [8 for _ in range(6)]
+        inner_dim = attn_dim_list[0] * num_head_list[0]
+        self.positional_encoding = PositionalEncoding(d_model=inner_dim,
+                                                      dropout=dropout_proba)
         if not use_base:
-            attn_dim_list = [96 for _ in range(6)]
-            num_head_list = [8 for _ in range(6)]
             for attn_dim, num_head in zip(attn_dim_list, num_head_list):
                 attn_layer = TransformerEncoder(heads=num_head, dim_head=attn_dim,
                                                 dropout=dropout_proba)
                 transformer_layer_list.append(attn_layer)
-        else:
             self.transformer_encoder = nn.Sequential(*transformer_layer_list)
+        else:
 
             encoder_layers = nn.TransformerEncoderLayer(d_model=768,
                                                         nhead=num_head_list[0], dim_feedforward=attn_dim_list[0],
-                                                        dropout=0.1)
+                                                        dropout=dropout_proba)
             self.transformer_encoder = nn.TransformerEncoder(encoder_layers, 6)
 
         self.final_linear_sequence = nn.Sequential(
@@ -53,6 +56,7 @@ class InceptionResNetV2Transformer3D(nn.Module):
         x = rearrange(x, 'b c z h w -> b (c z) h w')
         x = self.pixel_shuffle(x)
         x = rearrange(x, 'b c h w -> b (h w) c')
+        x = self.positional_encoding(x)
         x = self.transformer_encoder(x)
         x = x.mean(1)
         output = self.final_linear_sequence(x)
