@@ -1,4 +1,3 @@
-from turtle import forward
 from .base_model_3d import InceptionResNetV2 as InceptionResNetV23D
 from .layers import TransformerEncoder
 from torch import nn
