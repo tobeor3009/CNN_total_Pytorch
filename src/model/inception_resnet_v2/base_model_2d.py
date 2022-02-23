@@ -108,7 +108,7 @@ class InceptionResNetV2(nn.Module):
             'stem_layer_1': ConvBlock2D(n_input_channels, 32, 3, stride=2, padding=padding),
             'stem_layer_2': ConvBlock2D(32, 32, 3, padding=padding),
             'stem_layer_3': ConvBlock2D(32, 64, 3),
-            'stem_layer_4': nn.MaxPool2d(3, stride=2, padding=padding),
+            'stem_layer_4': nn.MaxPool2d(3, stride=2, padding=pool_3x3_padding),
             'stem_layer_5': ConvBlock2D(64, 80, 1, padding=padding),
             'stem_layer_6': ConvBlock2D(80, 192, 3, padding=padding),
             'stem_layer_7': nn.MaxPool2d(3, stride=2, padding=pool_3x3_padding)
