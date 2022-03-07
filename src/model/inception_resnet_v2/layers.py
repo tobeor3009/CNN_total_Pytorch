@@ -4,6 +4,8 @@ import torch
 from torch import nn
 from einops import rearrange
 
+INPLACE = False
+
 
 class LambdaLayer(nn.Module):
     def __init__(self, lambd):
@@ -101,19 +103,25 @@ class TransformerEncoder(nn.Module):
         self.attn_dropout = nn.Dropout(dropout)
         self.attn_norm = nn.LayerNorm(inner_dim, eps=1e-6)
         self.ffpn_dense_1 = nn.Linear(inner_dim, inner_dim * 4, bias=False)
+        self.ffpn_act_1 = nn.ReLU6(inplace=INPLACE)
+        self.ffpn_dropout_1 = nn.Dropout(dropout)
         self.ffpn_dense_2 = nn.Linear(inner_dim * 4, inner_dim, bias=False)
-        self.ffpn_dropout = nn.Dropout(dropout)
+        self.ffpn_act_2 = nn.ReLU6(inplace=INPLACE)
+        self.ffpn_dropout_2 = nn.Dropout(dropout)
         self.ffpn_norm = nn.LayerNorm(inner_dim, eps=1e-6)
 
     def forward(self, x):
+
         attn = self.attn(x)
         attn = self.attn_dropout(attn)
         attn = self.attn_norm(x + attn)
 
         out = self.ffpn_dense_1(attn)
+        out = self.ffpn_act_1(out)
+        out = self.ffpn_dropout_1(out)
         out = self.ffpn_dense_2(out)
-        out = self.ffpn_dropout(out)
-        out = self.ffpn_dropout(out)
+        out = self.ffpn_act_2(out)
+        out = self.ffpn_dropout_2(out)
         out = self.ffpn_norm(attn + out)
 
         return out
@@ -131,9 +139,11 @@ class TransformerEncoder2D(TransformerEncoder):
         attn = self.attn_norm(x + attn)
 
         out = self.ffpn_dense_1(attn)
+        out = self.ffpn_act_1(out)
+        out = self.ffpn_dropout_1(out)
         out = self.ffpn_dense_2(out)
-        out = self.ffpn_dropout(out)
-        out = self.ffpn_dropout(out)
+        out = self.ffpn_act_2(out)
+        out = self.ffpn_dropout_2(out)
         out = self.ffpn_norm(attn + out)
         out = rearrange(out, 'b (h w) c -> b c h w',
                         h=H, w=W)
@@ -152,9 +162,11 @@ class TransformerEncoder3D(TransformerEncoder):
         attn = self.attn_norm(x + attn)
 
         out = self.ffpn_dense_1(attn)
+        out = self.ffpn_act_1(out)
+        out = self.ffpn_dropout_1(out)
         out = self.ffpn_dense_2(out)
-        out = self.ffpn_dropout(out)
-        out = self.ffpn_dropout(out)
+        out = self.ffpn_act_2(out)
+        out = self.ffpn_dropout_2(out)
         out = self.ffpn_norm(attn + out)
         out = rearrange(out, 'b (z h w) c -> b c z h w',
                         z=Z, h=H, w=W)
