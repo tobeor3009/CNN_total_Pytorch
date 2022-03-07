@@ -1,7 +1,6 @@
 from torch import nn
-
 from .layers import LambdaLayer, ConcatBlock
-
+from .cbam import CBAM
 INPLACE = False
 
 
@@ -18,7 +17,6 @@ class ConvBlock2D(nn.Module):
             self.norm = nn.BatchNorm2d(num_features=out_channels, affine=False)
         else:
             self.norm = nn.Identity()
-
         if activation == 'relu6':
             self.act = nn.ReLU6(inplace=INPLACE)
         elif activation is None:
@@ -33,8 +31,10 @@ class ConvBlock2D(nn.Module):
 
 class Inception_Resnet_Block2D(nn.Module):
     def __init__(self, in_channels, scale, block_type,
-                 activation='relu6', include_context=False, context_head_nums=8):
+                 activation='relu6', include_cbam=True,
+                 include_context=False, context_head_nums=8):
         super().__init__()
+        self.include_cbam = include_cbam
         if block_type == 'block35':
             branch_0 = ConvBlock2D(in_channels, 32, 1)
             branch_1 = nn.Sequential(
@@ -74,10 +74,12 @@ class Inception_Resnet_Block2D(nn.Module):
         # TBD: Name?
         self.up = ConvBlock2D(mixed_channel, in_channels, 1,
                               activation=None, bias=True)
+        if self.include_cbam:
+            self.cbam = CBAM(gate_channels=in_channels,
+                             reduction_ratio=16)
         # TBD: implement of include_context
         self.residual_add = LambdaLayer(
             lambda inputs: inputs[0] + inputs[1] * scale)
-
         if activation == 'relu6':
             self.act = nn.ReLU6(inplace=INPLACE)
         elif activation is None:
@@ -86,15 +88,16 @@ class Inception_Resnet_Block2D(nn.Module):
     def forward(self, x):
         mixed = self.mixed(x)
         up = self.up(mixed)
+        if self.include_cbam:
+            up = self.cbam(up)
         residual_add = self.residual_add([x, up])
         act = self.act(residual_add)
-
         return act
-
-
 # TBD
 # add Skip Connection output
 # implement of include_context with transformer
+
+
 class InceptionResNetV2(nn.Module):
     def __init__(self, n_input_channels,
                  padding='valid', include_context=False):
@@ -190,7 +193,6 @@ class InceptionResNetV2(nn.Module):
         stem = input_tensor
         for layer_name, layer in self.stem.items():
             stem = layer(stem)
-
         mixed_5b = self.mixed_5b(stem)
         block_35 = self.block_35(mixed_5b)
         mixed_6a = self.mixed_6a(block_35)
@@ -198,5 +200,4 @@ class InceptionResNetV2(nn.Module):
         mixed_7a = self.mixed_7a(block_17)
         block_8 = self.block_8(mixed_7a)
         output = self.final_conv(block_8)
-
         return output
