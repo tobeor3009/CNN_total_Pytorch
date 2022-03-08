@@ -105,6 +105,7 @@ class InceptionResNetV2(nn.Module):
         if padding == 'valid':
             pool_3x3_padding = 0
         elif padding == 'same':
+            padding = 1
             pool_3x3_padding = 1
 
         if z_channel_preserve:
@@ -116,7 +117,7 @@ class InceptionResNetV2(nn.Module):
             'stem_layer_1': ConvBlock3D(n_input_channels, block_size * 2, 3, stride=z_stride, padding=padding),
             'stem_layer_2': ConvBlock3D(block_size * 2, block_size * 2, 3, padding=padding),
             'stem_layer_3': ConvBlock3D(block_size * 2, block_size * 4, 3),
-            'stem_layer_4': nn.MaxPool3d(3, stride=2, padding=pool_3x3_padding),
+            'stem_layer_4': nn.MaxPool3d(3, stride=z_stride, padding=pool_3x3_padding),
             'stem_layer_5': ConvBlock3D(block_size * 4, block_size * 5, 1, padding=padding),
             'stem_layer_6': ConvBlock3D(block_size * 5, block_size * 12, 3, padding=padding),
             'stem_layer_7': nn.MaxPool3d(3, stride=z_stride, padding=pool_3x3_padding)

@@ -27,17 +27,18 @@ class InceptionResNetV2Transformer3D(nn.Module):
             attn_dim_list = [block_size * 12 for _ in range(6)]
             num_head_list = [8 for _ in range(6)]
             if not use_base:
-                self.positional_encoding = PositionalEncoding(d_model=2 * 14 * 14,
+                self.positional_encoding = PositionalEncoding(d_model=8 * 14 * 14,
                                                               dropout=dropout_proba)
                 self.transformer_encoder = Reformer(
                     dim=feature_channel_num,
                     depth=6,
                     heads=8,
+                    bucket_size=98,
                     lsh_dropout=0.1,
                     causal=True
                 )
             else:
-                self.positional_encoding = PositionalEncoding(d_model=2 * 14 * 14,
+                self.positional_encoding = PositionalEncoding(d_model=8 * 14 * 14,
                                                               dropout=dropout_proba)
                 encoder_layers = nn.TransformerEncoderLayer(d_model=feature_channel_num,
                                                             nhead=num_head_list[0], dim_feedforward=attn_dim_list[0],
@@ -46,7 +47,7 @@ class InceptionResNetV2Transformer3D(nn.Module):
                     encoder_layers, 6)
         else:
             self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
-            feature_channel_num = 1536
+            feature_channel_num = block_size * 96
         self.final_linear_sequence = nn.Sequential(
             nn.Linear(feature_channel_num, 512),  # 512?
             nn.Dropout(dropout_proba),
