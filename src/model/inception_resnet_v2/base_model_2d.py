@@ -30,41 +30,41 @@ class ConvBlock2D(nn.Module):
 
 
 class Inception_Resnet_Block2D(nn.Module):
-    def __init__(self, in_channels, scale, block_type,
+    def __init__(self, in_channels, scale, block_type, block_size=16,
                  activation='relu6', include_cbam=True,
                  include_context=False, context_head_nums=8):
         super().__init__()
         self.include_cbam = include_cbam
         if block_type == 'block35':
-            branch_0 = ConvBlock2D(in_channels, 32, 1)
+            branch_0 = ConvBlock2D(in_channels, block_size * 2, 1)
             branch_1 = nn.Sequential(
-                ConvBlock2D(in_channels, 32, 1),
-                ConvBlock2D(32, 32, 3)
+                ConvBlock2D(in_channels, block_size * 2, 1),
+                ConvBlock2D(block_size * 2, block_size * 2, 3)
             )
             branch_2 = nn.Sequential(
-                ConvBlock2D(in_channels, 32, 1),
-                ConvBlock2D(32, 48, 3),
-                ConvBlock2D(48, 64, 3)
+                ConvBlock2D(in_channels, block_size * 2, 1),
+                ConvBlock2D(block_size * 2, block_size * 3, 3),
+                ConvBlock2D(block_size * 3, block_size * 4, 3)
             )
-            mixed_channel = 128
+            mixed_channel = block_size * 8
             branches = [branch_0, branch_1, branch_2]
         elif block_type == 'block17':
-            branch_0 = ConvBlock2D(in_channels, 192, 1)
+            branch_0 = ConvBlock2D(in_channels, block_size * 12, 1)
             branch_1 = nn.Sequential(
-                ConvBlock2D(in_channels, 128, 1),
-                ConvBlock2D(128, 160, [1, 7]),
-                ConvBlock2D(160, 192, [7, 1])
+                ConvBlock2D(in_channels, block_size * 8, 1),
+                ConvBlock2D(block_size * 8, block_size * 10, [1, 7]),
+                ConvBlock2D(block_size * 10, block_size * 12, [7, 1])
             )
-            mixed_channel = 384
+            mixed_channel = block_size * 24
             branches = [branch_0, branch_1]
         elif block_type == 'block8':
-            branch_0 = ConvBlock2D(in_channels, 192, 1)
+            branch_0 = ConvBlock2D(in_channels, block_size * 12, 1)
             branch_1 = nn.Sequential(
-                ConvBlock2D(in_channels, 192, 1),
-                ConvBlock2D(192, 224, [1, 3]),
-                ConvBlock2D(224, 256, [3, 1])
+                ConvBlock2D(in_channels, block_size * 12, 1),
+                ConvBlock2D(block_size * 12, block_size * 14, [1, 3]),
+                ConvBlock2D(block_size * 14, block_size * 16, [3, 1])
             )
-            mixed_channel = 448
+            mixed_channel = block_size * 28
             branches = [branch_0, branch_1]
         else:
             raise ValueError('Unknown Inception-ResNet block type. '
@@ -99,7 +99,7 @@ class Inception_Resnet_Block2D(nn.Module):
 
 
 class InceptionResNetV2(nn.Module):
-    def __init__(self, n_input_channels,
+    def __init__(self, n_input_channels, block_size=16,
                  padding='valid', include_context=False):
         super().__init__()
         if padding == 'valid':
@@ -108,45 +108,47 @@ class InceptionResNetV2(nn.Module):
             pool_3x3_padding = 1
         # Stem block
         self.stem = nn.ModuleDict({
-            'stem_layer_1': ConvBlock2D(n_input_channels, 32, 3, stride=2, padding=padding),
-            'stem_layer_2': ConvBlock2D(32, 32, 3, padding=padding),
-            'stem_layer_3': ConvBlock2D(32, 64, 3),
+            'stem_layer_1': ConvBlock2D(n_input_channels, block_size * 2, 3, stride=2, padding=padding),
+            'stem_layer_2': ConvBlock2D(block_size * 2, block_size * 2, 3, padding=padding),
+            'stem_layer_3': ConvBlock2D(block_size * 2, block_size * 4, 3),
             'stem_layer_4': nn.MaxPool2d(3, stride=2, padding=pool_3x3_padding),
-            'stem_layer_5': ConvBlock2D(64, 80, 1, padding=padding),
-            'stem_layer_6': ConvBlock2D(80, 192, 3, padding=padding),
+            'stem_layer_5': ConvBlock2D(block_size * 4, block_size * 5, 1, padding=padding),
+            'stem_layer_6': ConvBlock2D(block_size * 5, block_size * 12, 3, padding=padding),
             'stem_layer_7': nn.MaxPool2d(3, stride=2, padding=pool_3x3_padding)
         })
         # Mixed 5b (Inception-A block): 35 x 35 x 320
-        mixed_5b_branch_0 = ConvBlock2D(192, 96, 1)
+        mixed_5b_branch_0 = ConvBlock2D(block_size * 12, block_size * 6, 1)
         mixed_5b_branch_1 = nn.Sequential(
-            ConvBlock2D(192, 48, 1),
-            ConvBlock2D(48, 64, 5)
+            ConvBlock2D(block_size * 12, block_size * 3, 1),
+            ConvBlock2D(block_size * 3, block_size * 4, 5)
         )
         mixed_5b_branch_2 = nn.Sequential(
-            ConvBlock2D(192, 64, 1),
-            ConvBlock2D(64, 96, 3),
-            ConvBlock2D(96, 96, 3)
+            ConvBlock2D(block_size * 12, block_size * 4, 1),
+            ConvBlock2D(block_size * 4, block_size * 6, 3),
+            ConvBlock2D(block_size * 6, block_size * 6, 3)
         )
         mixed_5b_branch_pool = nn.Sequential(
             nn.AvgPool2d(3, stride=1, padding=1),
-            ConvBlock2D(192, 64, 1)
+            ConvBlock2D(block_size * 12, block_size * 4, 1)
         )
         mixed_5b_branches = [mixed_5b_branch_0, mixed_5b_branch_1,
                              mixed_5b_branch_2, mixed_5b_branch_pool]
         self.mixed_5b = ConcatBlock(mixed_5b_branches)
         # 10x block35 (Inception-ResNet-A block): 35 x 35 x 320
         self.block_35 = nn.Sequential(*[
-            Inception_Resnet_Block2D(in_channels=320, scale=0.17,
+            Inception_Resnet_Block2D(in_channels=block_size * 20, scale=0.17,
                                      block_type="block35",
                                      include_context=include_context)
             for _ in range(1, 11)
         ])
         # Mixed 6a (Reduction-A block): 17 x 17 x 1088
-        mixed_6a_branch_0 = ConvBlock2D(320, 384, 3, stride=2, padding=padding)
+        mixed_6a_branch_0 = ConvBlock2D(
+            block_size * 20, block_size * 24, 3, stride=2, padding=padding)
         mixed_6a_branch_1 = nn.Sequential(
-            ConvBlock2D(320, 256, 1),
-            ConvBlock2D(256, 256, 3),
-            ConvBlock2D(256, 384, 3, stride=2, padding=padding)
+            ConvBlock2D(block_size * 20, block_size * 16, 1),
+            ConvBlock2D(block_size * 16, block_size * 16, 3),
+            ConvBlock2D(block_size * 16, block_size *
+                        24, 3, stride=2, padding=padding)
         )
         mixed_6a_branch_pool = nn.MaxPool2d(3, stride=2,
                                             padding=pool_3x3_padding)
@@ -155,24 +157,27 @@ class InceptionResNetV2(nn.Module):
         self.mixed_6a = ConcatBlock(mixed_6a_branches)
         # 20x block17 (Inception-ResNet-B block): 17 x 17 x 1088
         self.block_17 = nn.Sequential(*[
-            Inception_Resnet_Block2D(in_channels=1088, scale=0.1,
+            Inception_Resnet_Block2D(in_channels=block_size * 68, scale=0.1,
                                      block_type="block17",
                                      include_context=(include_context and block_idx == 20))
             for block_idx in range(1, 21)
         ])
         # Mixed 7a (Reduction-B block): 8 x 8 x 2080
         mixed_7a_branch_0 = nn.Sequential(
-            ConvBlock2D(1088, 256, 1),
-            ConvBlock2D(256, 384, 3, stride=2, padding=padding)
+            ConvBlock2D(block_size * 68, block_size * 16, 1),
+            ConvBlock2D(block_size * 16, block_size *
+                        24, 3, stride=2, padding=padding)
         )
         mixed_7a_branch_1 = nn.Sequential(
-            ConvBlock2D(1088, 256, 1),
-            ConvBlock2D(256, 288, 3, stride=2, padding=padding)
+            ConvBlock2D(block_size * 68, block_size * 16, 1),
+            ConvBlock2D(block_size * 16, block_size *
+                        18, 3, stride=2, padding=padding)
         )
         mixed_7a_branch_2 = nn.Sequential(
-            ConvBlock2D(1088, 256, 1),
-            ConvBlock2D(256, 288, 3),
-            ConvBlock2D(288, 320, 3, stride=2, padding=padding)
+            ConvBlock2D(block_size * 68, block_size * 16, 1),
+            ConvBlock2D(block_size * 16, block_size * 18, 3),
+            ConvBlock2D(block_size * 18, block_size *
+                        20, 3, stride=2, padding=padding)
         )
         mixed_7a_branch_pool = nn.MaxPool2d(3, stride=2,
                                             padding=pool_3x3_padding)
@@ -181,13 +186,13 @@ class InceptionResNetV2(nn.Module):
         self.mixed_7a = ConcatBlock(mixed_7a_branches)
         # 10x block8 (Inception-ResNet-C block): 8 x 8 x 2080
         self.block_8 = nn.Sequential(*[
-            Inception_Resnet_Block2D(in_channels=2080, scale=0.2,
+            Inception_Resnet_Block2D(in_channels=block_size * 130, scale=0.2,
                                      block_type="block8",
                                      include_context=(include_context and block_idx == 10))
             for block_idx in range(1, 11)
         ])
         # Final convolution block: 8 x 8 x 1536
-        self.final_conv = ConvBlock2D(2080, 1536, 1)
+        self.final_conv = ConvBlock2D(block_size * 130, block_size * 96, 1)
 
     def forward(self, input_tensor):
         stem = input_tensor
