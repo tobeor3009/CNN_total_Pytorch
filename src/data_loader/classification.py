@@ -2,13 +2,13 @@
 from tqdm import tqdm
 import os
 # external module
+import torch
 import numpy as np
 
 # this library module
 from .utils import imread, get_parent_dir_name
-from .data_utils import get_resized_array, get_augumented_array, get_preprocessed_array, base_augmentation_policy_dict
+from .data_utils import get_resized_array, get_augumented_array, get_preprocessed_array, base_augmentation_policy_dict, to_tensor_transform
 from .base_loader import BaseDataset
-
 """
 Expected Data Path Structure
 
@@ -37,7 +37,7 @@ class ClassifyDataset(BaseDataset):
                  target_size=None,
                  interpolation="bilinear",
                  class_mode="binary",
-                 dtype="float32"):
+                 dtype=torch.float32):
         super().__init__()
 
         self.image_path_list = [image_path for image_path in image_path_list]
@@ -98,7 +98,9 @@ class ClassifyDataset(BaseDataset):
                 self.class_list[current_index] = label
                 self.is_class_cached = self.check_class_list_cached()
 
-        image_array = image_array.astype(self.dtype)
+        image_array = torch.as_tensor(image_array, dtype=self.dtype)
+        label = torch.as_tensor(label, dtype=self.dtype)
+        # image_array = image_array.astype(self.dtype)
         # label = label.astype(self.dtype)
         return image_array, label
 

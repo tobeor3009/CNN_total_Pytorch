@@ -1,5 +1,6 @@
 import cv2
 import albumentations as A
+import albumentations.pytorch
 import numpy as np
 
 base_augmentation_policy_dict = {
@@ -45,6 +46,8 @@ color_transform = A.OneOf([
 
 to_jpeg_transform = A.ImageCompression(
     quality_lower=99, quality_upper=100, p=0.5)
+
+to_tensor_transform = albumentations.pytorch.transforms.ToTensorV2()
 ################### Preprocess Constant ###################
 
 
