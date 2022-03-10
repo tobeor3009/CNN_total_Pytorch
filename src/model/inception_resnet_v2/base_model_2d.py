@@ -100,12 +100,16 @@ class Inception_Resnet_Block2D(nn.Module):
 
 class InceptionResNetV2(nn.Module):
     def __init__(self, n_input_channels, block_size=16,
-                 padding='valid', include_context=False):
+                 padding='valid', include_cbam=True, include_context=False,
+                 include_skip_connection_tensor=False):
         super().__init__()
+        self.include_skip_connection_tensor = include_skip_connection_tensor
         if padding == 'valid':
             pool_3x3_padding = 0
         elif padding == 'same':
             pool_3x3_padding = 1
+
+        self.skip_connect_tensor_list = []
         # Stem block
         self.stem = nn.ModuleDict({
             'stem_layer_1': ConvBlock2D(n_input_channels, block_size * 2, 3, stride=2, padding=padding),
@@ -138,6 +142,7 @@ class InceptionResNetV2(nn.Module):
         self.block_35 = nn.Sequential(*[
             Inception_Resnet_Block2D(in_channels=block_size * 20, scale=0.17,
                                      block_type="block35",
+                                     include_cbam=include_cbam,
                                      include_context=include_context)
             for _ in range(1, 11)
         ])
@@ -159,6 +164,7 @@ class InceptionResNetV2(nn.Module):
         self.block_17 = nn.Sequential(*[
             Inception_Resnet_Block2D(in_channels=block_size * 68, scale=0.1,
                                      block_type="block17",
+                                     include_cbam=include_cbam,
                                      include_context=(include_context and block_idx == 20))
             for block_idx in range(1, 21)
         ])
@@ -188,6 +194,7 @@ class InceptionResNetV2(nn.Module):
         self.block_8 = nn.Sequential(*[
             Inception_Resnet_Block2D(in_channels=block_size * 130, scale=0.2,
                                      block_type="block8",
+                                     include_cbam=include_cbam,
                                      include_context=(include_context and block_idx == 10))
             for block_idx in range(1, 11)
         ])
@@ -196,8 +203,11 @@ class InceptionResNetV2(nn.Module):
 
     def forward(self, input_tensor):
         stem = input_tensor
-        for layer_name, layer in self.stem.items():
+        for index, (layer_name, layer) in enumerate(self.stem.items()):
             stem = layer(stem)
+            # layer_name in ["stem_layer_1", "stem_layer_4", "stem_layer_7"]
+            if self.include_skip_connection_tensor and (index in [0, 3, 6]):
+                self.skip_connect_tensor_list.append(stem)
         mixed_5b = self.mixed_5b(stem)
         block_35 = self.block_35(mixed_5b)
         mixed_6a = self.mixed_6a(block_35)
@@ -205,4 +215,6 @@ class InceptionResNetV2(nn.Module):
         mixed_7a = self.mixed_7a(block_17)
         block_8 = self.block_8(mixed_7a)
         output = self.final_conv(block_8)
+        if self.include_skip_connection_tensor:
+            self.skip_connect_tensor_list += [mixed_6a, mixed_7a]
         return output

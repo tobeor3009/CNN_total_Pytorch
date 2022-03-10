@@ -1,6 +1,6 @@
 from .base_model_2d import InceptionResNetV2 as InceptionResNetV22D
 from .base_model_3d import InceptionResNetV2 as InceptionResNetV23D
-from .layers import TransformerEncoder, PositionalEncoding
+from .transformer_layers import TransformerEncoder, PositionalEncoding
 from reformer_pytorch import Reformer
 import torch
 from torch import nn
