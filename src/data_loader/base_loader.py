@@ -50,5 +50,3 @@ class BaseDataset(data.Dataset):
                 return False
         return True
 
-    def shuffle(self):
-        self.data_index_list = syncron_shuffle(self.data_index_list)

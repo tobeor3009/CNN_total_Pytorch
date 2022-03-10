@@ -90,7 +90,7 @@ def get_preprocessed_array(image_array, preprocess_input):
         return image_array
     elif preprocess_input == "-1~1":
         return (image_array / 127.5) - 1
-    elif preprocess_input == "mask":
+    elif preprocess_input == "0~1":
         return image_array / 255
     else:
         return preprocess_input(image_array)

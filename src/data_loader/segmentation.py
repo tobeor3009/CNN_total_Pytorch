@@ -23,17 +23,16 @@ test - negative
 """
 
 
-class ClassifyDataset(BaseDataset):
+class SegDataset(BaseDataset):
 
     def __init__(self,
                  image_path_list=None,
-                 label_policy=None,
-                 label_level=1,
+                 mask_path_list=None,
                  on_memory=False,
                  argumentation_proba=False,
                  argumentation_policy_dict=base_augmentation_policy_dict,
-                 image_channel_dict={"image": "rgb"},
-                 preprocess_input="-1~1",
+                 image_channel_dict={"image": "rgb", "mask": "grayscale"},
+                 preprocess_dict={"image": "-1~1", "mask": "0~1"},
                  target_size=None,
                  interpolation="bilinear",
                  class_mode="binary",
@@ -41,21 +40,21 @@ class ClassifyDataset(BaseDataset):
         super().__init__()
 
         self.image_path_list = [image_path for image_path in image_path_list]
-        self.label_policy = label_policy
-        self.label_level = label_level
+        self.mask_path_list = [mask_path for mask_path in mask_path_list]
+
         self.on_memory = on_memory
         self.is_data_ready = False if on_memory else True
         self.argumentation_proba = argumentation_proba
         self.argumentation_policy_dict = argumentation_policy_dict
         self.image_channel = image_channel_dict["image"]
-        self.preprocess_input = preprocess_input
+        self.mask_channel = image_channel_dict["mask"]
+        self.image_preprocess = preprocess_dict["image"]
+        self.mask_preprocess = preprocess_dict["mask"]
         self.target_size = target_size
         self.interpolation = interpolation
         self.class_mode = class_mode
         self.dtype = dtype
 
-        self.is_class_cached = False
-        self.class_list = [None for _ in range(len(self))]
         if self.on_memory is True:
             self.data_on_memory_list = [None for _ in range(len(self))]
             self.get_data_on_ram()
@@ -70,39 +69,36 @@ class ClassifyDataset(BaseDataset):
         current_index = i
 
         if self.on_memory and self.is_data_ready:
-            image_array, label = \
+            image_array, mask_array = \
                 self.data_on_memory_list[current_index]
-            image_array = get_augumented_array(image_array,
-                                               self.argumentation_proba,
-                                               self.argumentation_policy_dict)
-            image_array = get_preprocessed_array(image_array,
-                                                 self.preprocess_input)
         else:
             image_path = self.image_path_list[current_index]
+            mask_path = self.mask_path_list[current_index]
+
             image_array = imread(image_path, channel=self.image_channel)
+            mask_array = imread(mask_path, channel=self.mask_channel)
+
             image_array = get_resized_array(image_array,
                                             self.target_size,
                                             self.interpolation)
-            if not self.on_memory:
-                image_array = get_augumented_array(image_array,
-                                                   self.argumentation_proba,
-                                                   self.argumentation_policy_dict)
-                image_array = get_preprocessed_array(image_array,
-                                                     self.preprocess_input)
-            if self.is_class_cached:
-                label = self.class_list[current_index]
-            else:
-                image_dir_name = get_parent_dir_name(image_path,
-                                                     self.label_level)
-                label = self.label_policy(image_dir_name)
-                self.class_list[current_index] = label
-                self.is_class_cached = self.check_class_list_cached()
+            mask_array = get_resized_array(mask_array,
+                                           self.target_size,
+                                           self.interpolation)
+        if (not self.on_memory) or (self.on_memory and self.is_data_ready):
+            image_array = get_augumented_array(image_array,
+                                                self.argumentation_proba,
+                                                self.argumentation_policy_dict)
+            mask_array = get_augumented_array(mask_array,
+                                                self.argumentation_proba,
+                                                self.argumentation_policy_dict)
+            image_array = get_preprocessed_array(image_array,
+                                                    self.image_preprocess)
+            mask_array = get_preprocessed_array(mask_array,
+                                                self.mask_preprocess)
 
-        image_array = torch.as_tensor(image_array, dtype=self.dtype)
-        label = torch.as_tensor(label, dtype=self.dtype)
-        # image_array = image_array.astype(self.dtype)
-        # label = label.astype(self.dtype)
-        return image_array, label
+            image_array = torch.as_tensor(image_array, dtype=self.dtype)
+            mask_array = torch.as_tensor(mask_array, dtype=self.dtype)
+        return image_array, mask_array
 
     def print_data_info(self):
         data_num = len(self)
