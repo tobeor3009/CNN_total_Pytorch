@@ -1,5 +1,4 @@
-from .base_model_2d import InceptionResNetV2 as InceptionResNetV22D
-from .base_model_3d import InceptionResNetV2 as InceptionResNetV23D
+from .base_model import InceptionResNetV2_2D, InceptionResNetV2_3D
 from .transformer_layers import TransformerEncoder, PositionalEncoding
 from reformer_pytorch import Reformer
 import torch
@@ -15,9 +14,9 @@ class InceptionResNetV2Transformer3D(nn.Module):
         super().__init__()
         self.include_context = include_context
         self.use_base = use_base
-        self.base_model = InceptionResNetV23D(n_input_channels=n_input_channels, block_size=block_size,
-                                              padding=padding, z_channel_preserve=z_channel_preserve,
-                                              include_context=include_context)
+        self.base_model = InceptionResNetV2_3D(n_input_channels=n_input_channels, block_size=block_size,
+                                               padding=padding, z_channel_preserve=z_channel_preserve,
+                                               include_context=include_context)
 
         if self.include_context:
             feature_channel_num = block_size * 96
@@ -83,10 +82,10 @@ class InceptionResNetV2Transformer3DWith2D(nn.Module):
         super().__init__()
         self.include_context = include_context
         self.use_base = use_base
-        self.base_model = InceptionResNetV22D(n_input_channels=n_input_channels,
-                                              block_size=block_size,
-                                              padding=padding,
-                                              include_context=include_context)
+        self.base_model = InceptionResNetV2_2D(n_input_channels=n_input_channels,
+                                               block_size=block_size,
+                                               padding=padding,
+                                               include_context=include_context)
         feature_channel_num = block_size * 96
         if self.include_context:
             transformer_layer_list = []
@@ -148,9 +147,9 @@ class InceptionResNetV2Transformer2D(nn.Module):
                  use_base=False):
         super().__init__()
         self.include_context = include_context
-        self.base_model = InceptionResNetV22D(n_input_channels=n_input_channels,
-                                              padding=padding,
-                                              include_context=include_context)
+        self.base_model = InceptionResNetV2_2D(n_input_channels=n_input_channels,
+                                               padding=padding,
+                                               include_context=include_context)
         if self.include_context:
             self.pixel_shuffle = nn.PixelShuffle(upscale_factor=2)
             transformer_layer_list = []
