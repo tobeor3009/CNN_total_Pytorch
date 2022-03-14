@@ -85,8 +85,8 @@ class SkipUpSample3D(nn.Module):
         self.conv_2d = ConvBlock2D(in_channels=in_channels,
                                    out_channels=out_channels,
                                    kernel_size=1)
-        self.cbam = CBAM(gate_channels=out_channels,
-                         reduction_ratio=16)
+        # self.cbam = CBAM(gate_channels=out_channels,
+        #                  reduction_ratio=16)
         self.conv_3d = ConvBlock3D(in_channels=out_channels,
                                    out_channels=out_channels,
                                    kernel_size=3)
@@ -96,6 +96,7 @@ class SkipUpSample3D(nn.Module):
         # input_2d.shape: [H C 1 H W]
         _, _, H, _ = input_tensor.size()
         input_2d = self.conv_2d(input_tensor)
+        # input_2d = self.cbam(input_2d)
         input_3d = input_2d.unsqueeze(2)
         input_3d = input_3d.expand(-1, -1, H, -1, -1)
         input_3d = self.conv_3d(input_3d)

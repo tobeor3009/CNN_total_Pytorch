@@ -10,10 +10,12 @@ class InceptionResNetV2Transformer3D(nn.Module):
     def __init__(self, n_input_channels, block_size=16,
                  padding='valid', z_channel_preserve=True,
                  dropout_proba=0.1, num_class=2, include_context=False,
+                 activation="sigmoid",
                  use_base=False):
         super().__init__()
         self.include_context = include_context
         self.use_base = use_base
+        self.activation = activation
         self.base_model = InceptionResNetV2_3D(n_input_channels=n_input_channels, block_size=block_size,
                                                padding=padding, z_channel_preserve=z_channel_preserve,
                                                include_context=include_context)
@@ -47,15 +49,22 @@ class InceptionResNetV2Transformer3D(nn.Module):
         else:
             self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
             feature_channel_num = block_size * 96
-        self.final_linear_sequence = nn.Sequential(
+        final_linear_sequence = [
             nn.Linear(feature_channel_num, 512),  # 512?
             nn.Dropout(dropout_proba),
             nn.ReLU6(),
             nn.Linear(512, 256),
             nn.Dropout(dropout_proba),
             nn.ReLU6(),
-            nn.Linear(256, num_class),
-            nn.Sigmoid()
+            nn.Linear(256, num_class)
+        ]
+        if self.activation == "sigmoid":
+            final_linear_sequence.append(nn.Sigmoid())
+        else:
+            pass
+
+        self.final_linear_sequence = nn.Sequential(
+            *final_linear_sequence
         )
 
     def forward(self, x):
@@ -71,6 +80,7 @@ class InceptionResNetV2Transformer3D(nn.Module):
             x = self.avgpool(x)
             x = torch.flatten(x, start_dim=1, end_dim=-1)
         output = self.final_linear_sequence(x)
+
         return output
 
 

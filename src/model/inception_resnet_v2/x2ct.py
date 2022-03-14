@@ -32,11 +32,9 @@ class APLATX2CTGenerator(nn.Module):
             self.decode_start_index = 2
         elif ct_series_shape == (64, 64, 64):
             self.decode_start_index = 3
-        elif ct_series_shape == (32, 32, 32):
-            self.decode_start_index = 4
         else:
             NotImplementedError(
-                "ct_series_shape is implemented only 128 or 256 intercubic shape")
+                "ct_series_shape is implemented only 64, 128, 256 intercubic shape")
 
         self.ap_model = InceptionResNetV2_2D(n_input_channels=n_input_channels, block_size=block_size,
                                              padding="same", include_cbam=include_cbam, include_context=include_context,
@@ -47,7 +45,14 @@ class APLATX2CTGenerator(nn.Module):
 
         self.positional_encoding = PositionalEncoding(d_model=self.feature_shape[1] * self.feature_shape[2],
                                                       dropout=dropout_proba)
-        self.encoder = Reformer(
+        self.ap_encoder = Reformer(
+            dim=feature_2d_channel_num,
+            depth=6,
+            heads=8,
+            lsh_dropout=0.1,
+            causal=True
+        )
+        self.lat_encoder = Reformer(
             dim=feature_2d_channel_num,
             depth=6,
             heads=8,
@@ -135,14 +140,14 @@ class APLATX2CTGenerator(nn.Module):
 
         ap_decoded = rearrange(ap_feature, 'b c h w -> b (h w) c')
         ap_decoded = self.positional_encoding(ap_decoded)
-        ap_decoded = self.encoder(ap_decoded)
+        ap_decoded = self.ap_encoder(ap_decoded)
         ap_decoded = rearrange(ap_decoded, 'b (h w) (c z) -> b c z h w',
                                h=self.feature_shape[1],
                                w=self.feature_shape[2],
                                z=self.ct_z_dim)
         lat_decoded = rearrange(lat_feature, 'b c h w -> b (h w) c')
         lat_decoded = self.positional_encoding(lat_decoded)
-        lat_decoded = self.encoder(lat_decoded)
+        lat_decoded = self.lat_encoder(lat_decoded)
         lat_decoded = rearrange(lat_decoded, 'b (h w) (c z) -> b c z h w',
                                 h=self.feature_shape[1],
                                 w=self.feature_shape[2],
@@ -185,7 +190,6 @@ class APLATX2CTGenerator(nn.Module):
             concat_decoded = concat_decode_up(concat_decoded)
 
         output_ct = self.output_conv(concat_decoded)
-        output_ct = output_ct.squeeze(1)
         return output_ct
 
 
@@ -194,7 +198,7 @@ class X2CTDiscriminator(nn.Module):
                  dropout_proba=0.1, include_context=False,
                  ):
         super().__init__()
-        n_input_channels = 1
+        n_input_channels = 2
         ct_series_shape = np.array(ct_series_shape)
         feature_shape = ct_series_shape // 32
         self.block_size = block_size

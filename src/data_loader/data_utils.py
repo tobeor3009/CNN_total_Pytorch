@@ -52,10 +52,12 @@ to_tensor_transform = albumentations.pytorch.transforms.ToTensorV2()
 
 
 def get_resized_array(image_array, target_size, interpolation):
-    image_resized_array = cv2.resize(src=image_array,
-                                     dsize=target_size,
-                                     interpolation=INTER_DICT[interpolation]
-                                     )
+    image_resized_array = image_array
+    if target_size is not None:
+        image_resized_array = cv2.resize(src=image_array,
+                                         dsize=target_size,
+                                         interpolation=INTER_DICT[interpolation]
+                                         )
     if len(image_resized_array.shape) == 2:
         image_resized_array = np.expand_dims(image_resized_array, axis=-1)
     return image_resized_array
