@@ -43,8 +43,10 @@ class APLATX2CTGenerator(nn.Module):
                                               padding="same", include_cbam=include_cbam, include_context=include_context,
                                               include_skip_connection_tensor=skip_connect)
 
-        self.positional_encoding = PositionalEncoding(d_model=self.feature_shape[1] * self.feature_shape[2],
-                                                      dropout=dropout_proba)
+        self.ap_positional_encoding = PositionalEncoding(d_model=self.feature_shape[1] * self.feature_shape[2],
+                                                         dropout=dropout_proba)
+        self.lat_positional_encoding = PositionalEncoding(d_model=self.feature_shape[1] * self.feature_shape[2],
+                                                          dropout=dropout_proba)
         self.ap_encoder = Reformer(
             dim=feature_2d_channel_num,
             depth=6,
@@ -139,14 +141,14 @@ class APLATX2CTGenerator(nn.Module):
         lat_feature = self.lat_model(lat_tensor)
 
         ap_decoded = rearrange(ap_feature, 'b c h w -> b (h w) c')
-        ap_decoded = self.positional_encoding(ap_decoded)
+        ap_decoded = self.ap_positional_encoding(ap_decoded)
         ap_decoded = self.ap_encoder(ap_decoded)
         ap_decoded = rearrange(ap_decoded, 'b (h w) (c z) -> b c z h w',
                                h=self.feature_shape[1],
                                w=self.feature_shape[2],
                                z=self.ct_z_dim)
         lat_decoded = rearrange(lat_feature, 'b c h w -> b (h w) c')
-        lat_decoded = self.positional_encoding(lat_decoded)
+        lat_decoded = self.lat_positional_encoding(lat_decoded)
         lat_decoded = self.lat_encoder(lat_decoded)
         lat_decoded = rearrange(lat_decoded, 'b (h w) (c z) -> b c z h w',
                                 h=self.feature_shape[1],
@@ -183,7 +185,7 @@ class APLATX2CTGenerator(nn.Module):
 
             if decode_i < 4:
                 ap_decode_up = self.ap_decode_up_list[index]
-                lat_decode_up = self.ap_decode_up_list[index]
+                lat_decode_up = self.lat_decode_up_list[index]
                 ap_decoded = ap_decode_up(ap_decoded)
                 lat_decoded = lat_decode_up(lat_decoded)
             concat_decode_up = self.concat_decode_up_list[index]
