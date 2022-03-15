@@ -22,7 +22,6 @@ class InceptionResNetV2_2D(nn.Module):
         elif padding == 'same':
             padding_3x3 = 1
 
-        self.skip_connect_tensor_list = []
         # Stem block
         self.stem = nn.ModuleDict({
             'stem_layer_1': ConvBlock2D(n_input_channels, block_size * 2, 3, stride=2, padding=padding_3x3),
@@ -115,12 +114,15 @@ class InceptionResNetV2_2D(nn.Module):
         self.final_conv = ConvBlock2D(block_size * 130, block_size * 96, 1)
 
     def forward(self, input_tensor):
+        skip_connect_index = 0
         stem = input_tensor
         for index, (layer_name, layer) in enumerate(self.stem.items()):
             stem = layer(stem)
             # layer_name in ["stem_layer_1", "stem_layer_4", "stem_layer_7"]
             if self.include_skip_connection_tensor and (index in [0, 3, 6]):
-                self.skip_connect_tensor_list.append(stem)
+                setattr(self, f"skip_connect_tensor_{skip_connect_index}",
+                        stem)
+                skip_connect_index += 1
         mixed_5b = self.mixed_5b(stem)
         block_35 = self.block_35(mixed_5b)
         mixed_6a = self.mixed_6a(block_35)
@@ -129,15 +131,19 @@ class InceptionResNetV2_2D(nn.Module):
         block_8 = self.block_8(mixed_7a)
         output = self.final_conv(block_8)
         if self.include_skip_connection_tensor:
-            self.skip_connect_tensor_list += [mixed_6a, mixed_7a]
+            setattr(self, f"skip_connect_tensor_{skip_connect_index}",
+                    mixed_6a)
+            setattr(self, f"skip_connect_tensor_{skip_connect_index + 1}",
+                    mixed_7a)
         return output
 
 
 class InceptionResNetV2_3D(nn.Module):
     def __init__(self, n_input_channels, block_size=16,
-                 padding='valid', z_channel_preserve=True,
-                 include_context=False):
+                 padding='valid', z_channel_preserve=True, include_context=False,
+                 include_skip_connection_tensor=False):
         super().__init__()
+        self.include_skip_connection_tensor = include_skip_connection_tensor
         if padding == 'valid':
             padding_3x3 = 0
         elif padding == 'same':
@@ -239,10 +245,15 @@ class InceptionResNetV2_3D(nn.Module):
         self.final_conv = ConvBlock3D(block_size * 130, block_size * 96, 1)
 
     def forward(self, input_tensor):
+        skip_connect_index = 0
         stem = input_tensor
-        for layer_name, layer in self.stem.items():
+        for index, (layer_name, layer) in enumerate(self.stem.items()):
             stem = layer(stem)
-
+            # layer_name in ["stem_layer_1", "stem_layer_4", "stem_layer_7"]
+            if self.include_skip_connection_tensor and (index in [0, 3, 6]):
+                setattr(self, f"skip_connect_tensor_{skip_connect_index}",
+                        stem)
+                skip_connect_index += 1
         mixed_5b = self.mixed_5b(stem)
         block_35 = self.block_35(mixed_5b)
         mixed_6a = self.mixed_6a(block_35)
@@ -250,4 +261,9 @@ class InceptionResNetV2_3D(nn.Module):
         mixed_7a = self.mixed_7a(block_17)
         block_8 = self.block_8(mixed_7a)
         output = self.final_conv(block_8)
+        if self.include_skip_connection_tensor:
+            setattr(self, f"skip_connect_tensor_{skip_connect_index}",
+                    mixed_6a)
+            setattr(self, f"skip_connect_tensor_{skip_connect_index + 1}",
+                    mixed_7a)
         return output

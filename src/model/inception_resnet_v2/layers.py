@@ -226,7 +226,7 @@ class HighwayOutput2D(nn.Module):
                                     kernel_size=1)
         self.conv_3x3 = ConvBlock2D(in_channels=in_channels,
                                     out_channels=out_channels,
-                                    kernel_size=1)
+                                    kernel_size=3)
         self.highway = HighwayLayer(in_channels=out_channels,
                                     mode="2d", init_bias=init_bias)
         if act == "tanh":
@@ -250,7 +250,7 @@ class HighwayOutput3D(nn.Module):
                                     kernel_size=1)
         self.conv_3x3 = ConvBlock3D(in_channels=in_channels,
                                     out_channels=out_channels,
-                                    kernel_size=1)
+                                    kernel_size=3)
         self.highway = HighwayLayer(in_channels=out_channels,
                                     mode="3d", init_bias=init_bias)
         if act == "tanh":

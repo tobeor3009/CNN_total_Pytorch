@@ -41,8 +41,6 @@ class SegInceptionResNetV22D(nn.Module):
         else:
             raise Exception("not Supported version")
 
-        decode_conv_list = []
-        decode_up_list = []
         for decode_i in range(0, 5):
             decode_in_channels = decode_init_channel // (
                 2 ** (decode_i - 1)) if decode_i > 0 else feature_channel_num
@@ -53,11 +51,9 @@ class SegInceptionResNetV22D(nn.Module):
                                       out_channels=decode_out_channels, kernel_size=3)
             decode_up = Decoder2D(in_channels=decode_out_channels,
                                   out_channels=decode_out_channels, kernel_size=2)
-            decode_conv_list.append(decode_conv)
-            decode_up_list.append(decode_up)
+            setattr(self, f"decode_conv_{decode_i}", decode_conv)
+            setattr(self, f"decode_up_{decode_i}", decode_up)
 
-        self.decode_conv_list = nn.ModuleList(decode_conv_list)
-        self.decode_up_list = nn.ModuleList(decode_up_list)
         self.output_conv = HighwayOutput2D(in_channels=decode_out_channels,
                                            out_channels=n_output_channels)
 
@@ -74,10 +70,13 @@ class SegInceptionResNetV22D(nn.Module):
         for decode_i in range(0, 5):
 
             if self.skip_connect:
-                skip_connect_tensor = self.base_model.skip_connect_tensor_list[4 - decode_i]
+                skip_connect_tensor = getattr(self.base_model, f"skip_connect_tensor_{4 - decode_i}")
                 decoded = torch.cat([decoded, skip_connect_tensor], axis=1)
 
-            decoded = self.decode_conv_list[decode_i](decoded)
-            decoded = self.decode_up_list[decode_i](decoded)
+            decode_conv = getattr(self, f"decode_conv_{decode_i}")
+            decode_up = getattr(self, f"decode_up_{decode_i}")
+            decoded = decode_conv(decoded)
+            decoded = decode_up(decoded)
+            
         output = self.output_conv(decoded)
         return output
