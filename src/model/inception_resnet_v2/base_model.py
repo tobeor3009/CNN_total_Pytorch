@@ -1,6 +1,6 @@
 from torch import nn
 import numpy as np
-from .layers import LambdaLayer, ConcatBlock, ConvBlock2D, ConvBlock3D
+from .layers import LambdaLayer, ConcatBlock, ConvBlock2D, ConvBlock3D, DEFAULT_ACT
 from .inception_layers import Inception_Resnet_Block2D, Inception_Resnet_Block3D
 
 INPLACE = False
@@ -13,7 +13,8 @@ def get_skip_connect_channel_list(block_size):
 
 class InceptionResNetV2_2D(nn.Module):
     def __init__(self, n_input_channels, block_size=16,
-                 padding='valid', include_cbam=True, include_context=False,
+                 padding='valid', last_act=DEFAULT_ACT, last_channel_ratio=1,
+                 include_cbam=True, include_context=False,
                  include_skip_connection_tensor=False):
         super().__init__()
         self.include_skip_connection_tensor = include_skip_connection_tensor
@@ -111,7 +112,8 @@ class InceptionResNetV2_2D(nn.Module):
             for block_idx in range(1, 11)
         ])
         # Final convolution block: 8 x 8 x 1536
-        self.final_conv = ConvBlock2D(block_size * 130, block_size * 96, 1)
+        self.final_conv = ConvBlock2D(block_size * 130, block_size * 96 * last_channel_ratio, 1,
+                                      activation=last_act)
 
     def forward(self, input_tensor):
         skip_connect_index = 0
@@ -140,7 +142,7 @@ class InceptionResNetV2_2D(nn.Module):
 
 class InceptionResNetV2_3D(nn.Module):
     def __init__(self, n_input_channels, block_size=16,
-                 padding='valid', z_channel_preserve=True, include_context=False,
+                 padding='valid', last_act=DEFAULT_ACT, z_channel_preserve=True, include_context=False,
                  include_skip_connection_tensor=False):
         super().__init__()
         self.include_skip_connection_tensor = include_skip_connection_tensor
@@ -191,14 +193,14 @@ class InceptionResNetV2_3D(nn.Module):
         ])
         # Mixed 6a (Reduction-A block): 17 x 17 x 1088
         mixed_6a_branch_0 = ConvBlock3D(block_size * 20, block_size * 24, 3,
-                                        stride=2, padding=padding_3x3)
+                                        stride=z_stride, padding=padding_3x3)
         mixed_6a_branch_1 = nn.Sequential(
             ConvBlock3D(block_size * 20, block_size * 16, 1),
             ConvBlock3D(block_size * 16, block_size * 16, 3),
             ConvBlock3D(block_size * 16, block_size * 24, 3,
-                        stride=2, padding=padding_3x3)
+                        stride=z_stride, padding=padding_3x3)
         )
-        mixed_6a_branch_pool = nn.MaxPool3d(3, stride=2,
+        mixed_6a_branch_pool = nn.MaxPool3d(3, stride=z_stride,
                                             padding=padding_3x3)
         mixed_6a_branches = [mixed_6a_branch_0, mixed_6a_branch_1,
                              mixed_6a_branch_pool]
@@ -242,7 +244,8 @@ class InceptionResNetV2_3D(nn.Module):
             for block_idx in range(1, 11)
         ])
         # Final convolution block: 8 x 8 x 1536
-        self.final_conv = ConvBlock3D(block_size * 130, block_size * 96, 1)
+        self.final_conv = ConvBlock3D(block_size * 130, block_size * 96, 1,
+                                      activation=last_act)
 
     def forward(self, input_tensor):
         skip_connect_index = 0

@@ -213,17 +213,20 @@ class AgeGenderClassifyDataset(BaseDataset):
         super().__init__()
 
         self.image_path_list = [image_path for image_path in image_path_list]
+        self.image_num = len(image_path_list)
         self.image_info_dict = {}
-        self.current_image_info_dict = None
         self.inner_index = 0
         for image_path in image_path_list:
             age_gender = get_parent_dir_name(image_path, level=1)
             if age_gender in self.image_info_dict:
-                if self.image_info_dict[age_gender] > 49:
+                if self.image_info_dict[age_gender] > 24:
                     continue
                 self.image_info_dict[age_gender] += 1
             else:
+                # age_gender: "0.95_0"
                 self.image_info_dict[age_gender] = 1
+        self.current_image_info_dict = {
+            key: 0 for key in self.image_info_dict.keys()}
 
         self.iter_len = np.sum(list(self.image_info_dict.values()))
         self.label_policy = label_policy
@@ -250,11 +253,10 @@ class AgeGenderClassifyDataset(BaseDataset):
         if i >= len(self):
             raise IndexError
 
-        if self.inner_index == 0:
+        if self.inner_index == self.image_num:
             self.reset_current_image_info_dict()
 
         image_path = self.get_next_image_path()
-
         image_array = imread(image_path, channel=self.image_channel)
         image_array = get_resized_array(image_array,
                                         self.target_size,
@@ -296,7 +298,9 @@ class AgeGenderClassifyDataset(BaseDataset):
             current_data_num = self.current_image_info_dict[age_gender]
 
             if current_data_num >= total_data_num:
-                self.inner_index += 1
+                pass
             else:
+                self.current_image_info_dict[age_gender] += 1
                 data_ready = True
+            self.inner_index += 1
         return image_path

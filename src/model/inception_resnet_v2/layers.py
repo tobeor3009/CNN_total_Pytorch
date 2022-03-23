@@ -5,12 +5,33 @@ from torch import nn
 from .cbam import CBAM
 
 INPLACE = False
+DEFAULT_ACT = "mish"
+
+
+def get_act(activation):
+    if activation == 'relu6':
+        act = nn.ReLU6(inplace=INPLACE)
+    elif activation == 'relu':
+        act = nn.ReLU(inplace=INPLACE)
+    elif activation == "leakyrelu":
+        act = nn.LeakyReLU(0.1)
+    elif activation == "gelu":
+        act = nn.GELU()
+    elif activation == "mish":
+        act = nn.Mish()
+    elif activation == "sigmoid":
+        act = torch.sigmoid
+    elif activation == "tanh":
+        act = torch.tanh
+    elif activation is None:
+        act = nn.Identity()
+    return act
 
 
 class ConvBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 activation='relu6', bias=False, name=None):
+                 activation=DEFAULT_ACT, bias=False, name=None):
         super().__init__()
         self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
@@ -20,10 +41,7 @@ class ConvBlock2D(nn.Module):
             self.norm = nn.BatchNorm2d(num_features=out_channels, affine=False)
         else:
             self.norm = nn.Identity()
-        if activation == 'relu6':
-            self.act = nn.ReLU6(inplace=INPLACE)
-        elif activation is None:
-            self.act = nn.Identity()
+        self.act = get_act(activation)
 
     def forward(self, x):
         conv = self.conv(x)
@@ -35,7 +53,7 @@ class ConvBlock2D(nn.Module):
 class ConvBlock3D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 activation='relu6', bias=False, name=None):
+                 activation=DEFAULT_ACT, bias=False, name=None):
         super().__init__()
         self.conv = nn.Conv3d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
@@ -46,10 +64,7 @@ class ConvBlock3D(nn.Module):
         else:
             self.norm = nn.Identity()
 
-        if activation == 'relu6':
-            self.act = nn.ReLU6(inplace=INPLACE)
-        elif activation is None:
-            self.act = nn.Identity()
+        self.act = get_act(activation)
 
     def forward(self, x):
         conv = self.conv(x)
@@ -130,26 +145,29 @@ class HighwayLayer(nn.Module):
 
 
 class Decoder2D(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=2, use_highway=True):
+    def __init__(self, in_channels, out_channels,
+                 activation=DEFAULT_ACT, kernel_size=2, use_highway=True):
         super().__init__()
         self.use_highway = use_highway
-        conv_before_pixel_shuffle = ConvBlock2D(in_channels=in_channels,
-                                                out_channels=out_channels *
-                                                (kernel_size ** 2),
-                                                kernel_size=1)
+        conv_before_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
+                                              out_channels=out_channels,
+                                              kernel_size=1)
         pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=kernel_size)
-        conv_after_pixel_shuffle = ConvBlock2D(in_channels=out_channels, out_channels=out_channels,
-                                               kernel_size=1)
+        conv_after_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
+                                             out_channels=out_channels,
+                                             kernel_size=1)
         self.pixel_shuffle = nn.Sequential(
             conv_before_pixel_shuffle,
             pixel_shuffle_layer,
             conv_after_pixel_shuffle
         )
-        conv_before_upsample = ConvBlock2D(in_channels=in_channels, out_channels=out_channels,
-                                           kernel_size=1)
+        conv_before_upsample = nn.Conv2d(in_channels=in_channels,
+                                         out_channels=out_channels,
+                                         kernel_size=1)
         upsample_layer = nn.Upsample(scale_factor=kernel_size)
-        conv_after_upsample = ConvBlock2D(in_channels=out_channels, out_channels=out_channels,
-                                          kernel_size=1)
+        conv_after_upsample = nn.Conv2d(in_channels=in_channels,
+                                        out_channels=out_channels,
+                                        kernel_size=1)
         self.upsample = nn.Sequential(
             conv_before_upsample,
             upsample_layer,
@@ -159,7 +177,7 @@ class Decoder2D(nn.Module):
             self.highway = HighwayLayer(in_channels=out_channels,
                                         mode="2d")
         self.norm = nn.BatchNorm2d(num_features=out_channels, affine=False)
-        self.act = nn.ReLU6(inplace=INPLACE)
+        self.act = get_act(activation)
 
     def forward(self, x):
         pixel_shuffle = self.pixel_shuffle(x)
@@ -167,34 +185,38 @@ class Decoder2D(nn.Module):
         if self.use_highway:
             out = self.highway(pixel_shuffle, upsample)
         else:
-            out = pixel_shuffle + upsample
+            out = (pixel_shuffle + upsample) / math.sqrt(2)
         out = self.norm(out)
         out = self.act(out)
         return out
 
 
 class Decoder3D(nn.Module):
-    def __init__(self, in_channels, out_channels, use_highway=True):
+    def __init__(self, in_channels, out_channels,
+                 activation=DEFAULT_ACT, use_highway=True):
         super().__init__()
         self.use_highway = use_highway
-        conv_before_transpose = ConvBlock3D(in_channels=in_channels,
-                                            out_channels=out_channels,
-                                            kernel_size=1)
+        conv_before_transpose = nn.Conv3d(in_channels=in_channels,
+                                          out_channels=out_channels,
+                                          kernel_size=1)
         conv_transpose_layer = nn.ConvTranspose3d(in_channels=out_channels,
                                                   out_channels=out_channels,
                                                   kernel_size=4, stride=2, padding=1)
-        conv_after_transpose = ConvBlock3D(in_channels=out_channels, out_channels=out_channels,
-                                           kernel_size=1)
+        conv_after_transpose = nn.Conv3d(in_channels=in_channels,
+                                         out_channels=out_channels,
+                                         kernel_size=1)
         self.conv_transpose = nn.Sequential(
             conv_before_transpose,
             conv_transpose_layer,
             conv_after_transpose
         )
-        conv_before_upsample = ConvBlock3D(in_channels=in_channels, out_channels=out_channels,
-                                           kernel_size=1)
+        conv_before_upsample = nn.Conv3d(in_channels=in_channels,
+                                         out_channels=out_channels,
+                                         kernel_size=1)
         upsample_layer = nn.Upsample(scale_factor=2)
-        conv_after_upsample = ConvBlock3D(in_channels=out_channels, out_channels=out_channels,
-                                          kernel_size=1)
+        conv_after_upsample = nn.Conv3d(in_channels=in_channels,
+                                        out_channels=out_channels,
+                                        kernel_size=1)
         self.upsample = nn.Sequential(
             conv_before_upsample,
             upsample_layer,
@@ -204,7 +226,7 @@ class Decoder3D(nn.Module):
             self.highway = HighwayLayer(in_channels=out_channels,
                                         mode="3d")
         self.norm = nn.BatchNorm3d(num_features=out_channels, affine=False)
-        self.act = nn.ReLU6(inplace=INPLACE)
+        self.act = get_act(activation)
 
     def forward(self, x):
         conv_transpose = self.conv_transpose(x)
@@ -212,55 +234,61 @@ class Decoder3D(nn.Module):
         if self.use_highway:
             out = self.highway(conv_transpose, upsample)
         else:
-            out = conv_transpose + upsample
+            out = (conv_transpose + upsample) / math.sqrt(2)
         out = self.norm(out)
         out = self.act(out)
         return out
 
 
 class HighwayOutput2D(nn.Module):
-    def __init__(self, in_channels, out_channels, act="tanh", init_bias=-3.0):
+    def __init__(self, in_channels, out_channels,
+                 use_highway=True, activation="tanh", init_bias=-3.0):
         super().__init__()
-        self.conv_1x1 = ConvBlock2D(in_channels=in_channels,
-                                    out_channels=out_channels,
-                                    kernel_size=1)
-        self.conv_3x3 = ConvBlock2D(in_channels=in_channels,
-                                    out_channels=out_channels,
-                                    kernel_size=3)
-        self.highway = HighwayLayer(in_channels=out_channels,
-                                    mode="2d", init_bias=init_bias)
-        if act == "tanh":
-            self.act = torch.tanh
-        elif act == "sigmoid":
-            self.act = torch.sigmoid
+        self.use_highway = use_highway
+        self.conv_1x1 = nn.Conv2d(in_channels=in_channels,
+                                  out_channels=out_channels,
+                                  kernel_size=1)
+        self.conv_3x3 = nn.Conv2d(in_channels=in_channels,
+                                  out_channels=out_channels,
+                                  kernel_size=3)
+        if self.use_highway:
+            self.highway = HighwayLayer(in_channels=out_channels,
+                                        mode="2d", init_bias=init_bias)
+        self.act = get_act(activation)
 
     def forward(self, x):
         conv_1x1 = self.conv_1x1(x)
         conv_3x3 = self.conv_3x3(x)
-        highway_output = self.highway(conv_1x1, conv_3x3)
-        highway_output = self.act(highway_output)
-        return highway_output
+        if self.use_highway:
+            output = self.highway(conv_1x1, conv_3x3)
+        else:
+            output = (conv_1x1 + conv_3x3) / math.sqrt(2)
+        output = self.act(output)
+        return output
 
 
 class HighwayOutput3D(nn.Module):
-    def __init__(self, in_channels, out_channels, act="tanh", init_bias=-3.0):
+    def __init__(self, in_channels, out_channels,
+                 use_highway=True, activation="tanh", init_bias=-3.0):
         super().__init__()
-        self.conv_1x1 = ConvBlock3D(in_channels=in_channels,
-                                    out_channels=out_channels,
-                                    kernel_size=1)
-        self.conv_3x3 = ConvBlock3D(in_channels=in_channels,
-                                    out_channels=out_channels,
-                                    kernel_size=3)
-        self.highway = HighwayLayer(in_channels=out_channels,
-                                    mode="3d", init_bias=init_bias)
-        if act == "tanh":
-            self.act = torch.tanh
-        elif act == "sigmoid":
-            self.act = torch.sigmoid
+        self.use_highway = use_highway
+        self.conv_1x1 = nn.Conv3d(in_channels=in_channels,
+                                  out_channels=out_channels,
+                                  kernel_size=1)
+        self.conv_3x3 = nn.Conv3d(in_channels=in_channels,
+                                  out_channels=out_channels,
+                                  kernel_size=1)
+        if self.use_highway:
+            self.highway = HighwayLayer(in_channels=out_channels,
+                                        mode="3d", init_bias=init_bias)
+        self.act = get_act(activation)
 
     def forward(self, x):
         conv_1x1 = self.conv_1x1(x)
         conv_3x3 = self.conv_3x3(x)
-        highway_output = self.highway(conv_1x1, conv_3x3)
-        highway_output = self.act(highway_output)
-        return highway_output
+        if self.use_highway:
+            output = self.highway(conv_1x1, conv_3x3)
+        else:
+            output = (conv_1x1 + conv_3x3) / math.sqrt(2)
+        output = self.act(output)
+        return output

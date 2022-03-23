@@ -2,7 +2,7 @@ from .base_model import InceptionResNetV2_2D, InceptionResNetV2_3D
 from .transformer_layers import TransformerEncoder, PositionalEncoding
 from reformer_pytorch import Reformer
 import torch
-from torch import nn
+from torch import bucketize, nn
 from einops import rearrange
 
 
@@ -27,19 +27,21 @@ class InceptionResNetV2Transformer3D(nn.Module):
             # current feature shape: [512 1536]
             attn_dim_list = [block_size * 12 for _ in range(6)]
             num_head_list = [8 for _ in range(6)]
+            element_num = 32 * 16 * 16 if padding == "same" else 8 * 14 * 14
             if not use_base:
-                self.positional_encoding = PositionalEncoding(d_model=8 * 14 * 14,
+                bucket_size = 128 if padding == "same" else 98
+                self.positional_encoding = PositionalEncoding(d_model=element_num,
                                                               dropout=dropout_proba)
                 self.transformer_encoder = Reformer(
                     dim=feature_channel_num,
                     depth=6,
                     heads=8,
-                    bucket_size=98,
-                    lsh_dropout=0.1,
+                    bucket_size=bucket_size,
+                    lsh_dropout=dropout_proba,
                     causal=True
                 )
             else:
-                self.positional_encoding = PositionalEncoding(d_model=8 * 14 * 14,
+                self.positional_encoding = PositionalEncoding(d_model=element_num,
                                                               dropout=dropout_proba)
                 encoder_layers = nn.TransformerEncoderLayer(d_model=feature_channel_num,
                                                             nhead=num_head_list[0], dim_feedforward=attn_dim_list[0],
@@ -49,14 +51,15 @@ class InceptionResNetV2Transformer3D(nn.Module):
         else:
             self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
             feature_channel_num = block_size * 96
+
         final_linear_sequence = [
-            nn.Linear(feature_channel_num, 512),  # 512?
+            nn.Linear(feature_channel_num, 1024),  # 512?
             nn.Dropout(dropout_proba),
             nn.ReLU6(),
-            nn.Linear(512, 256),
+            nn.Linear(1024, 512),
             nn.Dropout(dropout_proba),
             nn.ReLU6(),
-            nn.Linear(256, num_class)
+            nn.Linear(512, num_class)
         ]
         if self.activation == "sigmoid":
             final_linear_sequence.append(nn.Sigmoid())
