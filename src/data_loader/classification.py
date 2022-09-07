@@ -201,6 +201,7 @@ class AgeGenderClassifyDataset(BaseDataset):
                  image_path_list=None,
                  label_policy=None,
                  label_level=1,
+                 num_data_each_age=None,
                  on_memory=False,
                  argumentation_proba=False,
                  argumentation_policy_dict=base_augmentation_policy_dict,
@@ -219,15 +220,14 @@ class AgeGenderClassifyDataset(BaseDataset):
         for image_path in image_path_list:
             age_gender = get_parent_dir_name(image_path, level=1)
             if age_gender in self.image_info_dict:
-                if self.image_info_dict[age_gender] > 24:
+                if self.image_info_dict[age_gender] > num_data_each_age - 1:
                     continue
                 self.image_info_dict[age_gender] += 1
             else:
-                # age_gender: "0.95_0"
+                # age_gender = "0.95_0"
                 self.image_info_dict[age_gender] = 1
-        self.current_image_info_dict = {
-            key: 0 for key in self.image_info_dict.keys()}
-
+        self.current_image_info_dict = None
+        self.reset_current_image_info_dict()
         self.iter_len = np.sum(list(self.image_info_dict.values()))
         self.label_policy = label_policy
         self.label_level = label_level
@@ -249,12 +249,8 @@ class AgeGenderClassifyDataset(BaseDataset):
         self.print_data_info()
 
     def __getitem__(self, i):
-
         if i >= len(self):
             raise IndexError
-
-        if self.inner_index == self.image_num:
-            self.reset_current_image_info_dict()
 
         image_path = self.get_next_image_path()
         image_array = imread(image_path, channel=self.image_channel)
@@ -269,7 +265,6 @@ class AgeGenderClassifyDataset(BaseDataset):
         image_dir_name = get_parent_dir_name(image_path,
                                              self.label_level)
         label = self.label_policy(image_dir_name)
-
         image_array = torch.as_tensor(image_array, dtype=self.dtype)
         label = torch.as_tensor(label, dtype=self.dtype)
 
@@ -292,6 +287,8 @@ class AgeGenderClassifyDataset(BaseDataset):
         data_ready = False
         image_path = None
         while not data_ready:
+            if self.inner_index == self.image_num:
+                self.reset_current_image_info_dict()
             image_path = self.image_path_list[self.inner_index]
             age_gender = get_parent_dir_name(image_path, level=1)
             total_data_num = self.image_info_dict[age_gender]

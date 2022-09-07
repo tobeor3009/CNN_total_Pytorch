@@ -87,6 +87,32 @@ def get_augumented_array(image_array, argumentation_proba, argumentation_policy_
         return final_transform(image=image_array)['image']
 
 
+def get_seg_augumented_array(image_array, mask_array,
+                             argumentation_proba, argumentation_policy_dict):
+    final_transform_list = []
+    if argumentation_policy_dict["positional"] is True:
+        final_transform_list.append(positional_transform)
+    if argumentation_policy_dict["noise"] is True:
+        final_transform_list.append(noise_transform)
+    if argumentation_policy_dict["elastic"] is True:
+        final_transform_list.append(elastic_tranform)
+    if argumentation_policy_dict["brightness_contrast"] is True:
+        final_transform_list.append(brightness_contrast_transform)
+    if argumentation_policy_dict["color"] is True:
+        final_transform_list.append(color_transform)
+    if argumentation_policy_dict["to_jpeg"] is True:
+        final_transform_list.append(to_jpeg_transform)
+
+    final_transform = A.Compose(final_transform_list,
+                                p=argumentation_proba)
+
+    if argumentation_proba == 0:
+        return image_array, mask_array
+    else:
+        transformed = final_transform(image=image_array, mask=mask_array)
+        return transformed['image'], transformed['mask']
+
+
 def get_preprocessed_array(image_array, preprocess_input):
     if preprocess_input is None:
         return image_array

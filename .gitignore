@@ -5,3 +5,10 @@ ckpts/
 *.csv
 *.yaml
 *.pyc
+*.zip
+*.ipynb
+*.png
+*.pth
+*.cpp
+*.cu
+*.db

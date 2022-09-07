@@ -7,30 +7,17 @@ import numpy as np
 
 # this library module
 from .utils import imread, get_parent_dir_name
-from .data_utils import get_resized_array, get_augumented_array, get_preprocessed_array, base_augmentation_policy_dict
+from .data_utils import get_resized_array, get_seg_augumented_array, get_preprocessed_array, base_augmentation_policy_dict
 from .base_loader import BaseDataset
-"""
-Expected Data Path Structure
-
-Example)
-train - negative
-      - positive
-valid - negative
-      - positive
-test - negative
-     - positive
-
-"""
 
 
 class SegDataset(BaseDataset):
-
     def __init__(self,
                  image_path_list=None,
                  mask_path_list=None,
                  on_memory=False,
-                 argumentation_proba=False,
-                 argumentation_policy_dict=base_augmentation_policy_dict,
+                 augmentation_proba=False,
+                 augmentation_policy_dict=base_augmentation_policy_dict,
                  image_channel_dict={"image": "rgb", "mask": "grayscale"},
                  preprocess_dict={"image": "-1~1", "mask": "0~1"},
                  target_size=None,
@@ -43,8 +30,8 @@ class SegDataset(BaseDataset):
 
         self.on_memory = on_memory
         self.is_data_ready = False if on_memory else True
-        self.argumentation_proba = argumentation_proba
-        self.argumentation_policy_dict = argumentation_policy_dict
+        self.augmentation_proba = augmentation_proba
+        self.augmentation_policy_dict = augmentation_policy_dict
         self.image_channel = image_channel_dict["image"]
         self.mask_channel = image_channel_dict["mask"]
         self.image_preprocess = preprocess_dict["image"]
@@ -83,12 +70,9 @@ class SegDataset(BaseDataset):
                                            self.target_size,
                                            self.interpolation)
         if (not self.on_memory) or (self.on_memory and self.is_data_ready):
-            image_array = get_augumented_array(image_array,
-                                               self.argumentation_proba,
-                                               self.argumentation_policy_dict)
-            mask_array = get_augumented_array(mask_array,
-                                              self.argumentation_proba,
-                                              self.argumentation_policy_dict)
+            image_array, mask_array = get_seg_augumented_array(image_array, mask_array,
+                                                               self.augmentation_proba,
+                                                               self.augmentation_policy_dict)
             image_array = get_preprocessed_array(image_array,
                                                  self.image_preprocess)
             mask_array = get_preprocessed_array(mask_array,

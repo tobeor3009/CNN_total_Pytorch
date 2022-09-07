@@ -4,6 +4,31 @@ from functools import partial
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from reformer_pytorch import Reformer
+from einops import rearrange
+
+
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2)
+                             * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, d_model, 1)
+        pe[:, 0::2, 0] = torch.sin(position * div_term)
+        pe[:, 1::2, 0] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        """
+        Args:
+            x: Tensor, shape [seq_len, batch_size, embedding_dim]
+        """
+        x = x + self.pe[:x.size(0)]
+        return self.dropout(x)
 
 
 def get_inplanes():
@@ -148,8 +173,24 @@ class ResNet(nn.Module):
                                        stride=2)
 
         if self.include_head == True:
+
+            # bucket_size = 64
+            # self.positional_encoding = PositionalEncoding(d_model=512,
+            #                                               dropout=0.1)
+            # self.transformer_encoder = Reformer(
+            #     dim=block_inplanes[3] * block.expansion,
+            #     depth=6,
+            #     heads=8,
+            #     bucket_size=bucket_size,
+            #     lsh_dropout=0.1,
+            #     causal=True
+            # )
             self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
-            self.fc = nn.Linear(block_inplanes[3] * block.expansion, n_classes)
+            self.fc = nn.Sequential(
+                nn.Linear(block_inplanes[3] * block.expansion, 1024),
+                nn.Dropout(p=0.25),
+                nn.Linear(1024, n_classes)
+            )
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
@@ -209,10 +250,12 @@ class ResNet(nn.Module):
         x = self.layer4(x)
 
         if self.include_head == True:
+            # x = rearrange(x, 'b c z h w-> b (z h w) c')
+            # x = self.positional_encoding(x)
+            # x = self.transformer_encoder(x)
             x = self.avgpool(x)
             x = x.view(x.size(0), -1)
             x = self.fc(x)
-
         return x
 
 
