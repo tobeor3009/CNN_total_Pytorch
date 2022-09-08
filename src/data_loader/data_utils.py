@@ -40,7 +40,8 @@ brightness_contrast_transform = A.OneOf([
 
 color_transform = A.OneOf([
     A.ChannelShuffle(p=1),
-    A.ToGray(p=1),
+    A.HueSaturationValue(p=0.1),
+    # A.ToGray(p=1),
     A.ToSepia(p=1),
 ], p=0.5)
 
