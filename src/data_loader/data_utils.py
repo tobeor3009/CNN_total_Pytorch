@@ -23,30 +23,31 @@ positional_transform = A.OneOf([
     A.VerticalFlip(p=1),
     A.Transpose(p=1),
     A.RandomRotate90(p=1)
-], p=0.5)
+], p=1)
 
 noise_transform = A.OneOf([
     A.Blur(blur_limit=(2, 2), p=1),
     A.GaussNoise(var_limit=(0.01, 5), p=1),
-], p=0.5)
+], p=1)
 
-elastic_tranform = A.ElasticTransform(p=0.5)
+elastic_tranform = A.ElasticTransform(p=1)
 
 brightness_value = 0.1
 brightness_contrast_transform = A.OneOf([
     A.RandomBrightnessContrast(
         brightness_limit=(-brightness_value, brightness_value), contrast_limit=(-brightness_value, brightness_value), p=1),
-], p=0.5)
+], p=1)
 
 color_transform = A.OneOf([
     A.ChannelShuffle(p=1),
     A.HueSaturationValue(p=0.1),
     # A.ToGray(p=1),
     # A.ToSepia(p=1),
-], p=0.5)
+], p=1)
 
-to_jpeg_transform = A.ImageCompression(
-    quality_lower=99, quality_upper=100, p=0.5)
+to_jpeg_transform = A.ImageCompression(quality_lower=99,
+                                       quality_upper=100,
+                                       p=1)
 
 to_tensor_transform = albumentations.pytorch.transforms.ToTensorV2()
 ################### Preprocess Constant ###################
@@ -66,8 +67,6 @@ def get_resized_array(image_array, target_size, interpolation):
 
 def get_augumented_array(image_array, argumentation_proba, argumentation_policy_dict):
     final_transform_list = []
-    if argumentation_policy_dict["positional"] is True:
-        final_transform_list.append(positional_transform)
     if argumentation_policy_dict["noise"] is True:
         final_transform_list.append(noise_transform)
     if argumentation_policy_dict["elastic"] is True:
@@ -79,8 +78,10 @@ def get_augumented_array(image_array, argumentation_proba, argumentation_policy_
     if argumentation_policy_dict["to_jpeg"] is True:
         final_transform_list.append(to_jpeg_transform)
 
-    final_transform = A.Compose(
-        final_transform_list, p=argumentation_proba)
+    transform_1 = positional_transform
+    transform_2 = A.OneOf(final_transform_list, p=1)
+    final_transform = A.Compose([transform_1, transform_2],
+                                p=argumentation_proba)
 
     if argumentation_proba == 0:
         return image_array
@@ -91,8 +92,6 @@ def get_augumented_array(image_array, argumentation_proba, argumentation_policy_
 def get_seg_augumented_array(image_array, mask_array,
                              argumentation_proba, argumentation_policy_dict):
     final_transform_list = []
-    if argumentation_policy_dict["positional"] is True:
-        final_transform_list.append(positional_transform)
     if argumentation_policy_dict["noise"] is True:
         final_transform_list.append(noise_transform)
     if argumentation_policy_dict["elastic"] is True:
@@ -104,7 +103,9 @@ def get_seg_augumented_array(image_array, mask_array,
     if argumentation_policy_dict["to_jpeg"] is True:
         final_transform_list.append(to_jpeg_transform)
 
-    final_transform = A.Compose(final_transform_list,
+    transform_1 = positional_transform
+    transform_2 = A.OneOf(final_transform_list, p=1)
+    final_transform = A.Compose([transform_1, transform_2],
                                 p=argumentation_proba)
 
     if argumentation_proba == 0:
