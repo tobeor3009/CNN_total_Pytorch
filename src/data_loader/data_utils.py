@@ -32,7 +32,7 @@ noise_transform = A.OneOf([
 
 elastic_tranform = A.ElasticTransform(p=0.5)
 
-brightness_value = 0.2
+brightness_value = 0.1
 brightness_contrast_transform = A.OneOf([
     A.RandomBrightnessContrast(
         brightness_limit=(-brightness_value, brightness_value), contrast_limit=(-brightness_value, brightness_value), p=1),
@@ -42,7 +42,7 @@ color_transform = A.OneOf([
     A.ChannelShuffle(p=1),
     A.HueSaturationValue(p=0.1),
     # A.ToGray(p=1),
-    A.ToSepia(p=1),
+    # A.ToSepia(p=1),
 ], p=0.5)
 
 to_jpeg_transform = A.ImageCompression(
