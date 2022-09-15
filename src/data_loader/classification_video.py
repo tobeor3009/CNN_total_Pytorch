@@ -1,5 +1,6 @@
 # base module
 from tqdm import tqdm
+from glob import glob
 import os
 # external module
 import torch
@@ -23,11 +24,37 @@ test - negative
 
 """
 
+from vidaug import augmentors as va
+
+
+# Used to apply augmentor with 50% probability
+def sometimes(aug): return va.Sometimes(0.9, aug)
+
+
+blur_aug = va.OneOf([
+    sometimes(va.GaussianBlur(sigma=1)),
+    sometimes(va.Pepper()),
+    sometimes(va.Salt())
+])
+
+video_aug_seq = va.OneOf([
+    blur_aug,
+    # sometimes(va.InvertColor()),
+    sometimes(va.VerticalFlip()),
+    sometimes(va.HorizontalFlip())
+])
+
+
+def get_aug_video_array(video_array):
+    aug_video_array = video_aug_seq(video_array)
+    aug_video_array = np.stack(aug_video_array, axis=0)
+    return aug_video_array
+
 
 class ClassifyDataset(BaseDataset):
 
     def __init__(self,
-                 image_path_list=None,
+                 image_folder_list=None,
                  label_policy=None,
                  label_level=1,
                  on_memory=False,
@@ -41,7 +68,8 @@ class ClassifyDataset(BaseDataset):
                  dtype=torch.float32):
         super().__init__()
 
-        self.image_path_list = [image_path for image_path in image_path_list]
+        self.image_folder_list = [
+            image_folder for image_folder in image_folder_list]
         self.label_policy = label_policy
         self.label_level = label_level
         self.on_memory = on_memory
@@ -71,39 +99,41 @@ class ClassifyDataset(BaseDataset):
         current_index = i
 
         if self.on_memory and self.is_data_ready:
-            image_array, label = \
+            video_array, label = \
                 self.data_on_memory_list[current_index]
-            image_array = get_augumented_array(image_array,
-                                               self.augmentation_proba,
-                                               self.augmentation_policy_dict)
-            image_array = get_preprocessed_array(image_array,
+            video_array = get_aug_video_array(video_array)
+            video_array = get_preprocessed_array(video_array,
                                                  self.preprocess_input)
         else:
-            image_path = self.image_path_list[current_index]
-            image_array = imread(image_path, channel=self.image_channel)
-            image_array = get_resized_array(image_array,
-                                            self.target_size,
-                                            self.interpolation)
+            image_folder = self.image_folder_list[current_index]
+            image_path_list = sorted(glob(f"{image_folder}/*.png"))
+            video_array = []
+            for image_path in image_path_list:
+                image_array = imread(image_path, channel=self.image_channel)
+                image_array = get_resized_array(image_array,
+                                                self.target_size,
+                                                self.interpolation)
+                video_array.append(image_array)
+            video_array = np.stack(video_array, axis=0)
             if not self.on_memory:
-                image_array = get_augumented_array(image_array,
-                                                   self.augmentation_proba,
-                                                   self.augmentation_policy_dict)
-                image_array = get_preprocessed_array(image_array,
+                video_array = get_aug_video_array(video_array)
+                video_array = get_preprocessed_array(video_array,
                                                      self.preprocess_input)
             if self.is_class_cached:
                 label = self.class_list[current_index]
             else:
-                image_dir_name = get_parent_dir_name(image_path,
+                image_dir_name = get_parent_dir_name(image_folder,
                                                      self.label_level)
                 label = self.label_policy(image_dir_name)
                 self.class_list[current_index] = label
                 self.is_class_cached = self.check_class_list_cached()
 
-        image_array = torch.as_tensor(image_array, dtype=self.dtype)
+        video_array = torch.as_tensor(video_array, dtype=self.dtype)
         label = torch.as_tensor(label, dtype=self.dtype)
-        # image_array = image_array.astype(self.dtype)
-        # label = label.astype(self.dtype)
-        return image_array, label
+        return video_array, label
+
+    def __len__(self):
+        return len(self.image_folder_list)
 
     def print_data_info(self):
         data_num = len(self)
