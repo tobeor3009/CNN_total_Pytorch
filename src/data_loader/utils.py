@@ -2,30 +2,34 @@ import cv2
 import os
 import numpy as np
 import json
+import nibabel as nib
 from collections.abc import Mapping
 
 
 def imread(img_path, channel=None):
     extension = os.path.splitext(img_path)[1]
     if extension == ".npy":
-        img_numpy_array = np.load(
-            img_path, allow_pickle=True).astype("float32")
+        img_numpy_array = np.load(img_path,
+                                  allow_pickle=True).astype("float32")
+    elif extension == ".gz":
+        image_object = nib.load(img_path)
+        img_numpy_array = image_object.get_fdata().astype("float32")
     else:
         img_byte_stream = open(img_path.encode("utf-8"), "rb")
         img_byte_array = bytearray(img_byte_stream.read())
         img_numpy_array = np.asarray(img_byte_array, dtype=np.uint8)
 
         if channel == "rgb":
-            img_numpy_array = cv2.imdecode(
-                img_numpy_array, cv2.IMREAD_UNCHANGED)
-            img_numpy_array = cv2.cvtColor(
-                img_numpy_array, cv2.COLOR_BGR2RGB)
+            img_numpy_array = cv2.imdecode(img_numpy_array,
+                                           cv2.IMREAD_UNCHANGED)
+            img_numpy_array = cv2.cvtColor(img_numpy_array,
+                                           cv2.COLOR_BGR2RGB)
         elif channel == "grayscale":
-            img_numpy_array = cv2.imdecode(
-                img_numpy_array, cv2.IMREAD_GRAYSCALE)
+            img_numpy_array = cv2.imdecode(img_numpy_array,
+                                           cv2.IMREAD_GRAYSCALE)
         else:
-            img_numpy_array = cv2.imdecode(
-                img_numpy_array, cv2.IMREAD_UNCHANGED)
+            img_numpy_array = cv2.imdecode(img_numpy_array,
+                                           cv2.IMREAD_UNCHANGED)
     return img_numpy_array
 
 

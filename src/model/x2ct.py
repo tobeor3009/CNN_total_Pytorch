@@ -407,7 +407,7 @@ class FinalPatchExpand_X43D(nn.Module):
         self.input_resolution = input_resolution
         self.dim = dim
         self.dim_scale = dim_scale
-        self.expand = nn.Linear(dim, 64 * dim, bias=False)
+        self.expand = nn.Linear(dim, (dim_scale ** 3) * dim, bias=False)
         self.output_dim = dim
         self.norm = norm_layer(self.output_dim)
 
@@ -554,7 +554,7 @@ class X2CTSwinTransformer(nn.Module):
 
         print("SwinTransformerSys expand initial----depths:{};depths_decoder:{};drop_path_rate:{};num_classes:{}".format(depths,
                                                                                                                          depths_decoder, drop_path_rate, num_classes))
-
+        self.patch_size = patch_size
         self.num_classes = num_classes
         self.num_layers = len(depths)
         self.embed_dim = embed_dim
@@ -586,7 +586,7 @@ class X2CTSwinTransformer(nn.Module):
                                                 sum(depths))]  # stochastic depth decay rule
 
         # build encoder and bottleneck layers
-        self.xray_layers = nn.ModuleList()
+        self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
             layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
                                input_resolution=(patches_resolution[0] // (2 ** i_layer),
@@ -603,7 +603,7 @@ class X2CTSwinTransformer(nn.Module):
                                downsample=PatchMerging if (
                                    i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint)
-            self.xray_layers.append(layer)
+            self.layers.append(layer)
 
         self.x2ct_layer = PatchExpanding_2D_3D(input_resolution=(patches_resolution[0] // (2 ** i_layer),
                                                                  patches_resolution[1] // (2 ** i_layer)),
@@ -663,7 +663,7 @@ class X2CTSwinTransformer(nn.Module):
             self.up = FinalPatchExpand_X43D(input_resolution=(img_size // patch_size,
                                                               img_size // patch_size,
                                                               img_size // patch_size),
-                                            dim_scale=4, dim=embed_dim)
+                                            dim_scale=patch_size, dim=embed_dim)
             self.output = nn.Conv3d(in_channels=embed_dim, out_channels=self.num_classes,
                                     kernel_size=1, bias=False)
 
@@ -694,7 +694,7 @@ class X2CTSwinTransformer(nn.Module):
         x = self.pos_drop(x)
         x_downsample = []
 
-        for layer in self.xray_layers:
+        for layer in self.layers:
             x_downsample.append(x)
             x = layer(x)
 
@@ -722,9 +722,11 @@ class X2CTSwinTransformer(nn.Module):
         assert L == Z * H * W, "input size unmatched"
         if self.final_upsample == "expand_first":
             x = self.up(x)
-            x = x.view(B, 4 * Z, 4 * H, 4 * W, -1)
+            x = x.view(B,
+                       self.patch_size * Z,
+                       self.patch_size * H,
+                       self.patch_size * W, -1)
             x = x.permute(0, 4, 1, 2, 3)  # B, C, Z, H, W
-            print(x.shape)
             x = self.output(x)
 
         return x
@@ -744,7 +746,7 @@ class X2CTSwinTransformer(nn.Module):
     def flops(self):
         flops = 0
         flops += self.patch_embed.flops()
-        for i, layer in enumerate(self.xray_layers):
+        for i, layer in enumerate(self.layers):
             flops += layer.flops()
         flops += self.num_features * \
             self.patches_resolution[0] * \
