@@ -1,6 +1,5 @@
 # base module
-from tqdm import tqdm
-import os
+from typing import Any
 # external module
 import torch
 import numpy as np
@@ -10,35 +9,22 @@ import random
 from .utils import imread, get_parent_dir_name
 from .data_utils import get_resized_array, get_augumented_array, get_preprocessed_array, base_augmentation_policy_dict
 from .base_loader import BaseDataset
-"""
-Expected Data Path Structure
-
-Example)
-train - negative
-      - positive
-valid - negative
-      - positive
-test - negative
-     - positive
-
-"""
 
 
 class ClassifyDataset(BaseDataset):
-
     def __init__(self,
-                 image_path_list=None,
-                 label_policy=None,
-                 label_level=1,
-                 on_memory=False,
-                 augmentation_proba=False,
-                 augmentation_policy_dict=base_augmentation_policy_dict,
-                 image_channel_dict={"image": "rgb"},
-                 preprocess_input="-1~1",
-                 target_size=None,
-                 interpolation="bilinear",
-                 class_mode="binary",
-                 dtype=torch.float32):
+                 image_path_list: list = [],
+                 label_policy: list = [],
+                 label_level: int = 1,
+                 on_memory: bool = False,
+                 augmentation_proba: float = 0.0,
+                 augmentation_policy_dict: dict = base_augmentation_policy_dict,
+                 image_channel_dict: dict = {"image": "rgb"},
+                 preprocess_input: Any = "-1~1",
+                 target_size: tuple = None,
+                 interpolation: str = "bilinear",
+                 class_mode: str = "binary",
+                 dtype: torch.dtype = torch.float32):
         super().__init__()
 
         self.image_path_list = [image_path for image_path in image_path_list]
@@ -111,7 +97,6 @@ class ClassifyDataset(BaseDataset):
 
 
 class AgeGenderClassifyDataset(BaseDataset):
-
     def __init__(self,
                  image_path_list=None,
                  label_policy=None,
@@ -196,7 +181,6 @@ class AgeGenderClassifyDataset(BaseDataset):
 
 
 class AgeGenderClassifyDataset(BaseDataset):
-
     def __init__(self,
                  image_path_list=None,
                  label_policy=None,

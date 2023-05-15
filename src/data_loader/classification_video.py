@@ -1,7 +1,6 @@
 # base module
-from tqdm import tqdm
 from glob import glob
-import os
+from typing import Any
 # external module
 import torch
 import numpy as np
@@ -54,18 +53,18 @@ def get_aug_video_array(video_array):
 class ClassifyDataset(BaseDataset):
 
     def __init__(self,
-                 image_folder_list=None,
-                 label_policy=None,
-                 label_level=1,
-                 on_memory=False,
-                 augmentation_proba=False,
-                 augmentation_policy_dict=base_augmentation_policy_dict,
-                 image_channel_dict={"image": "rgb"},
-                 preprocess_input="-1~1",
-                 target_size=None,
-                 interpolation="bilinear",
-                 class_mode="binary",
-                 dtype=torch.float32):
+                 image_folder_list: list = [],
+                 label_policy: list = [],
+                 label_level: list = 1,
+                 on_memory: bool = False,
+                 augmentation_proba: bool = False,
+                 augmentation_policy_dict: dict = base_augmentation_policy_dict,
+                 image_channel_dict: dict = {"image": "rgb"},
+                 preprocess_input: Any = "-1~1",
+                 target_size: tuple = None,
+                 interpolation: str = "bilinear",
+                 class_mode: str = "binary",
+                 dtype: torch.dtype = torch.float32):
         super().__init__()
 
         self.image_folder_list = [
