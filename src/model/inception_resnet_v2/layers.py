@@ -1,5 +1,5 @@
 import math
-
+from functools import partial
 import torch
 from torch import nn
 from .cbam import CBAM
@@ -23,6 +23,8 @@ def get_act(activation):
         act = torch.sigmoid
     elif activation == "tanh":
         act = torch.tanh
+    elif activation == "softmax":
+        act = partial(torch.softmax, dim=1)
     elif activation is None:
         act = nn.Identity()
     return act
@@ -122,20 +124,26 @@ class HighwayLayer(nn.Module):
     def __init__(self, in_channels, mode="2d", init_bias=-3.0):
         super().__init__()
         self.mode = mode
-        self.transform = nn.Linear(in_channels, in_channels)
+        self.conv = nn.Conv2d(in_channels, in_channels,
+                              kernel_size=16, stride=16, bias=False)
+        highway_channel = max(in_channels, 32)
+        self.conv_avg = nn.AdaptiveAvgPool1d(highway_channel)
+        self.transform = nn.Linear(highway_channel, in_channels)
         self.transform.bias.data.fill_(init_bias)
 
     def forward(self, x, y):
-        # x.shape: [B C H W]
-        # x_proj: [B C]
         if self.mode == "2d":
-            x_proj = x.mean([2, 3])
+            x_proj = self.conv(x)
+            x_proj = x_proj.view(x.size(0), -1)
+            x_proj = self.conv_avg(x_proj)
         elif self.mode == "3d":
-            x_proj = x.mean([2, 3, 4])
+            # You may need to adjust the Conv2d layer to Conv3d for 3D inputs
+            raise NotImplementedError("3D mode is not implemented yet")
 
         x_proj = self.transform(x_proj)
         x_proj = torch.sigmoid(x_proj)
         x_proj_shape = x_proj.size()
+
         if self.mode == "2d":
             x_proj = x_proj.view(*x_proj_shape, 1, 1)
         elif self.mode == "3d":
@@ -149,34 +157,26 @@ class Decoder2D(nn.Module):
                  activation=DEFAULT_ACT, kernel_size=2, use_highway=True):
         super().__init__()
         self.use_highway = use_highway
-        conv_before_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
-                                              out_channels=out_channels,
-                                              kernel_size=1)
         pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=kernel_size)
-        conv_after_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
+        conv_after_pixel_shuffle = nn.Conv2d(in_channels=in_channels // 4,
                                              out_channels=out_channels,
                                              kernel_size=1)
         self.pixel_shuffle = nn.Sequential(
-            conv_before_pixel_shuffle,
             pixel_shuffle_layer,
             conv_after_pixel_shuffle
         )
-        conv_before_upsample = nn.Conv2d(in_channels=in_channels,
-                                         out_channels=out_channels,
-                                         kernel_size=1)
         upsample_layer = nn.Upsample(scale_factor=kernel_size)
         conv_after_upsample = nn.Conv2d(in_channels=in_channels,
                                         out_channels=out_channels,
                                         kernel_size=1)
         self.upsample = nn.Sequential(
-            conv_before_upsample,
             upsample_layer,
             conv_after_upsample
         )
         if self.use_highway:
             self.highway = HighwayLayer(in_channels=out_channels,
                                         mode="2d")
-        self.norm = nn.BatchNorm2d(num_features=out_channels, affine=False)
+        self.norm = nn.InstanceNorm2d(num_features=out_channels, affine=False)
         self.act = get_act(activation)
 
     def forward(self, x):
@@ -250,7 +250,7 @@ class HighwayOutput2D(nn.Module):
                                   kernel_size=1)
         self.conv_3x3 = nn.Conv2d(in_channels=in_channels,
                                   out_channels=out_channels,
-                                  kernel_size=3)
+                                  kernel_size=3, padding="same")
         if self.use_highway:
             self.highway = HighwayLayer(in_channels=out_channels,
                                         mode="2d", init_bias=init_bias)
