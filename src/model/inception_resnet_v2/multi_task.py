@@ -7,13 +7,14 @@ from .base_model import InceptionResNetV2_2D, get_skip_connect_channel_list
 from .transformer_layers import PositionalEncoding
 from .layers import ConvBlock2D, Decoder2D, HighwayOutput2D
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
+USE_INPLACE = True
 
 
 class InceptionResNetV2MultiTask2D(nn.Module):
     def __init__(self, input_shape, class_channel, seg_channels, block_size=16,
                  include_cbam=False, include_context=False, decode_init_channel=768,
                  skip_connect=True, dropout_proba=0.05, class_act="softmax", seg_act="sigmoid",
-                 get_seg=True, get_class=True
+                 get_seg=True, get_class=True, use_class_head_simple=True
                  ):
         super().__init__()
 
@@ -51,9 +52,14 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                    out_channels=seg_channels,
                                                    activation=seg_act)
         if self.get_class:
-            self.classfication_head = ClassificationHead(feature_channel_num,
-                                                         class_channel,
-                                                         dropout_proba, class_act)
+            if use_class_head_simple:
+                self.classfication_head = ClassificationHeadSimple(feature_channel_num,
+                                                                   class_channel,
+                                                                   dropout_proba, class_act)
+            else:
+                self.classfication_head = ClassificationHead(feature_channel_num,
+                                                             class_channel,
+                                                             dropout_proba, class_act)
 
     def forward(self, input_tensor):
         output = []
@@ -84,7 +90,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):
         super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
+        self.dropout = nn.Dropout(p=dropout, inplace=USE_INPLACE)
 
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
@@ -100,6 +106,27 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
+class ClassificationHeadSimple(nn.Module):
+    def __init__(self, in_channels, num_classes, dropout_proba, activation):
+        super(ClassificationHeadSimple, self).__init__()
+        self.gap_layer = nn.AdaptiveAvgPool2d((2, 2))
+        self.fc_1 = nn.Linear(in_channels * 4, in_channels)
+        self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
+        self.relu_layer = nn.ReLU6(inplace=USE_INPLACE)
+        self.fc_2 = nn.Linear(in_channels, num_classes)
+        self.act = get_act(activation)
+
+    def forward(self, x):
+        x = self.gap_layer(x)
+        x = x.flatten(start_dim=1, end_dim=-1)
+        x = self.fc_1(x)
+        x = self.dropout_layer(x)
+        x = self.relu_layer(x)
+        x = self.fc_2(x)
+        x = self.act(x)
+        return x
+
+
 class ClassificationHead(nn.Module):
     def __init__(self, in_channels, num_classes, dropout_proba, activation):
         super(ClassificationHead, self).__init__()
@@ -107,10 +134,10 @@ class ClassificationHead(nn.Module):
         self.pos_encoder = PositionalEncoding(in_channels)
 
         encoder_layers = TransformerEncoderLayer(d_model=in_channels, nhead=8,
-                                                 dropout=0.05)
+                                                 dropout=dropout_proba)
         self.transformer_encoder = TransformerEncoder(encoder_layers,
                                                       num_layers=6)
-        self.dropout = nn.Dropout(p=dropout_proba)
+        self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.fc = nn.Linear(in_channels, num_classes)
         self.act = get_act(activation)
 

@@ -6,7 +6,6 @@ import torch.utils.data as data
 import cv2
 import progressbar
 import numpy as np
-from tensorflow.keras.utils import to_categorical
 from sklearn.utils import shuffle as syncron_shuffle
 import albumentations as A
 

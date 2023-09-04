@@ -6,9 +6,11 @@ import nibabel as nib
 from collections.abc import Mapping
 
 
-def imread(img_path, channel=None):
+def imread(img_path, policy=None, channel=None):
     extension = os.path.splitext(img_path)[1]
-    if extension == ".npy":
+    if policy is not None:
+        img_numpy_array = policy(img_path)
+    elif extension == ".npy":
         img_numpy_array = np.load(img_path,
                                   allow_pickle=True).astype("float32")
     elif extension == ".gz":

@@ -4,7 +4,7 @@ from typing import Any
 import torch
 import numpy as np
 import random
-
+from typing import Callable
 # this library module
 from .utils import imread, get_parent_dir_name
 from .data_utils import get_resized_array, get_augumented_array, get_preprocessed_array, base_augmentation_policy_dict
@@ -14,13 +14,13 @@ from .base_loader import BaseDataset
 class ClassifyDataset(BaseDataset):
     def __init__(self,
                  image_path_list: list = [],
-                 label_policy: list = [],
-                 label_level: int = 1,
+                 imread_policy: Callable = None,
+                 label_policy: Callable = None,
                  on_memory: bool = False,
                  augmentation_proba: float = 0.0,
                  augmentation_policy_dict: dict = base_augmentation_policy_dict,
                  image_channel_dict: dict = {"image": "rgb"},
-                 preprocess_input: Any = "-1~1",
+                 preprocess_dict: dict = {"image": "-1~1"},
                  target_size: tuple = None,
                  interpolation: str = "bilinear",
                  class_mode: str = "binary",
@@ -28,14 +28,14 @@ class ClassifyDataset(BaseDataset):
         super().__init__()
 
         self.image_path_list = [image_path for image_path in image_path_list]
+        self.imread_policy = imread_policy
         self.label_policy = label_policy
-        self.label_level = label_level
         self.on_memory = on_memory
         self.is_data_ready = False if on_memory else True
         self.augmentation_proba = augmentation_proba
         self.augmentation_policy_dict = augmentation_policy_dict
         self.image_channel = image_channel_dict["image"]
-        self.preprocess_input = preprocess_input
+        self.preprocess_input = preprocess_dict["image"]
         self.target_size = target_size
         self.interpolation = interpolation
         self.class_mode = class_mode
@@ -66,7 +66,9 @@ class ClassifyDataset(BaseDataset):
                                                  self.preprocess_input)
         else:
             image_path = self.image_path_list[current_index]
-            image_array = imread(image_path, channel=self.image_channel)
+            image_array = imread(image_path,
+                                 policy=self.imread_policy["image"],
+                                 channel=self.image_channel)
             image_array = get_resized_array(image_array,
                                             self.target_size,
                                             self.interpolation)
@@ -79,9 +81,7 @@ class ClassifyDataset(BaseDataset):
             if self.is_class_cached:
                 label = self.class_list[current_index]
             else:
-                image_dir_name = get_parent_dir_name(image_path,
-                                                     self.label_level)
-                label = self.label_policy(image_dir_name)
+                label = self.label_policy(image_path)
                 self.class_list[current_index] = label
                 self.is_class_cached = self.check_class_list_cached()
 
