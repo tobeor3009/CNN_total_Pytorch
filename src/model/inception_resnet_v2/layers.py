@@ -9,6 +9,8 @@ DEFAULT_ACT = "mish"
 
 
 def get_act(activation):
+    if isinstance(activation, nn.Module):
+        act = activation 
     if activation == 'relu6':
         act = nn.ReLU6(inplace=INPLACE)
     elif activation == 'relu':
