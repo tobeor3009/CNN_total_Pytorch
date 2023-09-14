@@ -2,8 +2,8 @@ import math
 from functools import partial
 import torch
 from torch import nn
+from torch.nn import functional as F
 from .cbam import CBAM
-
 INPLACE = False
 DEFAULT_ACT = "mish"
 
@@ -28,6 +28,60 @@ def get_act(activation):
     elif activation is None:
         act = nn.Identity()
     return act
+
+
+def space_to_depth(x, block_size):
+    n, c, h, w = x.size()
+    unfolded_x = F.unfold(x, block_size, stride=block_size)
+    return unfolded_x.view(n, c * block_size ** 2,
+                           h // block_size, w // block_size)
+
+
+def space_to_depth_3d(input_tensor, block_size):
+    B, C, D, H, W = input_tensor.shape
+
+    # Reshape tensor
+    output_tensor = input_tensor.view(B, C,
+                                      D // block_size, block_size,
+                                      H // block_size, block_size,
+                                      W // block_size, block_size)
+
+    # Permute tensor dimensions
+    output_tensor = output_tensor.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
+
+    # Merge block_size^3 blocks into the channels
+    output_tensor = output_tensor.view(B, C * block_size * block_size * block_size,
+                                       D // block_size, H // block_size, W // block_size)
+    return output_tensor
+
+
+class PixelShuffle3d(nn.Module):
+    '''
+    Source: https://github.com/kuoweilai/pixelshuffle3d/blob/master/pixelshuffle3d.py
+    This class is a 3d version of pixelshuffle.
+    '''
+
+    def __init__(self, scale):
+        '''
+        :param scale: upsample scale
+        '''
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, input):
+        batch_size, channels, in_depth, in_height, in_width = input.size()
+        nOut = channels // self.scale ** 3
+
+        out_depth = in_depth * self.scale
+        out_height = in_height * self.scale
+        out_width = in_width * self.scale
+
+        input_view = input.contiguous().view(batch_size, nOut, self.scale, self.scale,
+                                             self.scale, in_depth, in_height, in_width)
+
+        output = input_view.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+
+        return output.view(batch_size, nOut, out_depth, out_height, out_width)
 
 
 class ConvBlock2D(nn.Module):
