@@ -64,7 +64,8 @@ class InceptionResNetV2MultiTask2D(nn.Module):
 
     def forward(self, input_tensor):
         output = []
-        decoded = self.base_model(input_tensor)
+        encode_feature = self.base_model(input_tensor)
+        decoded = encode_feature
         if self.get_seg:
             for decode_i in range(0, 5):
 
@@ -81,7 +82,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             output.append(seg_output)
 
         if self.get_class:
-            class_output = self.classfication_head(decoded)
+            class_output = self.classfication_head(encode_feature)
             output.append(class_output)
         if len(output) == 1:
             output = output[0]
