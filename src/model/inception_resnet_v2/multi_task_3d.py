@@ -78,7 +78,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                     skip_connect_tensor = getattr(self.base_model,
                                                   f"skip_connect_tensor_{4 - decode_i}")
                     decoded = torch.cat([decoded,
-                                         skip_connect_tensor], axis=1)
+                                         skip_connect_tensor], dim=1)
                 decode_conv = getattr(self, f"decode_conv_{decode_i}")
                 decode_up = getattr(self, f"decode_up_{decode_i}")
                 decoded = decode_conv(decoded)
