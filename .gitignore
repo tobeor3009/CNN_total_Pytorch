@@ -12,3 +12,5 @@ ckpts/
 *.cpp
 *.cu
 *.db
+.vscode
+temp.py

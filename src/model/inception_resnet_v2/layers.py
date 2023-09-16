@@ -2,10 +2,12 @@ import math
 from functools import partial
 import torch
 from torch import nn
+from torch.nn import functional as F
 from .cbam import CBAM
+import numpy as np
 
 INPLACE = False
-DEFAULT_ACT = "mish"
+DEFAULT_ACT = "gelu"
 
 
 def get_act(activation):
@@ -30,6 +32,63 @@ def get_act(activation):
     elif activation is None:
         act = nn.Identity()
     return act
+
+
+def space_to_depth(x, block_size):
+    n, c, h, w = x.size()
+    unfolded_x = F.unfold(x, block_size, stride=block_size)
+    return unfolded_x.view(n, c * block_size ** 2,
+                           h // block_size, w // block_size)
+
+
+def space_to_depth_3d(input_tensor, block_size):
+    B, C, D, H, W = input_tensor.shape
+
+    # Reshape tensor
+    output_tensor = input_tensor.view(B, C,
+                                      D // block_size, block_size,
+                                      H // block_size, block_size,
+                                      W // block_size, block_size)
+
+    # Permute tensor dimensions
+    output_tensor = output_tensor.permute(0, 1, 3, 5, 7, 2, 4, 6).contiguous()
+
+    # Merge block_size^3 blocks into the channels
+    output_tensor = output_tensor.view(B, C * block_size * block_size * block_size,
+                                       D // block_size, H // block_size, W // block_size)
+    return output_tensor
+
+
+class PixelShuffle3D(nn.Module):
+    '''
+    Source: https://github.com/kuoweilai/pixelshuffle3d/blob/master/pixelshuffle3d.py
+    This class is a 3d version of pixelshuffle.
+    '''
+
+    def __init__(self, upscale_factor):
+        '''
+        :param scale: upsample scale
+        '''
+        super().__init__()
+
+        if isinstance(upscale_factor, int):
+            upscale_factor = (upscale_factor, upscale_factor, upscale_factor)
+        self.scale = upscale_factor
+
+    def forward(self, input):
+        batch_size, channels, in_depth, in_height, in_width = input.size()
+        nOut = channels // np.prod(self.scale)
+
+        out_depth = in_depth * self.scale[0]
+        out_height = in_height * self.scale[1]
+        out_width = in_width * self.scale[2]
+
+        input_view = input.contiguous().view(batch_size, nOut, self.scale[0], self.scale[1],
+                                             self.scale[2], in_depth, in_height, in_width)
+
+        output = input_view.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+
+        return output.view(batch_size, nOut, out_depth, out_height, out_width)
 
 
 class ConvBlock2D(nn.Module):
@@ -126,21 +185,21 @@ class HighwayLayer(nn.Module):
     def __init__(self, in_channels, mode="2d", init_bias=-3.0):
         super().__init__()
         self.mode = mode
-        self.conv = nn.Conv2d(in_channels, in_channels,
-                              kernel_size=16, stride=16, bias=False)
+        if self.mode == "2d":
+            self.conv = nn.Conv2d(in_channels, in_channels,
+                                  kernel_size=16, stride=16, bias=False)
+        elif self.mode == "3d":
+            self.conv = nn.Conv3d(in_channels, in_channels,
+                                  kernel_size=16, stride=16, bias=False)
         highway_channel = max(in_channels, 32)
         self.conv_avg = nn.AdaptiveAvgPool1d(highway_channel)
         self.transform = nn.Linear(highway_channel, in_channels)
         self.transform.bias.data.fill_(init_bias)
 
     def forward(self, x, y):
-        if self.mode == "2d":
-            x_proj = self.conv(x)
-            x_proj = x_proj.view(x.size(0), -1)
-            x_proj = self.conv_avg(x_proj)
-        elif self.mode == "3d":
-            # You may need to adjust the Conv2d layer to Conv3d for 3D inputs
-            raise NotImplementedError("3D mode is not implemented yet")
+        x_proj = self.conv(x)
+        x_proj = x_proj.view(x.size(0), -1)
+        x_proj = self.conv_avg(x_proj)
 
         x_proj = self.transform(x_proj)
         x_proj = torch.sigmoid(x_proj)
@@ -160,7 +219,7 @@ class Decoder2D(nn.Module):
         super().__init__()
         self.use_highway = use_highway
         pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=kernel_size)
-        conv_after_pixel_shuffle = nn.Conv2d(in_channels=in_channels // 4,
+        conv_after_pixel_shuffle = nn.Conv2d(in_channels=in_channels // (kernel_size ** 2),
                                              out_channels=out_channels,
                                              kernel_size=1)
         self.pixel_shuffle = nn.Sequential(
@@ -195,48 +254,40 @@ class Decoder2D(nn.Module):
 
 class Decoder3D(nn.Module):
     def __init__(self, in_channels, out_channels,
-                 activation=DEFAULT_ACT, use_highway=True):
+                 activation=DEFAULT_ACT, kernel_size=2, use_highway=True):
         super().__init__()
         self.use_highway = use_highway
-        conv_before_transpose = nn.Conv3d(in_channels=in_channels,
-                                          out_channels=out_channels,
-                                          kernel_size=1)
-        conv_transpose_layer = nn.ConvTranspose3d(in_channels=out_channels,
-                                                  out_channels=out_channels,
-                                                  kernel_size=4, stride=2, padding=1)
-        conv_after_transpose = nn.Conv3d(in_channels=in_channels,
-                                         out_channels=out_channels,
-                                         kernel_size=1)
-        self.conv_transpose = nn.Sequential(
-            conv_before_transpose,
-            conv_transpose_layer,
-            conv_after_transpose
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size, kernel_size)
+        pixel_shuffle_layer = PixelShuffle3D(upscale_factor=kernel_size)
+        conv_after_pixel_shuffle = nn.Conv3d(in_channels=in_channels // np.prod(kernel_size),
+                                             out_channels=out_channels,
+                                             kernel_size=1)
+        self.pixel_shuffle = nn.Sequential(
+            pixel_shuffle_layer,
+            conv_after_pixel_shuffle
         )
-        conv_before_upsample = nn.Conv3d(in_channels=in_channels,
-                                         out_channels=out_channels,
-                                         kernel_size=1)
-        upsample_layer = nn.Upsample(scale_factor=2)
+        upsample_layer = nn.Upsample(scale_factor=kernel_size)
         conv_after_upsample = nn.Conv3d(in_channels=in_channels,
                                         out_channels=out_channels,
                                         kernel_size=1)
         self.upsample = nn.Sequential(
-            conv_before_upsample,
             upsample_layer,
             conv_after_upsample
         )
         if self.use_highway:
             self.highway = HighwayLayer(in_channels=out_channels,
                                         mode="3d")
-        self.norm = nn.BatchNorm3d(num_features=out_channels, affine=False)
+        self.norm = nn.InstanceNorm3d(num_features=out_channels, affine=False)
         self.act = get_act(activation)
 
     def forward(self, x):
-        conv_transpose = self.conv_transpose(x)
+        pixel_shuffle = self.pixel_shuffle(x)
         upsample = self.upsample(x)
         if self.use_highway:
-            out = self.highway(conv_transpose, upsample)
+            out = self.highway(pixel_shuffle, upsample)
         else:
-            out = (conv_transpose + upsample) / math.sqrt(2)
+            out = (pixel_shuffle + upsample) / math.sqrt(2)
         out = self.norm(out)
         out = self.act(out)
         return out
