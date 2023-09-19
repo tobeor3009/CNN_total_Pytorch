@@ -175,7 +175,7 @@ class ClassificationHead(nn.Module):
 >>>>>>> 3ebf778f28edf4ffcb8583965229cf734cdd2203
                                                  dropout=dropout_proba)
         self.transformer_encoder = TransformerEncoder(encoder_layers,
-                                                      num_layers=6)
+                                                      num_layers=3)
         self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.fc = nn.Linear(in_channels, num_classes)
         self.act = get_act(activation)
