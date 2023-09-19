@@ -141,35 +141,30 @@ class ClassificationHead(nn.Module):
     def __init__(self, in_channels, num_classes, dropout_proba, activation):
         super(ClassificationHead, self).__init__()
         self.in_channels = in_channels
-        self.pos_encoder = PositionalEncoding(in_channels // 8)
-        self.pixel_shffle = torch.nn.PixelShuffle(2)
-        encoder_layers = TransformerEncoderLayer(d_model=in_channels // 8, nhead=8,
+        self.pos_encoder = PositionalEncoding(in_channels)
+        encoder_layers = TransformerEncoderLayer(d_model=in_channels, nhead=16,
                                                  dropout=dropout_proba)
         self.transformer_encoder = TransformerEncoder(encoder_layers,
-                                                      num_layers=6)
+                                                      num_layers=3)
         self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.fc = nn.Linear(in_channels, num_classes)
         self.act = get_act(activation)
 
     def forward(self, x):
         batch_size, in_channel, z, h, w = x.shape
-        # Assumes x has shape [N, C, H, W]
-        x = self.pixel_shffle(x)
-        # shape: [N, C // 8, Z * 2, H * 2,  W * 2]
-        x = x.view(batch_size, self.in_channels // 8, -1)
-        # shape: [N, C // 8, Z * H * W * 8]
+        # shape: [N, C, Z, H, W]
+        x = x.view(batch_size, self.in_channels, -1)
+        # shape: [N, C, Z * H * W]
         x = x.permute(0, 2, 1)
-        # shape: [N, Z * H * W * 8, C // 8]
+        # shape: [N, Z * H * W, C]
         x = self.pos_encoder(x)
         x = self.transformer_encoder(x)
         x = self.dropout(x)
-        # shape: [N, Z * H * W * 8, C // 8]
-        x = x.view(batch_size, z * 2, h * 2, w * 2,
-                   in_channel // 8)
-        # shape: [N, Z * 2, H * 2, W * 2, C // 8]
+        # shape: [N, Z * H * W, C]
+        x = x.view(batch_size, z, h, w,
+                   in_channel)
+        # shape: [N, Z, H, W, C]
         x = x.permute(0, 4, 1, 2, 3)
-        # shape: [N, C // 8, Z * 2, H * 2, W * 2]
-        x = space_to_depth_3d(x, 2)
         # shape: [N, C, Z, H, W]
         x = x.mean([2, 3, 4])
         # shape: [N, C]

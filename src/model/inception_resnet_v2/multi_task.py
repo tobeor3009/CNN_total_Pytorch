@@ -141,7 +141,7 @@ class ClassificationHead(nn.Module):
         encoder_layers = TransformerEncoderLayer(d_model=in_channels, nhead=16,
                                                  dropout=dropout_proba)
         self.transformer_encoder = TransformerEncoder(encoder_layers,
-                                                      num_layers=6)
+                                                      num_layers=3)
         self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.fc = nn.Linear(in_channels, num_classes)
         self.act = get_act(activation)
