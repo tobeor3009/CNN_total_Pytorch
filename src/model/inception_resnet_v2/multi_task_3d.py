@@ -6,7 +6,7 @@ from .layers import get_act
 from .base_model import InceptionResNetV2_3D, get_skip_connect_channel_list
 from .transformer_layers import PositionalEncoding
 from .layers import space_to_depth_3d
-from .layers import ConvBlock3D, Decoder3D, HighwayOutput3D
+from .layers import ConvBlock3D, Decoder3D, Output3D
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 USE_INPLACE = True
 
@@ -15,7 +15,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
     def __init__(self, input_shape, class_channel, seg_channels, block_size=16,
                  z_channel_preserve=False, include_context=False, decode_init_channel=768,
                  skip_connect=True, dropout_proba=0.05, class_act="softmax", seg_act="sigmoid",
-                 get_seg=True, get_class=True, use_class_head_simple=True
+                 get_seg=True, get_class=True, use_class_head_simple=True, use_seg_pixelshuffle=True
                  ):
         super().__init__()
 
@@ -23,7 +23,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         self.get_class = get_class
 
         input_shape = np.array(input_shape)
-        n_input_channels = input_shape[0]
+        n_input_channels, init_z, init_h, init_w = input_shape
         feature_channel_num = block_size * 96
         self.feature_shape = np.array([feature_channel_num,
                                        input_shape[1] // 32,
@@ -39,6 +39,9 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                include_skip_connection_tensor=skip_connect)
         if self.get_seg:
             for decode_i in range(0, 5):
+                z, h, w = (init_z * (2 ** decode_i),
+                           init_h * (2 ** decode_i),
+                           init_w * (2 ** decode_i))
                 decode_in_channels = decode_init_channel // (
                     2 ** (decode_i - 1)) if decode_i > 0 else feature_channel_num
                 if skip_connect:
@@ -47,17 +50,17 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                 decode_conv = ConvBlock3D(in_channels=decode_in_channels,
                                           out_channels=decode_out_channels, kernel_size=3)
                 decode_kernel_size = (1, 2, 2) if z_channel_preserve else 2
-                use_highway = True if decode_i >= 4 else False
-                decode_up = Decoder3D(in_channels=decode_out_channels,
+                decode_up = Decoder3D(input_zhw=(z, h, w),
+                                      in_channels=decode_out_channels,
                                       out_channels=decode_out_channels,
                                       kernel_size=decode_kernel_size,
-                                      use_highway=use_highway)
+                                      use_pixelshuffle=use_seg_pixelshuffle)
                 setattr(self, f"decode_conv_{decode_i}", decode_conv)
                 setattr(self, f"decode_up_{decode_i}", decode_up)
 
-            self.seg_output_conv = HighwayOutput3D(in_channels=decode_out_channels,
-                                                   out_channels=seg_channels,
-                                                   activation=seg_act)
+            self.seg_output_conv = Output3D(in_channels=decode_out_channels,
+                                            out_channels=seg_channels,
+                                            activation=seg_act)
         if self.get_class:
             if use_class_head_simple:
                 self.classfication_head = ClassificationHeadSimple(feature_channel_num,
