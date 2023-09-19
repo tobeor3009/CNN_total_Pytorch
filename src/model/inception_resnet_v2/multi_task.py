@@ -24,6 +24,9 @@ class InceptionResNetV2MultiTask2D(nn.Module):
 
         input_shape = np.array(input_shape)
         n_input_channels, init_h, init_w = input_shape
+        feature_h, feature_w = (init_h // (2 ** 5),
+                                init_w // (2 ** 5),)
+
         feature_channel_num = block_size * 96
         self.feature_shape = np.array([feature_channel_num,
                                        input_shape[1] // 32,
@@ -62,7 +65,8 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                                    class_channel,
                                                                    dropout_proba, class_act)
             else:
-                self.classfication_head = ClassificationHead(feature_channel_num,
+                self.classfication_head = ClassificationHead((feature_h, feature_w),
+                                                             feature_channel_num,
                                                              class_channel,
                                                              dropout_proba, class_act)
 
@@ -134,11 +138,13 @@ class ClassificationHeadSimple(nn.Module):
 
 
 class ClassificationHead(nn.Module):
-    def __init__(self, in_channels, num_classes, dropout_proba, activation,
+    def __init__(self, feature_hw, in_channels, num_classes, dropout_proba, activation,
                  transformer_dim=512):
         super(ClassificationHead, self).__init__()
         self.transformer_dim = transformer_dim
         self.shrink_fc = nn.Linear(in_channels, transformer_dim)
+        self.shrink_norm = nn.LayerNorm(normalized_shape=(np.prod(feature_hw),
+                                                          transformer_dim))
         self.pos_encoder = PositionalEncoding(transformer_dim)
         encoder_layers = TransformerEncoderLayer(d_model=transformer_dim, nhead=8,
                                                  dropout=dropout_proba)
@@ -156,6 +162,7 @@ class ClassificationHead(nn.Module):
         x = x.permute(0, 2, 1)
         # shape: [N, H * W, C]
         x = self.shrink_fc(x)
+        x = self.shrink_norm(x)
         x = self.pos_encoder(x)
         x = self.transformer_encoder(x)
         x = self.dropout(x)

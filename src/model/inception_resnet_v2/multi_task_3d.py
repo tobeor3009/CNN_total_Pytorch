@@ -24,6 +24,9 @@ class InceptionResNetV2MultiTask3D(nn.Module):
 
         input_shape = np.array(input_shape)
         n_input_channels, init_z, init_h, init_w = input_shape
+        feature_z, feature_h, feature_w = (init_z // (2 ** 5),
+                                           init_h // (2 ** 5),
+                                           init_w // (2 ** 5),)
         feature_channel_num = block_size * 96
         self.feature_shape = np.array([feature_channel_num,
                                        input_shape[1] // 32,
@@ -67,7 +70,8 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                                    class_channel,
                                                                    dropout_proba, class_act)
             else:
-                self.classfication_head = ClassificationHead(feature_channel_num,
+                self.classfication_head = ClassificationHead((feature_z, feature_h, feature_w),
+                                                             feature_channel_num,
                                                              class_channel,
                                                              dropout_proba, class_act)
 
@@ -138,11 +142,13 @@ class ClassificationHeadSimple(nn.Module):
 
 
 class ClassificationHead(nn.Module):
-    def __init__(self, in_channels, num_classes, dropout_proba, activation,
+    def __init__(self, feature_zhw, in_channels, num_classes, dropout_proba, activation,
                  transformer_dim=512):
         super(ClassificationHead, self).__init__()
         self.transformer_dim = transformer_dim
         self.shrink_fc = nn.Linear(in_channels, transformer_dim)
+        self.shrink_norm = nn.LayerNorm(normalized_shape=(np.prod(feature_zhw),
+                                                          transformer_dim))
         self.pos_encoder = PositionalEncoding(transformer_dim)
         encoder_layers = TransformerEncoderLayer(d_model=transformer_dim, nhead=8,
                                                  dropout=dropout_proba)
