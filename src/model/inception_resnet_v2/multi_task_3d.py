@@ -138,16 +138,18 @@ class ClassificationHeadSimple(nn.Module):
 
 
 class ClassificationHead(nn.Module):
-    def __init__(self, in_channels, num_classes, dropout_proba, activation):
+    def __init__(self, in_channels, num_classes, dropout_proba, activation,
+                 transformer_dim=512):
         super(ClassificationHead, self).__init__()
         self.in_channels = in_channels
-        self.pos_encoder = PositionalEncoding(in_channels)
-        encoder_layers = TransformerEncoderLayer(d_model=in_channels, nhead=16,
+        self.shrink_fc = nn.Linear(in_channels, transformer_dim)
+        self.pos_encoder = PositionalEncoding(transformer_dim)
+        encoder_layers = TransformerEncoderLayer(d_model=transformer_dim, nhead=8,
                                                  dropout=dropout_proba)
         self.transformer_encoder = TransformerEncoder(encoder_layers,
-                                                      num_layers=3)
+                                                      num_layers=8)
         self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
-        self.fc = nn.Linear(in_channels, num_classes)
+        self.fc = nn.Linear(transformer_dim, num_classes)
         self.act = get_act(activation)
 
     def forward(self, x):
@@ -157,6 +159,7 @@ class ClassificationHead(nn.Module):
         # shape: [N, C, Z * H * W]
         x = x.permute(0, 2, 1)
         # shape: [N, Z * H * W, C]
+        x = self.shrink_fc(x)
         x = self.pos_encoder(x)
         x = self.transformer_encoder(x)
         x = self.dropout(x)
