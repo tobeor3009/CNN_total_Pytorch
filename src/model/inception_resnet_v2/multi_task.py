@@ -37,8 +37,8 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                include_skip_connection_tensor=skip_connect)
         if self.get_seg:
             for decode_i in range(0, 5):
-                h, w = (init_h * (2 ** decode_i),
-                        init_w * (2 ** decode_i))
+                h, w = (init_h // (2 ** (5 - decode_i)),
+                        init_w // (2 ** (5 - decode_i)))
                 decode_in_channels = decode_init_channel // (
                     2 ** (decode_i - 1)) if decode_i > 0 else feature_channel_num
                 if skip_connect:
@@ -137,7 +137,6 @@ class ClassificationHead(nn.Module):
     def __init__(self, in_channels, num_classes, dropout_proba, activation,
                  transformer_dim=512):
         super(ClassificationHead, self).__init__()
-        self.in_channels = in_channels
         self.transformer_dim = transformer_dim
         self.shrink_fc = nn.Linear(in_channels, transformer_dim)
         self.pos_encoder = PositionalEncoding(transformer_dim)
@@ -150,9 +149,9 @@ class ClassificationHead(nn.Module):
         self.act = get_act(activation)
 
     def forward(self, x):
-        batch_size, in_channel, h, w = x.shape
+        batch_size, in_channels, h, w = x.shape
         # shape: [N, C, H, W]
-        x = x.view(batch_size, self.in_channels, -1)
+        x = x.view(batch_size, in_channels, -1)
         # shape: [N, C, H * W]
         x = x.permute(0, 2, 1)
         # shape: [N, H * W, C]
