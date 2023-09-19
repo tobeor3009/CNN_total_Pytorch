@@ -113,7 +113,6 @@ class PositionalEncoding(nn.Module):
 
 
 class ClassificationHeadSimple(nn.Module):
-<<<<<<< HEAD
     def __init__(self, in_channels, num_classes, dropout_proba, activation):
         super(ClassificationHeadSimple, self).__init__()
         self.gap_layer = nn.AdaptiveAvgPool2d((2, 2))
@@ -134,45 +133,12 @@ class ClassificationHeadSimple(nn.Module):
         return x
 
 
-class ClassificationHead(nn.Module):
-=======
->>>>>>> ff87fe35724b42a89d38eabf94106b5caa6638df
-    def __init__(self, in_channels, num_classes, dropout_proba, activation):
-        super(ClassificationHeadSimple, self).__init__()
-        self.gap_layer = nn.AdaptiveAvgPool2d((2, 2))
-        self.fc_1 = nn.Linear(in_channels * 4, in_channels)
-        self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
-        self.relu_layer = nn.ReLU6(inplace=USE_INPLACE)
-        self.fc_2 = nn.Linear(in_channels, num_classes)
-        self.act = get_act(activation)
-
-    def forward(self, x):
-        x = self.gap_layer(x)
-        x = x.flatten(start_dim=1, end_dim=-1)
-        x = self.fc_1(x)
-        x = self.dropout_layer(x)
-        x = self.relu_layer(x)
-        x = self.fc_2(x)
-        x = self.act(x)
-        return x
-
-
-<<<<<<< HEAD
-        encoder_layers = TransformerEncoderLayer(d_model=in_channels, nhead=8,
-=======
 class ClassificationHead(nn.Module):
     def __init__(self, in_channels, num_classes, dropout_proba, activation):
         super(ClassificationHead, self).__init__()
         self.in_channels = in_channels
-<<<<<<< HEAD
-        self.pos_encoder = PositionalEncoding(in_channels // 4)
-        self.pixel_shffle = torch.nn.PixelShuffle(2)
-        encoder_layers = TransformerEncoderLayer(d_model=in_channels // 4, nhead=8,
->>>>>>> ff87fe35724b42a89d38eabf94106b5caa6638df
-=======
         self.pos_encoder = PositionalEncoding(in_channels)
         encoder_layers = TransformerEncoderLayer(d_model=in_channels, nhead=16,
->>>>>>> 3ebf778f28edf4ffcb8583965229cf734cdd2203
                                                  dropout=dropout_proba)
         self.transformer_encoder = TransformerEncoder(encoder_layers,
                                                       num_layers=3)
