@@ -11,7 +11,7 @@ DEFAULT_ACT = "gelu"
 
 def get_act(activation):
     if isinstance(activation, nn.Module):
-        act = activation 
+        act = activation
     if activation == 'relu6':
         act = nn.ReLU6(inplace=INPLACE)
     elif activation == 'relu':
@@ -219,8 +219,9 @@ class Decoder2D(nn.Module):
         h, w = input_hw
         upsample_shape = (out_channels, 2 * h, 2 * w)
         if use_pixelshuffle:
-            conv_before_pixel_shuffle = nn.Conv2d(in_channels=in_channels * (kernel_size ** 2),
-                                                  out_channels=out_channels,
+            conv_before_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
+                                                  out_channels=in_channels *
+                                                  (kernel_size ** 2),
                                                   kernel_size=1)
             pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=kernel_size)
             conv_after_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
@@ -263,8 +264,9 @@ class Decoder3D(nn.Module):
             kernel_size = (kernel_size, kernel_size, kernel_size)
 
         if use_pixelshuffle:
-            conv_before_pixel_shuffle = nn.Conv3d(in_channels=in_channels * (kernel_size ** 3),
-                                                  out_channels=out_channels,
+            conv_before_pixel_shuffle = nn.Conv3d(in_channels=in_channels,
+                                                  out_channels=in_channels *
+                                                  (kernel_size ** 3),
                                                   kernel_size=1)
             pixel_shuffle_layer = PixelShuffle3D(upscale_factor=kernel_size)
             conv_after_pixel_shuffle = nn.Conv3d(in_channels=in_channels,
