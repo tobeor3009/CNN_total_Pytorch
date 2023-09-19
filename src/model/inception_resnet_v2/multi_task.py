@@ -138,6 +138,7 @@ class ClassificationHead(nn.Module):
                  transformer_dim=512):
         super(ClassificationHead, self).__init__()
         self.in_channels = in_channels
+        self.transformer_dim = transformer_dim
         self.shrink_fc = nn.Linear(in_channels, transformer_dim)
         self.pos_encoder = PositionalEncoding(transformer_dim)
         encoder_layers = TransformerEncoderLayer(d_model=transformer_dim, nhead=8,
@@ -160,7 +161,8 @@ class ClassificationHead(nn.Module):
         x = self.transformer_encoder(x)
         x = self.dropout(x)
         # shape: [N, H * W, C]
-        x = x.view(batch_size, h, w, in_channel)
+        x = x.view(batch_size, h, w,
+                   self.transformer_dim)
         # shape: [N, H, W, C]
         x = x.permute(0, 3, 1, 2)
         # shape: [N, C, H, W]
