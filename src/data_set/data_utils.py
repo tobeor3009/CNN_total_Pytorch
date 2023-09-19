@@ -32,17 +32,22 @@ noise_transform = A.OneOf([
 
 elastic_tranform = A.ElasticTransform(p=1)
 
-brightness_value = 0.1
+brightness_value = 0.05
 brightness_contrast_transform = A.OneOf([
     A.RandomBrightnessContrast(
         brightness_limit=(-brightness_value, brightness_value), contrast_limit=(-brightness_value, brightness_value), p=1),
 ], p=1)
 
 color_transform = A.OneOf([
-    A.ChannelShuffle(p=1),
-    A.HueSaturationValue(p=0.1),
-    # A.ToGray(p=1),
-    # A.ToSepia(p=1),
+    A.ISONoise(always_apply=False, p=0.5,
+               intensity=(0.05000000074505806, 0.12999999523162842),
+               color_shift=(0.009999999776482582, 0.26999998092651367)),
+    A.HueSaturationValue(p=0.1)
+], p=1)
+
+hist_transform = A.OneOf([
+    A.CLAHE(always_apply=True, p=0.5,
+            clip_limit=(1, 15), tile_grid_size=(8, 8)),
 ], p=1)
 
 to_jpeg_transform = A.ImageCompression(quality_lower=99,
