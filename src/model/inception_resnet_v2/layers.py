@@ -239,7 +239,7 @@ class Decoder2D(nn.Module):
                 conv_after_upsample
             )
         self.norm = nn.LayerNorm(normalized_shape=upsample_shape,
-                                 affine=False)
+                                 elementwise_affine=False)
         self.act = get_act(activation)
 
     def forward(self, x):
@@ -283,7 +283,7 @@ class Decoder3D(nn.Module):
                 conv_after_upsample
             )
         self.norm = nn.LayerNorm(normalized_shape=upsample_shape,
-                                 affine=False)
+                                 elementwise_affine=False)
         self.act = get_act(activation)
 
     def forward(self, x):
