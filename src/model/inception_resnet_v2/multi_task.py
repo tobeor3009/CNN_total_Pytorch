@@ -6,7 +6,7 @@ from .layers import get_act
 from .base_model import InceptionResNetV2_2D, get_skip_connect_channel_list
 from .transformer_layers import PositionalEncoding
 from .layers import space_to_depth
-from .layers import ConvBlock2D, Decoder2D, HighwayOutput2D
+from .layers import ConvBlock2D, Decoder2D, Output2D
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 USE_INPLACE = True
 
@@ -15,7 +15,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
     def __init__(self, input_shape, class_channel, seg_channels, block_size=16,
                  include_cbam=False, include_context=False, decode_init_channel=768,
                  skip_connect=True, dropout_proba=0.05, class_act="softmax", seg_act="sigmoid",
-                 get_seg=True, get_class=True, use_class_head_simple=True
+                 get_seg=True, get_class=True, use_class_head_simple=True, use_seg_pixelshuffle=True
                  ):
         super().__init__()
 
@@ -23,7 +23,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         self.get_class = get_class
 
         input_shape = np.array(input_shape)
-        n_input_channels = input_shape[0]
+        n_input_channels, init_h, init_w = input_shape
         feature_channel_num = block_size * 96
         self.feature_shape = np.array([feature_channel_num,
                                        input_shape[1] // 32,
@@ -37,6 +37,8 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                include_skip_connection_tensor=skip_connect)
         if self.get_seg:
             for decode_i in range(0, 5):
+                h, w = (init_h * (2 ** decode_i),
+                        init_w * (2 ** decode_i))
                 decode_in_channels = decode_init_channel // (
                     2 ** (decode_i - 1)) if decode_i > 0 else feature_channel_num
                 if skip_connect:
@@ -44,14 +46,16 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                 decode_out_channels = decode_init_channel // (2 ** decode_i)
                 decode_conv = ConvBlock2D(in_channels=decode_in_channels,
                                           out_channels=decode_out_channels, kernel_size=3)
-                decode_up = Decoder2D(in_channels=decode_out_channels,
-                                      out_channels=decode_out_channels, kernel_size=2)
+                decode_up = Decoder2D(input_hw=(h, w),
+                                      in_channels=decode_out_channels,
+                                      out_channels=decode_out_channels, kernel_size=2,
+                                      use_pixelshuffle=use_seg_pixelshuffle)
                 setattr(self, f"decode_conv_{decode_i}", decode_conv)
                 setattr(self, f"decode_up_{decode_i}", decode_up)
 
-            self.seg_output_conv = HighwayOutput2D(in_channels=decode_out_channels,
-                                                   out_channels=seg_channels,
-                                                   activation=seg_act)
+            self.seg_output_conv = Output2D(in_channels=decode_out_channels,
+                                            out_channels=seg_channels,
+                                            activation=seg_act)
         if self.get_class:
             if use_class_head_simple:
                 self.classfication_head = ClassificationHeadSimple(feature_channel_num,
@@ -133,9 +137,8 @@ class ClassificationHead(nn.Module):
     def __init__(self, in_channels, num_classes, dropout_proba, activation):
         super(ClassificationHead, self).__init__()
         self.in_channels = in_channels
-        self.pos_encoder = PositionalEncoding(in_channels // 4)
-        self.pixel_shffle = torch.nn.PixelShuffle(2)
-        encoder_layers = TransformerEncoderLayer(d_model=in_channels // 4, nhead=8,
+        self.pos_encoder = PositionalEncoding(in_channels)
+        encoder_layers = TransformerEncoderLayer(d_model=in_channels, nhead=16,
                                                  dropout=dropout_proba)
         self.transformer_encoder = TransformerEncoder(encoder_layers,
                                                       num_layers=6)
@@ -145,22 +148,18 @@ class ClassificationHead(nn.Module):
 
     def forward(self, x):
         batch_size, in_channel, h, w = x.shape
-        # Assumes x has shape [N, C, H, W]
-        x = self.pixel_shffle(x)
-        # shape: [N, C // 4, H * 2,  W * 2]
-        x = x.view(batch_size, self.in_channels // 4, -1)
-        # shape: [N, C // 4, H * W * 4]
+        # shape: [N, C, H, W]
+        x = x.view(batch_size, self.in_channels, -1)
+        # shape: [N, C, H * W]
         x = x.permute(0, 2, 1)
-        # shape: [N, H * W * 4, C // 4]
+        # shape: [N, H * W, C]
         x = self.pos_encoder(x)
         x = self.transformer_encoder(x)
         x = self.dropout(x)
-        # shape: [N, H * W * 4, C // 4]
-        x = x.view(batch_size, h * 2, w * 2, in_channel // 4)
-        # shape: [N, H * 2, W * 2, C // 4]
+        # shape: [N, H * W, C]
+        x = x.view(batch_size, h, w, in_channel)
+        # shape: [N, H, W, C]
         x = x.permute(0, 3, 1, 2)
-        # shape: [N, C // 4, H * 2, W * 2]
-        x = space_to_depth(x, 2)
         # shape: [N, C, H, W]
         x = x.mean([2, 3])
         # shape: [N, C]
