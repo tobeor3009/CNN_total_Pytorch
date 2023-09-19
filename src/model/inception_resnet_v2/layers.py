@@ -238,7 +238,8 @@ class Decoder2D(nn.Module):
                 upsample_layer,
                 conv_after_upsample
             )
-        self.norm = nn.LayerNorm(num_features=upsample_shape, affine=False)
+        self.norm = nn.LayerNorm(normalized_shape=upsample_shape,
+                                 affine=False)
         self.act = get_act(activation)
 
     def forward(self, x):
@@ -281,7 +282,8 @@ class Decoder3D(nn.Module):
                 upsample_layer,
                 conv_after_upsample
             )
-        self.norm = nn.LayerNorm(normalized_shape=upsample_shape, affine=False)
+        self.norm = nn.LayerNorm(normalized_shape=upsample_shape,
+                                 affine=False)
         self.act = get_act(activation)
 
     def forward(self, x):
@@ -311,8 +313,8 @@ class Output3D(nn.Module):
                  activation="tanh"):
         super().__init__()
         self.conv_1x1x1 = nn.Conv3d(in_channels=in_channels,
-                                  out_channels=out_channels,
-                                  kernel_size=1, padding=0)
+                                    out_channels=out_channels,
+                                    kernel_size=1, padding=0)
         self.act = get_act(activation)
 
     def forward(self, x):
