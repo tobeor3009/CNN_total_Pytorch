@@ -5,9 +5,8 @@ import numpy as np
 from .layers import get_act
 from .base_model import InceptionResNetV2_2D, get_skip_connect_channel_list
 from .transformer_layers import PositionalEncoding
-from .layers import space_to_depth, DEFAULT_ACT
+from .layers import space_to_depth
 from .layers import ConvBlock2D, Decoder2D, Output2D
-from .layers_highway import MultiDecoder2D, HighwayOutput2D
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 USE_INPLACE = True
 
@@ -15,15 +14,14 @@ USE_INPLACE = True
 class InceptionResNetV2MultiTask2D(nn.Module):
     def __init__(self, input_shape, class_channel, seg_channels, block_size=16,
                  include_cbam=False, include_context=False, decode_init_channel=768,
-                 skip_connect=True, dropout_proba=0.05, norm="batch", act=DEFAULT_ACT,
-                 class_act="softmax", seg_act="sigmoid",
-                 get_seg=True, get_class=True, use_class_head_simple=True, use_seg_pixelshuffle=True
+                 skip_connect=True, dropout_proba=0.05, class_act="softmax", seg_act="sigmoid",
+                 get_seg=True, get_class=True, get_validity=False, use_class_head_simple=True, use_seg_pixelshuffle=True
                  ):
         super().__init__()
 
         self.get_seg = get_seg
         self.get_class = get_class
-
+        self.get_validity = get_validity
         input_shape = np.array(input_shape)
         n_input_channels, init_h, init_w = input_shape
         feature_h, feature_w = (init_h // (2 ** 5),
@@ -38,8 +36,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         skip_connect_channel_list = get_skip_connect_channel_list(block_size)
 
         self.base_model = InceptionResNetV2_2D(n_input_channels=n_input_channels, block_size=block_size,
-                                               padding="same", norm=norm, act=act,
-                                               include_cbam=include_cbam, include_context=include_context,
+                                               padding="same", include_cbam=include_cbam, include_context=include_context,
                                                include_skip_connection_tensor=skip_connect)
         if self.get_seg:
             for decode_i in range(0, 5):
@@ -49,21 +46,21 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                     2 ** (decode_i - 1)) if decode_i > 0 else feature_channel_num
                 if skip_connect:
                     decode_in_channels += skip_connect_channel_list[4 - decode_i]
+                if decode_i == 0:
+                    decode_in_channels += class_channel
                 decode_out_channels = decode_init_channel // (2 ** decode_i)
                 decode_conv = ConvBlock2D(in_channels=decode_in_channels,
-                                          out_channels=decode_out_channels,
-                                          kernel_size=3, norm=norm, act=act)
-                decode_up = MultiDecoder2D(input_hw=(h, w),
-                                           in_channels=decode_out_channels,
-                                           out_channels=decode_out_channels,
-                                           kernel_size=2, norm=norm, act=act,
-                                           use_highway=False)
+                                          out_channels=decode_out_channels, kernel_size=3)
+                decode_up = Decoder2D(input_hw=(h, w),
+                                      in_channels=decode_out_channels,
+                                      out_channels=decode_out_channels, kernel_size=2,
+                                      use_pixelshuffle=use_seg_pixelshuffle)
                 setattr(self, f"decode_conv_{decode_i}", decode_conv)
                 setattr(self, f"decode_up_{decode_i}", decode_up)
 
-            self.seg_output_conv = HighwayOutput2D(in_channels=decode_out_channels,
-                                                   out_channels=seg_channels,
-                                                   act=seg_act)
+            self.seg_output_conv = Output2D(in_channels=decode_out_channels,
+                                            out_channels=seg_channels,
+                                            activation=seg_act)
         if self.get_class:
             if use_class_head_simple:
                 self.classfication_head = ClassificationHeadSimple(feature_channel_num,
@@ -75,10 +72,29 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                              class_channel,
                                                              dropout_proba, class_act)
 
+        if self.get_validity:
+            self.validity_head = nn.Sequential(
+                ConvBlock2D(in_channels=feature_channel_num,
+                            out_channels=feature_channel_num // 2, kernel_size=3),
+                ConvBlock2D(in_channels=feature_channel_num // 2,
+                            out_channels=1, kernel_size=3),
+                nn.AdaptiveAvgPool2d((8, 8))
+            )
+
     def forward(self, input_tensor):
         output = []
-        encode_feature = self.base_model(input_tensor)
-        decoded = encode_feature
+
+        if self.get_seg:
+            img_tensor, label_tensor = input_tensor
+            encode_feature = self.base_model(img_tensor)
+            feature_h, feature_w = self.feature_shape[-2:]
+            feature_tensor = label_tensor[:, :, None, None]
+            feature_tensor = feature_tensor.repeat(1, 1, feature_h, feature_w)
+            decoded = torch.cat([encode_feature, feature_tensor], dim=1)
+        else:
+            img_tensor = input_tensor
+            encode_feature = self.base_model(img_tensor)
+            decoded = encode_feature
         if self.get_seg:
             for decode_i in range(0, 5):
 
@@ -97,6 +113,9 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         if self.get_class:
             class_output = self.classfication_head(encode_feature)
             output.append(class_output)
+        if self.get_validity:
+            validty_output = self.validity_head(encode_feature)
+            output.append(validty_output)
         if len(output) == 1:
             output = output[0]
         return output
@@ -182,3 +201,53 @@ class ClassificationHead(nn.Module):
         x = self.fc(x)
         x = self.act(x)
         return x
+
+
+class NoiseToImage2D(nn.Module):
+    def __init__(self, latent_dim, target_size=512, decode_init_channel=1024,
+                 last_act="sigmoid", last_channel=1, use_seg_pixelshuffle=True
+                 ):
+        super().__init__()
+
+        repeat_num = math.log(target_size // 4, 4)
+
+        self.repeat_num = math.floor(repeat_num)
+        if repeat_num - self.repeat_num == 0.5:
+            self.repeat_num += 1
+            last_minimum_upsample = True
+        else:
+            last_minimum_upsample = False
+
+        h, w = 4, 4
+
+        for decode_i in range(0, self.repeat_num):
+            decode_in_channels = decode_init_channel // (
+                2 ** (decode_i - 1)) if decode_i > 0 else latent_dim
+            decode_out_channels = decode_init_channel // (2 ** decode_i)
+            decode_conv = ConvBlock2D(in_channels=decode_in_channels,
+                                      out_channels=decode_out_channels, kernel_size=3)
+
+            kernel_size = 2 if (decode_i == self.repeat_num -
+                                1) and last_minimum_upsample else 4
+            decode_up = Decoder2D(input_hw=(h, w),
+                                  in_channels=decode_out_channels,
+                                  out_channels=decode_out_channels,
+                                  kernel_size=kernel_size,
+                                  use_pixelshuffle=use_seg_pixelshuffle)
+            h, w = h * kernel_size, w * kernel_size
+            setattr(self, f"decode_conv_{decode_i}", decode_conv)
+            setattr(self, f"decode_up_{decode_i}", decode_up)
+        self.seg_output_conv = Output2D(in_channels=decode_out_channels,
+                                        out_channels=last_channel,
+                                        activation=last_act)
+
+    def forward(self, noise_tensor):
+        decoded = noise_tensor
+        for decode_i in range(0, self.repeat_num):
+            decode_conv = getattr(self, f"decode_conv_{decode_i}")
+            decode_up = getattr(self, f"decode_up_{decode_i}")
+            decoded = decode_conv(decoded)
+            decoded = decode_up(decoded)
+        seg_output = self.seg_output_conv(decoded)
+
+        return seg_output

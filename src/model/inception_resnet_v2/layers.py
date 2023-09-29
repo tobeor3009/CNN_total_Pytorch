@@ -6,11 +6,11 @@ from torch.nn import functional as F
 import numpy as np
 
 INPLACE = False
-DEFAULT_ACT = "gelu"
+DEFAULT_ACT = "relu6"
 
 
 def get_act(activation):
-    if isinstance(activation, nn.Module):
+    if isinstance(activation, nn.Module) or callable(activation):
         act = activation
     if activation == 'relu6':
         act = nn.ReLU6(inplace=INPLACE)
@@ -31,6 +31,32 @@ def get_act(activation):
     elif activation is None:
         act = nn.Identity()
     return act
+
+
+def get_norm(norm, shape, mode="2d"):
+    if isinstance(shape, int):
+        shape = [shape]
+    if isinstance(norm, nn.Module) or callable(norm):
+        norm_layer = norm
+    if norm == 'layer':
+        norm_layer = nn.LayerNorm(normalized_shape=shape,
+                                  elementwise_affine=False)
+    elif norm == 'instance':
+        if mode == "2d":
+            norm_layer = nn.InstanceNorm2d(num_features=shape[0])
+        elif mode == "3d":
+            norm_layer = nn.InstanceNorm3d(num_features=shape[0])
+
+    elif norm == 'batch':
+        if mode == "2d":
+            norm_layer = nn.BatchNorm2d(num_features=shape[0],
+                                        affine=False)
+        elif mode == "3d":
+            norm_layer = nn.BatchNorm3d(num_features=shape[0],
+                                        affine=False)
+    elif norm is None:
+        norm_layer = nn.Identity()
+    return norm_layer
 
 
 def space_to_depth(x, block_size):
@@ -93,36 +119,35 @@ class PixelShuffle3D(nn.Module):
 class ConvBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 activation=DEFAULT_ACT, bias=False, name=None):
+                 norm="batch", act=DEFAULT_ACT, bias=False, name=None):
         super().__init__()
         self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
                               bias=bias)
         if not bias:
-            # in keras, scale=False
-            self.norm = nn.BatchNorm2d(num_features=out_channels, affine=False)
+            self.norm_layer = get_norm(norm, out_channels, mode="2d")
         else:
-            self.norm = nn.Identity()
-        self.act = get_act(activation)
+            self.norm_layer = nn.Identity()
+        self.act_layer = get_act(act)
 
     def forward(self, x):
         conv = self.conv(x)
-        norm = self.norm(conv)
-        act = self.act(norm)
+        norm = self.norm_layer(conv)
+        act = self.act_layer(norm)
         return act
 
 
 class ConvBlock3D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 activation=DEFAULT_ACT, bias=False, name=None):
+                 activation=DEFAULT_ACT, norm="batch", bias=False, name=None):
         super().__init__()
         self.conv = nn.Conv3d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
                               bias=bias)
         if not bias:
             # in keras, scale=False
-            self.norm = nn.BatchNorm3d(num_features=out_channels, affine=False)
+            self.norm_layer = get_norm(norm, out_channels, mode="3d")
         else:
             self.norm = nn.Identity()
 
@@ -214,10 +239,13 @@ class HighwayLayer(nn.Module):
 
 class Decoder2D(nn.Module):
     def __init__(self, input_hw, in_channels, out_channels,
-                 activation=DEFAULT_ACT, kernel_size=2, use_pixelshuffle=True):
+                 activation=DEFAULT_ACT, norm="layer", kernel_size=2,
+                 use_pixelshuffle=True):
         super().__init__()
         h, w = input_hw
-        upsample_shape = (out_channels, 2 * h, 2 * w)
+        upsample_shape = (out_channels,
+                          kernel_size * h,
+                          kernel_size * w)
         if use_pixelshuffle:
             conv_before_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
                                                   out_channels=in_channels *
@@ -226,7 +254,7 @@ class Decoder2D(nn.Module):
             pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=kernel_size)
             conv_after_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
                                                  out_channels=out_channels,
-                                                 kernel_size=1)
+                                                 kernel_size=1, padding=1)
             self.upsample_block = nn.Sequential(
                 conv_before_pixel_shuffle,
                 pixel_shuffle_layer,
@@ -236,19 +264,18 @@ class Decoder2D(nn.Module):
             upsample_layer = nn.Upsample(scale_factor=kernel_size)
             conv_after_upsample = nn.Conv2d(in_channels=in_channels,
                                             out_channels=out_channels,
-                                            kernel_size=1)
+                                            kernel_size=1, padding=1)
             self.upsample_block = nn.Sequential(
                 upsample_layer,
                 conv_after_upsample
             )
-        self.norm = nn.LayerNorm(normalized_shape=upsample_shape,
-                                 elementwise_affine=False)
-        self.act = get_act(activation)
+        self.norm_layer = get_norm(norm, upsample_shape)
+        self.act_layer = get_act(activation)
 
     def forward(self, x):
         out = self.upsample_block(x)
-        out = self.norm(out)
-        out = self.act(out)
+        out = self.norm_layer(out)
+        out = self.act_layer(out)
         return out
 
 
@@ -258,7 +285,10 @@ class Decoder3D(nn.Module):
                  use_pixelshuffle=True):
         super().__init__()
         z, h, w = input_zhw
-        upsample_shape = (out_channels, 2 * z, 2 * h, 2 * w)
+        upsample_shape = (out_channels,
+                          kernel_size * z,
+                          kernel_size * h,
+                          kernel_size * w)
 
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size, kernel_size)
@@ -301,14 +331,19 @@ class Output2D(nn.Module):
     def __init__(self, in_channels, out_channels,
                  activation="tanh"):
         super().__init__()
-        self.conv_1x1 = nn.Conv2d(in_channels=in_channels,
+        self.conv_5x5 = nn.Conv2d(in_channels=in_channels,
                                   out_channels=out_channels,
-                                  kernel_size=1, padding=0)
+                                  kernel_size=5, padding=2)
+        self.conv_3x3 = nn.Conv2d(in_channels=in_channels,
+                                  out_channels=out_channels,
+                                  kernel_size=3, padding=1)
         self.act = get_act(activation)
 
     def forward(self, x):
-        conv_1x1 = self.conv_1x1(x)
-        output = self.act(conv_1x1)
+        conv_5x5 = self.conv_5x5(x)
+        conv_3x3 = self.conv_3x3(x)
+        output = (conv_5x5 + conv_3x3) / math.sqrt(2)
+        output = self.act(output)
         return output
 
 
