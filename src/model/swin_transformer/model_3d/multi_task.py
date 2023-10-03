@@ -1,8 +1,9 @@
 import torch
+import numpy as np
 from torch import nn
 from .swin_layers import PatchEmbed, BasicLayer, PatchMerging, PatchExpanding
 from .swin_layers import trunc_normal_
-from ..layers import ConvBlock2D
+from ..layers import ConvBlock3D
 from ..layers import get_act
 
 
@@ -82,7 +83,9 @@ class SwinTransformerMultiTask(nn.Module):
         i_layer = 0
         first_encode_layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
                                         input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                                          patches_resolution[1] // (2 ** i_layer)),
+                                                          patches_resolution[1] // (
+                                                              2 ** i_layer),
+                                                          patches_resolution[2] // (2 ** i_layer)),
                                         depth=depths[i_layer],
                                         num_heads=num_heads[i_layer],
                                         window_size=window_sizes[i_layer],
@@ -99,7 +102,9 @@ class SwinTransformerMultiTask(nn.Module):
         for i_layer in range(self.num_layers):
             layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
                                input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                                 patches_resolution[1] // (2 ** i_layer)),
+                                                 patches_resolution[1] // (
+                                                     2 ** i_layer),
+                                                 patches_resolution[2] // (2 ** i_layer)),
                                depth=depths[i_layer],
                                num_heads=num_heads[i_layer],
                                window_size=window_sizes[i_layer],
@@ -132,7 +137,9 @@ class SwinTransformerMultiTask(nn.Module):
                     concat_linear = nn.Identity()
                 layer = BasicLayer(dim=target_dim,
                                    input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                                     patches_resolution[1] // (2 ** i_layer)),
+                                                     patches_resolution[1] // (
+                                                         2 ** i_layer),
+                                                     patches_resolution[2] // (2 ** i_layer)),
                                    depth=depths[i_layer],
                                    num_heads=num_heads[i_layer],
                                    window_size=window_sizes[i_layer],
@@ -151,7 +158,9 @@ class SwinTransformerMultiTask(nn.Module):
             for bly in self.decode_layers:
                 bly._init_respostnorm()
             self.seg_final_expanding = PatchExpanding(input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                                                        patches_resolution[1] // (2 ** i_layer)),
+                                                                        patches_resolution[1] // (
+                                                                            2 ** i_layer),
+                                                                        patches_resolution[2] // (2 ** i_layer)),
                                                       dim=target_dim,
                                                       return_vector=False,
                                                       dim_scale=patch_size,
@@ -163,14 +172,15 @@ class SwinTransformerMultiTask(nn.Module):
         if get_validity:
             depth_level = self.num_layers - 1
             self.validity_dim = int(embed_dim * (2 ** depth_level))
-            self.validity_hw = (patches_resolution[0] // (2 ** depth_level),
-                                patches_resolution[1] // (2 ** depth_level))
-            self.validity_conv_1 = ConvBlock2D(self.validity_dim, embed_dim,
+            self.validity_zhw = (patches_resolution[0] // (2 ** depth_level),
+                                 patches_resolution[1] // (2 ** depth_level),
+                                 patches_resolution[2] // (2 ** depth_level))
+            self.validity_conv_1 = ConvBlock3D(self.validity_dim, embed_dim,
                                                kernel_size=3, act="gelu")
-            self.validity_avg_pool = nn.AdaptiveAvgPool2d((16, 16))
-            self.validity_conv_2 = ConvBlock2D(embed_dim, embed_dim,
+            self.validity_avg_pool = nn.AdaptiveAvgPool3d((8, 8, 8))
+            self.validity_conv_2 = ConvBlock3D(embed_dim, embed_dim,
                                                kernel_size=3, act="gelu")
-            self.validity_out_conv = ConvBlock2D(embed_dim, in_chans,
+            self.validity_out_conv = ConvBlock3D(embed_dim, in_chans,
                                                  kernel_size=1, act=validity_act)
 
         self.apply(self._init_weights)
@@ -224,7 +234,7 @@ class SwinTransformerMultiTask(nn.Module):
     def validity_forward(self, x):
         x = x.permute(0, 2, 1)
         x = x.view(-1, self.validity_dim,
-                   *self.validity_hw)
+                   *self.validity_zhw)
         x = self.validity_conv_1(x)
         x = self.validity_avg_pool(x)
         x = self.validity_conv_2(x)
@@ -253,8 +263,7 @@ class SwinTransformerMultiTask(nn.Module):
         for i, layer in enumerate(self.layers):
             flops += layer.flops()
         flops += self.num_features * \
-            self.patches_resolution[0] * \
-            self.patches_resolution[1] // (2 ** self.num_layers)
+            np.prod(self.patches_resolution) // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
         return flops
 
