@@ -152,7 +152,47 @@ class PixelShuffle3D(nn.Module):
         return output.view(batch_size, nOut, out_depth, out_height, out_width)
 
 
+class AttentionPool1d(nn.Module):
+    def __init__(self, sequence_length: int, embed_dim: int, num_heads: int, output_dim: int = None):
+        super().__init__()
+        self.positional_embedding = nn.Parameter(torch.randn(sequence_length + 1,
+                                                             embed_dim) / embed_dim ** 0.5)
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, embed_dim)
+        self.c_proj = nn.Linear(embed_dim, output_dim or embed_dim)
+        self.num_heads = num_heads
+
+    def forward(self, x):
+        x = x.permute(2, 0, 1)  # NCL -> LNC
+        x = torch.cat([x.mean(dim=0, keepdim=True), x], dim=0)  # (L+1)NC
+        x = x + self.positional_embedding[:, None, :].to(x.dtype)  # (L+1)NC
+        x, _ = F.multi_head_attention_forward(
+            query=x[:1], key=x, value=x,
+            embed_dim_to_check=x.shape[-1],
+            num_heads=self.num_heads,
+            q_proj_weight=self.q_proj.weight,
+            k_proj_weight=self.k_proj.weight,
+            v_proj_weight=self.v_proj.weight,
+            in_proj_weight=None,
+            in_proj_bias=torch.cat([self.q_proj.bias,
+                                    self.k_proj.bias,
+                                    self.v_proj.bias]),
+            bias_k=None,
+            bias_v=None,
+            add_zero_attn=False,
+            dropout_p=0,
+            out_proj_weight=self.c_proj.weight,
+            out_proj_bias=self.c_proj.bias,
+            use_separate_proj_weight=True,
+            training=self.training,
+            need_weights=False
+        )
+        return x.squeeze(0)
+
 # Code from: https://github.com/openai/CLIP/blob/main/clip/model.py
+
+
 class AttentionPool2d(nn.Module):
     def __init__(self, spacial_dim: int, embed_dim: int, num_heads: int, output_dim: int = None):
         super().__init__()
@@ -195,25 +235,25 @@ class AttentionPool2d(nn.Module):
 class ZAttentionPooling(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim):
         super(ZAttentionPooling, self).__init__()
-        self.qkv = torch.nn.Linear(
-            input_dim, 3 * hidden_dim)  # 3: q, k, v 각각을 위한 차원
+        self.qkv = torch.nn.Linear(input_dim, 3 * hidden_dim)
 
     def forward(self, x):
-        # x: [B, N, C]
+        # x: [B, patch_num, N, C]
+
+        B, patch_num, N, C = x.shape
 
         # Query, Key, Value 동시에 계산
-        qkv = self.qkv(x)  # [B, N, 3*C]
-        Q, K, V = torch.split(qkv, qkv.size(-1) // 3, dim=-1)  # [B, N, C] each
+        qkv = self.qkv(x.reshape(-1, C)).reshape(B, patch_num, N, 3 * C)
+        Q, K, V = torch.split(qkv, C, dim=-1)
 
         # Attention scores 계산
-        attention_scores = torch.matmul(
-            Q, K.transpose(-2, -1)) / (x.size(-1) ** 0.5)  # [B, N, N]
-        attention_weights = F.softmax(attention_scores, dim=-1)  # [B, N, N]
+        attention_scores = torch.einsum("bpnc,bpnc->bpnn", [Q, K]) / (C ** 0.5)
+        attention_weights = F.softmax(attention_scores, dim=-1)
 
         # Weighted sum 계산
-        weighted_sum = torch.matmul(attention_weights, V)  # [B, N, C]
+        weighted_sum = torch.einsum("bpnn,bpnc->bpnc", [attention_weights, V])
 
         # 평균 계산
-        pooled_output = torch.mean(weighted_sum, dim=1)  # [B, C]
+        pooled_output = weighted_sum.mean(dim=2)
 
-        return pooled_output
+        return pooled_output  # [B, patch_num, C]
