@@ -12,7 +12,7 @@ DEFAULT_ACT = "relu6"
 def get_act(activation):
     if isinstance(activation, nn.Module) or callable(activation):
         act = activation
-    if activation == 'relu6':
+    elif activation == 'relu6':
         act = nn.ReLU6(inplace=INPLACE)
     elif activation == 'relu':
         act = nn.ReLU(inplace=INPLACE)
