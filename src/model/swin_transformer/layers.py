@@ -190,3 +190,30 @@ class AttentionPool2d(nn.Module):
             need_weights=False
         )
         return x.squeeze(0)
+
+
+class ZAttentionPooling(torch.nn.Module):
+    def __init__(self, input_dim, hidden_dim):
+        super(ZAttentionPooling, self).__init__()
+        self.qkv = torch.nn.Linear(
+            input_dim, 3 * hidden_dim)  # 3: q, k, v 각각을 위한 차원
+
+    def forward(self, x):
+        # x: [B, N, C]
+
+        # Query, Key, Value 동시에 계산
+        qkv = self.qkv(x)  # [B, N, 3*C]
+        Q, K, V = torch.split(qkv, qkv.size(-1) // 3, dim=-1)  # [B, N, C] each
+
+        # Attention scores 계산
+        attention_scores = torch.matmul(
+            Q, K.transpose(-2, -1)) / (x.size(-1) ** 0.5)  # [B, N, N]
+        attention_weights = F.softmax(attention_scores, dim=-1)  # [B, N, N]
+
+        # Weighted sum 계산
+        weighted_sum = torch.matmul(attention_weights, V)  # [B, N, C]
+
+        # 평균 계산
+        pooled_output = torch.mean(weighted_sum, dim=1)  # [B, C]
+
+        return pooled_output
