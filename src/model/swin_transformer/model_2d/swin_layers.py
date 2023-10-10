@@ -7,14 +7,16 @@ import numpy as np
 from einops import rearrange
 from ..layers import get_act
 
+DEFAULT_ACT = get_act("leakyrelu")
+
 
 class Mlp(nn.Module):
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=DEFAULT_ACT, drop=0.):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = act_layer()
+        self.act = act_layer
         self.fc2 = nn.Linear(hidden_features, out_features)
         self.drop = nn.Dropout(drop)
 
@@ -233,7 +235,7 @@ class SwinTransformerBlock(nn.Module):
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, pretrained_window_size=0):
+                 act_layer=DEFAULT_ACT, norm_layer=nn.LayerNorm, pretrained_window_size=0):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -291,7 +293,7 @@ class SwinTransformerBlock(nn.Module):
     def forward(self, x):
         H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, f"input feature has wrong size, {L} != {H}, {W}"
 
         shortcut = x
         x = x.view(B, H, W, C)
@@ -376,7 +378,7 @@ class PatchMerging(nn.Module):
         """
         H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
         x = x.view(B, H, W, C)
@@ -416,13 +418,14 @@ class PatchExpanding(nn.Module):
                                               kernel_size=1, padding=0, bias=False)
         self.pixel_shuffle = nn.PixelShuffle(dim_scale)
         self.pixel_shuffle_conv_2 = nn.Conv2d(dim // 2, dim // 2,
-                                              kernel_size=3, padding=1, bias=False)
+                                              kernel_size=3, padding="same",
+                                              bias=False)
         self.norm_layer = norm_layer(dim // 2)
 
     def forward(self, x):
         H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
         x = x.permute(0, 2, 1).view(B, C, H, W)
         x = self.pixel_shuffle_conv_1(x)
@@ -674,3 +677,50 @@ class PatchEmbed(nn.Module):
         if self.norm is not None:
             flops += Ho * Wo * self.embed_dim
         return flops
+
+
+class PatchExtract(nn.Module):
+    def __init__(self, patch_size, stride_size=None):
+        super(PatchExtract, self).__init__()
+
+        if stride_size is None:
+            stride_size = patch_size
+
+        self.patch_size_row, self.patch_size_col = to_2tuple(patch_size)
+        self.stride_size_row, self.stride_size_col = to_2tuple(stride_size)
+
+    def forward(self, images):
+        # images shape: (batch_size, channels, height, width)
+
+        # Extract patches
+        patches = F.unfold(images, kernel_size=(self.patch_size_row, self.patch_size_col),
+                           stride=(self.stride_size_row, self.stride_size_col))
+
+        # Reshape the patches
+        batch_size, _, patch_num = patches.size()
+        patches = patches.permute(0, 2, 1).contiguous().view(
+            batch_size, patch_num, -1)
+
+        return patches
+
+
+class PatchEmbedding(nn.Module):
+    def __init__(self, num_patch, in_dim, embed_dim):
+        super(PatchEmbedding, self).__init__()
+
+        # Assuming DenseLayer is similar to nn.Linear
+        # If there's any spectral normalization or other specifics, you'd need to add those
+        self.proj = nn.Linear(in_dim, embed_dim, bias=True)
+        self.pos_embed = nn.Embedding(num_patch, embed_dim)
+
+        self.num_patch = num_patch
+
+    def forward(self, patch):
+        # PyTorch generally uses [B, C, ...] format
+        B, C, _ = patch.shape
+
+        pos = torch.arange(0, self.num_patch).to(patch.device)
+        embed = self.proj(patch) + \
+            self.pos_embed(pos).unsqueeze(0).repeat(B, 1, 1)
+
+        return embed

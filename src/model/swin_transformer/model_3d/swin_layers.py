@@ -344,7 +344,7 @@ class SwinTransformerBlock(nn.Module):
     def forward(self, x):
         Z, H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == Z * H * W, "input feature has wrong size"
+        assert L == Z * H * W, f"input feature has wrong size {L} != {H}, {W}"
 
         shortcut = x
         x = x.view(B, Z, H, W, C)
@@ -434,7 +434,7 @@ class PatchMerging(nn.Module):
         """
         Z, H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == Z * H * W, "input feature has wrong size"
+        assert L == Z * H * W, f"input feature has wrong size {L} != {H}, {W}"
         assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
         x = x.view(B, Z, H, W, C)
@@ -485,7 +485,7 @@ class PatchExpanding(nn.Module):
     def forward(self, x):
         Z, H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == Z * H * W, "input feature has wrong size"
+        assert L == Z * H * W, f"input feature has wrong size {L} != {H}, {W}"
         assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
         x = x.permute(0, 2, 1).view(B, C, Z, H, W)
         x = self.pixel_shuffle_conv_1(x)

@@ -2,7 +2,8 @@ import torch
 import math
 from torch import nn
 import numpy as np
-from .layers import get_act
+from .layers import get_act, get_norm
+from timm.models.layers import trunc_normal_
 from .base_model import InceptionResNetV2_2D, get_skip_connect_channel_list
 from .transformer_layers import PositionalEncoding
 from .layers import space_to_depth, DEFAULT_ACT
@@ -13,8 +14,8 @@ USE_INPLACE = True
 
 
 class InceptionResNetV2MultiTask2D(nn.Module):
-    def __init__(self, input_shape, class_channel, seg_channels, block_size=16,
-                 include_cbam=False, include_context=False, decode_init_channel=768,
+    def __init__(self, input_shape, class_channel, seg_channels, inject_class_channel=None,
+                 block_size=16, include_cbam=False, include_context=False, decode_init_channel=768,
                  skip_connect=True, dropout_proba=0.05, norm="batch", act=DEFAULT_ACT,
                  class_act="softmax", seg_act="sigmoid",
                  get_seg=True, get_class=True, use_class_head_simple=True, use_seg_pixelshuffle=True
@@ -23,7 +24,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
 
         self.get_seg = get_seg
         self.get_class = get_class
-
+        self.inject_class_channel = inject_class_channel
         input_shape = np.array(input_shape)
         n_input_channels, init_h, init_w = input_shape
         feature_h, feature_w = (init_h // (2 ** 5),
@@ -74,14 +75,33 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                              feature_channel_num,
                                                              class_channel,
                                                              dropout_proba, class_act)
+        if inject_class_channel is not None and get_seg:
+            self.inject_linear = nn.Linear(inject_class_channel,
+                                           feature_channel_num, bias=False)
+            self.inject_norm = get_norm("layer", feature_channel_num, "2d")
+            inject_pos_embed_shape = torch.zeros(1,
+                                                 *self.feature_shape[1:],
+                                                 1)
+            self.inject_absolute_pos_embed = nn.Parameter(
+                inject_pos_embed_shape)
+            trunc_normal_(self.inject_absolute_pos_embed, std=.02)
+            self.inject_cat_conv = nn.Conv2d(feature_channel_num * 2,
+                                             feature_channel_num, kernel_size=3, padding=1, bias=False)
 
     def forward(self, input_tensor):
         output = []
         encode_feature = self.base_model(input_tensor)
         decoded = encode_feature
         if self.get_seg:
+            if self.inject_class_channel is not None:
+                inject_class = self.inject_linear(inject_class)
+                inject_class = self.inject_norm(inject_class)
+                inject_class = inject_class.unsqueeze(
+                    1).repeat(1, 1, x.shape[2], x.shape[3])
+                inject_class = inject_class + self.inject_absolute_pos_embed
+                x = torch.cat([x, inject_class], dim=1)
+                x = self.inject_cat_conv(x)
             for decode_i in range(0, 5):
-
                 if self.skip_connect:
                     skip_connect_tensor = getattr(self.base_model,
                                                   f"skip_connect_tensor_{4 - decode_i}")

@@ -64,7 +64,7 @@ class PatchExpand3D(nn.Module):
         Z, H, W = self.input_resolution
         x = self.expand(x)
         B, L, C = x.shape
-        assert L == H * W * Z, "input feature has wrong size"
+        assert L == H * W * Z, f"input feature has wrong size {L} != {H}, {W}"
 
         x = x.view(B, Z, H, W, C)
         x = rearrange(x, 'b z h w (p1 p2 p3 c)-> b (z p1) (h p2) (w p3) c',
@@ -271,7 +271,7 @@ class SwinTransformerBlock3D(nn.Module):
     def forward(self, x):
         Z, H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == Z * H * W, "input feature has wrong size"
+        assert L == Z * H * W, f"input feature has wrong size {L} != {H}, {W}"
 
         shortcut = x
         x = self.norm1(x)
@@ -418,7 +418,7 @@ class FinalPatchExpand_X43D(nn.Module):
         Z, H, W = self.input_resolution
         x = self.expand(x)
         B, L, C = x.shape
-        assert L == Z * H * W, "input feature has wrong size"
+        assert L == Z * H * W, f"input feature has wrong size {L} != {H}, {W}"
 
         x = x.view(B, Z, H, W, C)
         x = rearrange(x, 'b z h w (p1 p2 p3 c)-> b (z p1) (h p2) (w p3) c',
@@ -507,7 +507,7 @@ class PatchExpand3D(nn.Module):
         Z, H, W = self.input_resolution
         x = self.expand(x)
         B, L, C = x.shape
-        assert L == H * W * Z, "input feature has wrong size"
+        assert L == H * W * Z, f"input feature has wrong size {L} != {H}, {W}"
 
         x = x.view(B, Z, H, W, C)
         x = rearrange(x, 'b z h w (p1 p2 p3 c)-> b (z p1) (h p2) (w p3) c',
@@ -686,7 +686,7 @@ class X2CTSwinTransformer(nn.Module):
     def no_weight_decay_keywords(self):
         return {'relative_position_bias_table'}
 
-    #Encoder and Bottleneck
+    # Encoder and Bottleneck
     def forward_features(self, x):
         x = self.patch_embed(x)
         if self.ape:

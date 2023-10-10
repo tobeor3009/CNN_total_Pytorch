@@ -220,7 +220,7 @@ class SwinTransformerBlock(nn.Module):
         """
         B, L, C = x.shape
         H, W = self.H, self.W
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
 
         shortcut = x
         x = self.norm1(x)
@@ -297,7 +297,7 @@ class PatchMerging(nn.Module):
             H, W: Spatial resolution of the input feature.
         """
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
 
         x = x.view(B, H, W, C)
 

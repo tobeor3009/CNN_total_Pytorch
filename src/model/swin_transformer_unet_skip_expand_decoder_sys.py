@@ -243,7 +243,7 @@ class SwinTransformerBlock(nn.Module):
     def forward(self, x):
         H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
 
         shortcut = x
         x = self.norm1(x)
@@ -327,7 +327,7 @@ class PatchMerging(nn.Module):
         """
         H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
         x = x.view(B, H, W, C)
@@ -370,7 +370,7 @@ class PatchExpand(nn.Module):
         H, W = self.input_resolution
         x = self.expand(x)
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
 
         x = x.view(B, H, W, C)
         x = rearrange(x, 'b h w (p1 p2 c)-> b (h p1) (w p2) c',
@@ -398,7 +398,7 @@ class FinalPatchExpand_X4(nn.Module):
         H, W = self.input_resolution
         x = self.expand(x)
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
 
         x = x.view(B, H, W, C)
         x = rearrange(x, 'b h w (p1 p2 c)-> b (h p1) (w p2) c',
@@ -742,7 +742,7 @@ class SwinTransformerSys(nn.Module):
     def no_weight_decay_keywords(self):
         return {'relative_position_bias_table'}
 
-    #Encoder and Bottleneck
+    # Encoder and Bottleneck
     def forward_features(self, x):
         x = self.patch_embed(x)
         if self.ape:
