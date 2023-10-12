@@ -153,7 +153,9 @@ class PixelShuffle3D(nn.Module):
 
 
 class AttentionPool1d(nn.Module):
-    def __init__(self, sequence_length: int, embed_dim: int, num_heads: int, output_dim: int = None):
+    def __init__(self, sequence_length: int, embed_dim: int,
+                 num_heads: int, output_dim: int = None,
+                 channel_first: bool = True):
         super().__init__()
         self.positional_embedding = nn.Parameter(torch.randn(sequence_length + 1,
                                                              embed_dim) / embed_dim ** 0.5)
@@ -162,9 +164,14 @@ class AttentionPool1d(nn.Module):
         self.v_proj = nn.Linear(embed_dim, embed_dim)
         self.c_proj = nn.Linear(embed_dim, output_dim or embed_dim)
         self.num_heads = num_heads
+        self.channel_first = channel_first
 
     def forward(self, x):
-        x = x.permute(2, 0, 1)  # NCL -> LNC
+        if self.channel_first:
+            x = x.permute(2, 0, 1)
+        else:
+            x = x.permute(1, 0, 2)  # NCL -> LNC
+
         x = torch.cat([x.mean(dim=0, keepdim=True), x], dim=0)  # (L+1)NC
         x = x + self.positional_embedding[:, None, :].to(x.dtype)  # (L+1)NC
         x, _ = F.multi_head_attention_forward(
@@ -235,6 +242,7 @@ class AttentionPool2d(nn.Module):
 class ZAttentionPooling(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim):
         super(ZAttentionPooling, self).__init__()
+        self.hidden_dim = hidden_dim
         self.qkv = torch.nn.Linear(input_dim, 3 * hidden_dim)
 
     def forward(self, x):
@@ -243,17 +251,19 @@ class ZAttentionPooling(torch.nn.Module):
         B, patch_num, N, C = x.shape
 
         # Query, Key, Value 동시에 계산
-        qkv = self.qkv(x.reshape(-1, C)).reshape(B, patch_num, N, 3 * C)
-        Q, K, V = torch.split(qkv, C, dim=-1)
+        qkv = self.qkv(x.reshape(-1, C)).reshape(B, patch_num, N,
+                                                 3 * self.hidden_dim)
+        Q, K, V = torch.split(qkv, self.hidden_dim, dim=-1)
 
         # Attention scores 계산
-        attention_scores = torch.einsum("bpnc,bpnc->bpnn", [Q, K]) / (C ** 0.5)
+        attention_scores = torch.einsum(
+            "bpni,bpnj->bpin", Q, K) / (self.hidden_dim ** 0.5)
         attention_weights = F.softmax(attention_scores, dim=-1)
 
         # Weighted sum 계산
-        weighted_sum = torch.einsum("bpnn,bpnc->bpnc", [attention_weights, V])
+        weighted_sum = torch.einsum("bpin,bpnc->bpic", attention_weights, V)
 
         # 평균 계산
         pooled_output = weighted_sum.mean(dim=2)
 
-        return pooled_output  # [B, patch_num, C]
+        return pooled_output  # [B, patch_num, hidden_dim]
