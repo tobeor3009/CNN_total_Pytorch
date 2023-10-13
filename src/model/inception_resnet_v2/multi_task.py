@@ -119,6 +119,8 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             output.append(class_output)
         if len(output) == 1:
             output = output[0]
+        if len(output) == 0:
+            output = encode_feature
         return output
 
 
