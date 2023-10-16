@@ -1,10 +1,48 @@
 import torch
 
 
+# def compute_gradient_penalty_2d(D, real_samples, fake_samples, blend_labels):
+#     """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2 using blended images."""
+#     device = real_samples.device
+#     alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(device)
+#     interpolates = (alpha * real_samples + (1 - alpha)
+#                     * fake_samples).requires_grad_(True)
+#     d_output = D(interpolates)
+#     if type(d_output) == list:
+#         _, d_interpolates = d_output
+#     else:
+#         d_interpolates = d_output
+
+#     # We will use only the outputs of the blended regions for calculating the penalty
+#     d_interpolates = torch.where(blend_labels, d_interpolates,
+#                                  torch.zeros_like(d_interpolates).to(device))
+
+#     fake = torch.ones(d_interpolates.size()).to(device)
+
+#     gradients = torch.autograd.grad(
+#         outputs=d_interpolates,
+#         inputs=interpolates,
+#         grad_outputs=fake,
+#         retain_graph=True,
+#         create_graph=True,
+#         only_inputs=True
+#     )[0]
+#     gradients = gradients.view(gradients.size(0), -1)
+#     gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+#     return gradient_penalty
+
 def compute_gradient_penalty_2d(D, real_samples, fake_samples, blend_labels):
     """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2 using blended images."""
     device = real_samples.device
     alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(device)
+    blend_labels = F.interpolate(blend_labels.float(), size=real_samples.shape[2:],
+                                 mode='bilinear', align_corners=False) > 0.5
+    real_samples = torch.where(~blend_labels,
+                               real_samples,
+                               torch.zeros_like(real_samples))
+    fake_samples = torch.where(blend_labels,
+                               fake_samples,
+                               torch.zeros_like(fake_samples))
     interpolates = (alpha * real_samples + (1 - alpha)
                     * fake_samples).requires_grad_(True)
     d_output = D(interpolates)
@@ -12,10 +50,6 @@ def compute_gradient_penalty_2d(D, real_samples, fake_samples, blend_labels):
         _, d_interpolates = d_output
     else:
         d_interpolates = d_output
-
-    # We will use only the outputs of the blended regions for calculating the penalty
-    d_interpolates = torch.where(blend_labels, d_interpolates, 
-                                 torch.zeros_like(d_interpolates).to(device))
 
     fake = torch.ones(d_interpolates.size()).to(device)
 
