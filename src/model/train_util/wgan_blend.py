@@ -1,5 +1,5 @@
 import torch
-
+import torch.nn.functional as F
 
 # def compute_gradient_penalty_2d(D, real_samples, fake_samples, blend_labels):
 #     """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2 using blended images."""
@@ -30,6 +30,7 @@ import torch
 #     gradients = gradients.view(gradients.size(0), -1)
 #     gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
 #     return gradient_penalty
+
 
 def compute_gradient_penalty_2d(D, real_samples, fake_samples, blend_labels):
     """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2 using blended images."""
