@@ -5,7 +5,7 @@ from .swin_layers import PatchEmbed, PatchMerging, PatchExpanding
 from .swin_layers import PatchExtract, PatchEmbedding
 from .swin_layers import BasicLayerV1, BasicLayerV2
 from .swin_layers import trunc_normal_, to_2tuple
-from ..layers import ConvBlock2D
+from ..layers import ConvBlock2D, AttentionPool1d
 from ..layers import get_act
 
 
@@ -104,8 +104,8 @@ class SwinTransformerMultiTask(nn.Module):
                       patches_resolution[1] // (2 ** depth_level))
 
         if get_class:
-            self.class_head = SwinClassificationHead(self.num_features, num_classes,
-                                                     class_act=class_act, norm_layer=norm_layer)
+            self.class_head = SwinClassificationHead(np.prod(feature_hw), self.num_features,
+                                                     num_classes, class_act=class_act)
         if get_seg:
             self.cat_linears = nn.ModuleList()
             self.decode_layers = nn.ModuleList()
@@ -264,18 +264,17 @@ class SwinTransformerMultiTask(nn.Module):
 
 
 class SwinClassificationHead(nn.Module):
-    def __init__(self, input_feature, num_classes, class_act, norm_layer):
+    def __init__(self, patch_num, input_feature, num_classes, class_act):
         super().__init__()
-        self.norm = norm_layer(input_feature)
-        self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.linear = nn.Linear(input_feature,
+        self.attn_pool = AttentionPool1d(patch_num, input_feature,
+                                         num_heads=4, output_dim=input_feature * 2,
+                                         channel_first=False)
+        self.linear = nn.Linear(input_feature * 2,
                                 num_classes) if num_classes > 0 else nn.Identity()
         self.act = get_act(class_act)
 
     def forward(self, x):
-        x = self.norm(x)  # B L C
-        x = self.avgpool(x.transpose(1, 2))  # B C 1
-        x = torch.flatten(x, 1)  # B C
+        x = self.attn_pool(x)  # B L C
         x = self.linear(x)
         x = self.act(x)
         return x
