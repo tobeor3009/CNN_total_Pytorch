@@ -7,7 +7,7 @@ from timm.models.layers import trunc_normal_
 from .base_model import InceptionResNetV2_2D, get_skip_connect_channel_list
 from .transformer_layers import PositionalEncoding
 from .layers import space_to_depth, DEFAULT_ACT
-from .layers import ConvBlock2D, Decoder2D, Output2D, AttentionPool2d
+from .layers import ConvBlock2D, AttentionPool
 from .layers_highway import MultiDecoder2D, HighwayOutput2D
 USE_INPLACE = True
 
@@ -164,35 +164,17 @@ class ClassificationHeadSimple(nn.Module):
 
 
 class ClassificationHead(nn.Module):
-    def __init__(self, feature_hw, in_channels, num_classes, dropout_proba, activation,
-                 transformer_dim=512):
+    def __init__(self, feature_hw, in_channels, num_classes, dropout_proba, activation):
         super(ClassificationHead, self).__init__()
-        self.transformer_dim = transformer_dim
-
+        self.attn_pool = AttentionPool(spacial_dim=np.prod(feature_hw), embed_dim=in_channels,
+                                       num_heads=4, output_dim=in_channels * 2)
         self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
-        self.fc = nn.Linear(transformer_dim, num_classes)
+        self.fc = nn.Linear(in_channels * 2, num_classes)
         self.act = get_act(activation)
 
     def forward(self, x):
-        batch_size, in_channels, h, w = x.shape
-        # shape: [N, C, H, W]
-        x = x.view(batch_size, in_channels, -1)
-        # shape: [N, C, H * W]
-        x = x.permute(0, 2, 1)
-        # shape: [N, H * W, C]
-        x = self.shrink_fc(x)
-        x = self.shrink_norm(x)
-        x = self.pos_encoder(x)
-        x = self.transformer_encoder(x)
+        x = self.attn_pool(x)
         x = self.dropout(x)
-        # shape: [N, H * W, C]
-        x = x.view(batch_size, h, w,
-                   self.transformer_dim)
-        # shape: [N, H, W, C]
-        x = x.permute(0, 3, 1, 2)
-        # shape: [N, C, H, W]
-        x = x.mean([2, 3])
-        # shape: [N, C]
         x = self.fc(x)
         x = self.act(x)
         return x
