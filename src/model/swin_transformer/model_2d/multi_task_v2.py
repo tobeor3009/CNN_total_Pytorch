@@ -42,9 +42,8 @@ class SwinTransformerMultiTask(nn.Module):
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_class=True, get_seg=False, get_validity=False,
-                 norm_layer=nn.LayerNorm, patch_norm=True,
-                 use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0],
-                 **kwargs):
+                 norm_layer=nn.LayerNorm, patch_norm=True, skip_connect=True,
+                 use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0]):
         super().__init__()
 
         patch_size = int(patch_size)
@@ -61,6 +60,7 @@ class SwinTransformerMultiTask(nn.Module):
         self.get_class = get_class
         self.get_seg = get_seg
         self.get_validity = get_validity
+        self.skip_connect = skip_connect
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size,
                                       in_chans=in_chans, embed_dim=embed_dim,
@@ -111,7 +111,7 @@ class SwinTransformerMultiTask(nn.Module):
             self.decode_layers = nn.ModuleList()
             for i_layer in range(self.num_layers - 1, -1, -1):
                 target_dim = int(embed_dim * 2 ** i_layer)
-                if i_layer > 0:
+                if i_layer > 0 and skip_connect:
                     cat_linear = nn.Linear(target_dim * 2, target_dim,
                                            bias=False)
                 else:
@@ -213,7 +213,7 @@ class SwinTransformerMultiTask(nn.Module):
 
         for idx, (cat_linear, layer) in enumerate(zip(self.cat_linears,
                                                       self.decode_layers)):
-            if idx < len(self.decode_layers) - 1:
+            if idx < len(self.decode_layers) - 1 and self.skip_connect:
                 skip_connect = skip_connect_list[idx]
                 x = torch.cat([x, skip_connect], dim=-1)
                 x = cat_linear(x)

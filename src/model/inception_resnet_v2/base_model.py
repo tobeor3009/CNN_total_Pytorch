@@ -7,7 +7,6 @@ INPLACE = False
 
 
 def get_skip_connect_channel_list(block_size, mini=False):
-
     if mini:
         return np.array([block_size * 2, block_size * 4, block_size * 12])
     else:

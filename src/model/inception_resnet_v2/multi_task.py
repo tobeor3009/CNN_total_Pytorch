@@ -7,7 +7,7 @@ from timm.models.layers import trunc_normal_
 from .base_model import InceptionResNetV2_2D, get_skip_connect_channel_list
 from .transformer_layers import PositionalEncoding
 from .layers import space_to_depth, DEFAULT_ACT
-from .layers import ConvBlock2D, Decoder2D, Output2D
+from .layers import ConvBlock2D, Decoder2D, Output2D, AttentionPool2d
 from .layers_highway import MultiDecoder2D, HighwayOutput2D
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 USE_INPLACE = True
