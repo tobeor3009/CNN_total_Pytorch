@@ -63,17 +63,28 @@ class MultiDecoder2D(nn.Module):
 
 
 class MultiDecoder3D(nn.Module):
-    def __init__(self, in_channels, out_channels,
-                 activation=DEFAULT_ACT, kernel_size=2, use_highway=True):
+    def __init__(self, input_zhw, in_channels, out_channels,
+                 norm="layer", activation=DEFAULT_ACT, kernel_size=2,
+                 use_highway=False):
         super().__init__()
-        self.use_highway = use_highway
+        z, h, w = input_zhw
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size, kernel_size)
+        upsample_shape = (out_channels,
+                          kernel_size[0] * z,
+                          kernel_size[1] * h,
+                          kernel_size[2] * w)
+        self.use_highway = use_highway
+        conv_before_pixel_shuffle = nn.Conv3d(in_channels=in_channels,
+                                              out_channels=(in_channels *
+                                                            np.prod(kernel_size)),
+                                              kernel_size=1)
         pixel_shuffle_layer = PixelShuffle3D(upscale_factor=kernel_size)
-        conv_after_pixel_shuffle = nn.Conv3d(in_channels=in_channels // np.prod(kernel_size),
+        conv_after_pixel_shuffle = nn.Conv3d(in_channels=in_channels,
                                              out_channels=out_channels,
                                              kernel_size=1)
         self.pixel_shuffle = nn.Sequential(
+            conv_before_pixel_shuffle,
             pixel_shuffle_layer,
             conv_after_pixel_shuffle
         )
@@ -88,7 +99,11 @@ class MultiDecoder3D(nn.Module):
         if self.use_highway:
             self.highway = HighwayLayer(in_channels=out_channels,
                                         mode="3d")
-        self.norm = nn.InstanceNorm3d(num_features=out_channels, affine=False)
+        else:
+            self.concat_conv = nn.Conv3d(in_channels=out_channels * 2,
+                                         out_channels=out_channels,
+                                         kernel_size=3, padding=1)
+        self.norm = get_norm(norm, upsample_shape, mode="3d")
         self.act = get_act(activation)
 
     def forward(self, x):
@@ -97,7 +112,8 @@ class MultiDecoder3D(nn.Module):
         if self.use_highway:
             out = self.highway(pixel_shuffle, upsample)
         else:
-            out = (pixel_shuffle + upsample) / math.sqrt(2)
+            out = torch.cat([pixel_shuffle, upsample], dim=1)
+            out = self.concat_conv(out)
         out = self.norm(out)
         out = self.act(out)
         return out
@@ -105,7 +121,7 @@ class MultiDecoder3D(nn.Module):
 
 class HighwayOutput2D(nn.Module):
     def __init__(self, in_channels, out_channels,
-                 use_highway=True, act="tanh", init_bias=-3.0):
+                 use_highway=False, act="tanh", init_bias=-3.0):
         super().__init__()
         self.use_highway = use_highway
         conv_out_channels = out_channels if self.use_highway else in_channels // 2
@@ -141,23 +157,29 @@ class HighwayOutput3D(nn.Module):
                  use_highway=True, activation="tanh", init_bias=-3.0):
         super().__init__()
         self.use_highway = use_highway
-        self.conv_5x5 = nn.Conv3d(in_channels=in_channels,
-                                  out_channels=out_channels,
-                                  kernel_size=1)
-        self.conv_3x3 = nn.Conv3d(in_channels=in_channels,
-                                  out_channels=out_channels,
-                                  kernel_size=1)
+        conv_out_channels = out_channels if self.use_highway else in_channels // 2
+        self.conv_5x5x5 = nn.Conv3d(in_channels=in_channels,
+                                    out_channels=conv_out_channels,
+                                    kernel_size=5, padding=2)
+        self.conv_3x3x3 = nn.Conv3d(in_channels=in_channels,
+                                    out_channels=conv_out_channels,
+                                    kernel_size=3, padding=1)
         if self.use_highway:
             self.highway = HighwayLayer(in_channels=out_channels,
                                         mode="3d", init_bias=init_bias)
+        else:
+            self.concat_conv = nn.Conv3d(in_channels=conv_out_channels * 2,
+                                         out_channels=out_channels,
+                                         kernel_size=3, padding=1)
         self.act = get_act(activation)
 
     def forward(self, x):
-        conv_5x5 = self.conv_5x5(x)
-        conv_3x3 = self.conv_3x3(x)
+        conv_5x5x5 = self.conv_5x5x5(x)
+        conv_3x3x3 = self.conv_3x3x3(x)
         if self.use_highway:
-            output = self.highway(conv_5x5, conv_3x3)
+            output = self.highway(conv_5x5x5, conv_3x3x3)
         else:
-            output = (conv_5x5 + conv_3x3) / math.sqrt(2)
+            output = torch.cat([conv_5x5x5, conv_3x3x3], dim=1)
+            output = self.concat_conv(output)
         output = self.act(output)
         return output

@@ -6,8 +6,8 @@ from .layers import get_act
 from .base_model import InceptionResNetV2_3D, get_skip_connect_channel_list
 from .transformer_layers import PositionalEncoding
 from .layers import space_to_depth_3d
-from .layers import ConvBlock3D, Decoder3D, Output3D
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from .layers import ConvBlock3D, AttentionPool
+from .layers_highway import MultiDecoder3D, HighwayOutput3D
 USE_INPLACE = True
 
 
@@ -53,17 +53,17 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                 decode_conv = ConvBlock3D(in_channels=decode_in_channels,
                                           out_channels=decode_out_channels, kernel_size=3)
                 decode_kernel_size = (1, 2, 2) if z_channel_preserve else 2
-                decode_up = Decoder3D(input_zhw=(z, h, w),
-                                      in_channels=decode_out_channels,
-                                      out_channels=decode_out_channels,
-                                      kernel_size=decode_kernel_size,
-                                      use_pixelshuffle=use_seg_pixelshuffle)
+                decode_up = MultiDecoder3D(input_zhw=(z, h, w),
+                                           in_channels=decode_out_channels,
+                                           out_channels=decode_out_channels,
+                                           kernel_size=decode_kernel_size,
+                                           use_highway=False)
                 setattr(self, f"decode_conv_{decode_i}", decode_conv)
                 setattr(self, f"decode_up_{decode_i}", decode_up)
 
-            self.seg_output_conv = Output3D(in_channels=decode_out_channels,
-                                            out_channels=seg_channels,
-                                            activation=seg_act)
+            self.seg_output_conv = HighwayOutput3D(in_channels=decode_out_channels,
+                                                   out_channels=seg_channels,
+                                                   activation=seg_act, use_highway=False)
         if self.get_class:
             if use_class_head_simple:
                 self.classfication_head = ClassificationHeadSimple(feature_channel_num,
@@ -142,41 +142,17 @@ class ClassificationHeadSimple(nn.Module):
 
 
 class ClassificationHead(nn.Module):
-    def __init__(self, feature_zhw, in_channels, num_classes, dropout_proba, activation,
-                 transformer_dim=512):
+    def __init__(self, feature_zhw, in_channels, num_classes, dropout_proba, activation):
         super(ClassificationHead, self).__init__()
-        self.transformer_dim = transformer_dim
-        self.shrink_fc = nn.Linear(in_channels, transformer_dim)
-        self.shrink_norm = nn.LayerNorm(normalized_shape=(np.prod(feature_zhw),
-                                                          transformer_dim))
-        self.pos_encoder = PositionalEncoding(transformer_dim)
-        encoder_layers = TransformerEncoderLayer(d_model=transformer_dim, nhead=8,
-                                                 dropout=dropout_proba)
-        self.transformer_encoder = TransformerEncoder(encoder_layers,
-                                                      num_layers=8)
+        self.attn_pool = AttentionPool(spacial_dim=np.prod(feature_zhw), embed_dim=in_channels,
+                                       num_heads=4, output_dim=in_channels * 2)
         self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
-        self.fc = nn.Linear(transformer_dim, num_classes)
+        self.fc = nn.Linear(in_channels * 2, num_classes)
         self.act = get_act(activation)
 
     def forward(self, x):
-        batch_size, in_channels, z, h, w = x.shape
-        # shape: [N, C, Z, H, W]
-        x = x.view(batch_size, in_channels, -1)
-        # shape: [N, C, Z * H * W]
-        x = x.permute(0, 2, 1)
-        # shape: [N, Z * H * W, C]
-        x = self.shrink_fc(x)
-        x = self.pos_encoder(x)
-        x = self.transformer_encoder(x)
+        x = self.attn_pool(x)
         x = self.dropout(x)
-        # shape: [N, Z * H * W, C]
-        x = x.view(batch_size, z, h, w,
-                   self.transformer_dim)
-        # shape: [N, Z, H, W, C]
-        x = x.permute(0, 4, 1, 2, 3)
-        # shape: [N, C, Z, H, W]
-        x = x.mean([2, 3, 4])
-        # shape: [N, C]
         x = self.fc(x)
         x = self.act(x)
         return x

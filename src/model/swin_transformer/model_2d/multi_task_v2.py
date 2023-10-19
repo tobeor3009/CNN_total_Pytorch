@@ -155,7 +155,7 @@ class SwinTransformerMultiTask(nn.Module):
             self.validity_out_conv = ConvBlock2D(embed_dim, validity_shape[0],
                                                  kernel_size=1, act=validity_act, norm=None)
 
-        if inject_num_classes is not None and get_seg:
+        if inject_num_classes is not None:
             feature_channel = int(embed_dim * (2 ** depth_level))
             self.inject_linear = nn.Linear(inject_num_classes,
                                            feature_channel, bias=False)
@@ -202,15 +202,7 @@ class SwinTransformerMultiTask(nn.Module):
                 skip_connect_list.insert(0, x)
         return x, skip_connect_list
 
-    def decode_forward(self, x, skip_connect_list, inject_class):
-        if self.inject_num_classes is not None:
-            inject_class = self.inject_linear(inject_class)
-            inject_class = self.inject_norm(inject_class)
-            inject_class = inject_class.unsqueeze(1).repeat(1, x.shape[1], 1)
-            inject_class = inject_class + self.inject_absolute_pos_embed
-            x = torch.cat([x, inject_class], dim=-1)
-            x = self.inject_cat_linear(x)
-
+    def decode_forward(self, x, skip_connect_list):
         for idx, (cat_linear, layer) in enumerate(zip(self.cat_linears,
                                                       self.decode_layers)):
             if idx < len(self.decode_layers) - 1 and self.skip_connect:
@@ -235,12 +227,18 @@ class SwinTransformerMultiTask(nn.Module):
     def forward(self, x, inject_class=None):
         output = []
         x, skip_connect_list = self.encode_forward(x)
+        if self.inject_num_classes is not None:
+            inject_class = self.inject_linear(inject_class)
+            inject_class = self.inject_norm(inject_class)
+            inject_class = inject_class.unsqueeze(1).repeat(1, x.shape[1], 1)
+            inject_class = inject_class + self.inject_absolute_pos_embed
+            x = torch.cat([x, inject_class], dim=-1)
+            x = self.inject_cat_linear(x)
         if self.get_class:
             class_output = self.class_head(x)
             output.append(class_output)
         if self.get_seg:
-            seg_output = self.decode_forward(x, skip_connect_list,
-                                             inject_class)
+            seg_output = self.decode_forward(x, skip_connect_list)
             output.append(seg_output)
         if self.get_validity:
             validity_output = self.validity_forward(x)

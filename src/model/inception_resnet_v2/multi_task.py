@@ -63,7 +63,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
 
             self.seg_output_conv = HighwayOutput2D(in_channels=decode_out_channels,
                                                    out_channels=seg_channels,
-                                                   act=seg_act)
+                                                   act=seg_act, use_highway=False)
         if self.get_class:
             if use_class_head_simple:
                 self.classfication_head = ClassificationHeadSimple(feature_channel_num,

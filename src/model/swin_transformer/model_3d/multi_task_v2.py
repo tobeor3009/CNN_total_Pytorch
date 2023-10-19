@@ -4,7 +4,7 @@ from torch import nn
 from .swin_layers import PatchEmbed, PatchMerging, PatchExpanding
 from .swin_layers import BasicLayerV1, BasicLayerV2
 from .swin_layers import trunc_normal_
-from ..layers import ConvBlock3D
+from ..layers import ConvBlock3D, AttentionPool1d
 from ..layers import get_act
 
 
@@ -35,15 +35,14 @@ class SwinTransformerMultiTask(nn.Module):
     """
 
     def __init__(self, img_size=512, patch_size=4, in_chans=3,
-                 num_classes=1000, seg_num_classes=10, validity_shape=(1, 8, 8), inject_num_classes=None,
+                 num_classes=1000, seg_num_classes=10, validity_shape=(1, 8, 8, 8), inject_num_classes=None,
                  embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
                  window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_class=True, get_seg=False, get_validity=False,
-                 norm_layer=nn.LayerNorm, patch_norm=True,
-                 use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0],
-                 **kwargs):
+                 norm_layer=nn.LayerNorm, patch_norm=True, skip_connect=True,
+                 use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0]):
         super().__init__()
 
         patch_size = int(patch_size)
@@ -60,6 +59,7 @@ class SwinTransformerMultiTask(nn.Module):
         self.get_class = get_class
         self.get_seg = get_seg
         self.get_validity = get_validity
+        self.skip_connect = skip_connect
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size,
                                       in_chans=in_chans, embed_dim=embed_dim,
@@ -102,14 +102,14 @@ class SwinTransformerMultiTask(nn.Module):
         feature_zhw = patches_resolution // (2 ** depth_level)
 
         if get_class:
-            self.class_head = SwinClassificationHead(self.num_features, num_classes,
-                                                     class_act=class_act, norm_layer=norm_layer)
+            self.class_head = SwinClassificationHead(np.prod(feature_zhw), self.num_features,
+                                                     num_classes, class_act=class_act)
         if get_seg:
             self.cat_linears = nn.ModuleList()
             self.decode_layers = nn.ModuleList()
             for i_layer in range(self.num_layers - 1, -1, -1):
                 target_dim = int(embed_dim * 2 ** i_layer)
-                if i_layer > 0:
+                if i_layer > 0 and skip_connect:
                     cat_linear = nn.Linear(target_dim * 2, target_dim,
                                            bias=False)
                 else:
@@ -153,7 +153,7 @@ class SwinTransformerMultiTask(nn.Module):
             self.validity_out_conv = ConvBlock3D(embed_dim, validity_shape[0],
                                                  kernel_size=1, act=validity_act, norm=None)
 
-        if inject_num_classes is not None and get_seg:
+        if inject_num_classes is not None:
             feature_channel = int(embed_dim * (2 ** depth_level))
             self.inject_linear = nn.Linear(inject_num_classes,
                                            feature_channel, bias=False)
@@ -200,18 +200,10 @@ class SwinTransformerMultiTask(nn.Module):
                 skip_connect_list.insert(0, x)
         return x, skip_connect_list
 
-    def decode_forward(self, x, skip_connect_list, inject_class):
-        if self.inject_num_classes is not None:
-            inject_class = self.inject_linear(inject_class)
-            inject_class = self.inject_norm(inject_class)
-            inject_class = inject_class.unsqueeze(1).repeat(1, x.shape[1], 1)
-            inject_class = inject_class + self.inject_absolute_pos_embed
-            x = torch.cat([x, inject_class], dim=-1)
-            x = self.inject_cat_linear(x)
-
+    def decode_forward(self, x, skip_connect_list):
         for idx, (cat_linear, layer) in enumerate(zip(self.cat_linears,
                                                       self.decode_layers)):
-            if idx < len(self.decode_layers) - 1:
+            if idx < len(self.decode_layers) - 1 and self.skip_connect:
                 skip_connect = skip_connect_list[idx]
                 x = torch.cat([x, skip_connect], dim=-1)
                 x = cat_linear(x)
@@ -233,12 +225,19 @@ class SwinTransformerMultiTask(nn.Module):
     def forward(self, x, inject_class=None):
         output = []
         x, skip_connect_list = self.encode_forward(x)
+        if self.inject_num_classes is not None:
+            inject_class = self.inject_linear(inject_class)
+            inject_class = self.inject_norm(inject_class)
+            inject_class = inject_class.unsqueeze(1).repeat(1, x.shape[1], 1)
+            inject_class = inject_class + self.inject_absolute_pos_embed
+            x = torch.cat([x, inject_class], dim=-1)
+            x = self.inject_cat_linear(x)
+
         if self.get_class:
             class_output = self.class_head(x)
             output.append(class_output)
         if self.get_seg:
-            seg_output = self.decode_forward(x, skip_connect_list,
-                                             inject_class)
+            seg_output = self.decode_forward(x, skip_connect_list)
             output.append(seg_output)
         if self.get_validity:
             validity_output = self.validity_forward(x)
@@ -262,18 +261,20 @@ class SwinTransformerMultiTask(nn.Module):
 
 
 class SwinClassificationHead(nn.Module):
-    def __init__(self, input_feature, num_classes, class_act, norm_layer):
+    def __init__(self, patch_num, input_feature, num_classes, class_act,
+                 dropout_proba=0.05):
         super().__init__()
-        self.norm = norm_layer(input_feature)
-        self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.linear = nn.Linear(input_feature,
+        self.attn_pool = AttentionPool1d(patch_num, input_feature,
+                                         num_heads=4, output_dim=input_feature * 2,
+                                         channel_first=False)
+        self.dropout = nn.Dropout(p=dropout_proba, inplace=True)
+        self.linear = nn.Linear(input_feature * 2,
                                 num_classes) if num_classes > 0 else nn.Identity()
         self.act = get_act(class_act)
 
     def forward(self, x):
-        x = self.norm(x)  # B L C
-        x = self.avgpool(x.transpose(1, 2))  # B C 1
-        x = torch.flatten(x, 1)  # B C
+        x = self.attn_pool(x)  # B L C
+        x = self.dropout(x)
         x = self.linear(x)
         x = self.act(x)
         return x
