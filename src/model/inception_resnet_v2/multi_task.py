@@ -9,7 +9,6 @@ from .transformer_layers import PositionalEncoding
 from .layers import space_to_depth, DEFAULT_ACT
 from .layers import ConvBlock2D, Decoder2D, Output2D, AttentionPool2d
 from .layers_highway import MultiDecoder2D, HighwayOutput2D
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
 USE_INPLACE = True
 
 
@@ -169,14 +168,7 @@ class ClassificationHead(nn.Module):
                  transformer_dim=512):
         super(ClassificationHead, self).__init__()
         self.transformer_dim = transformer_dim
-        self.shrink_fc = nn.Linear(in_channels, transformer_dim)
-        self.shrink_norm = nn.LayerNorm(normalized_shape=(np.prod(feature_hw),
-                                                          transformer_dim))
-        self.pos_encoder = PositionalEncoding(transformer_dim)
-        encoder_layers = TransformerEncoderLayer(d_model=transformer_dim, nhead=8,
-                                                 dropout=dropout_proba)
-        self.transformer_encoder = TransformerEncoder(encoder_layers,
-                                                      num_layers=8)
+
         self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.fc = nn.Linear(transformer_dim, num_classes)
         self.act = get_act(activation)

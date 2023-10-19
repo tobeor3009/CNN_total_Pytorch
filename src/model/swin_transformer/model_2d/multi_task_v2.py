@@ -264,17 +264,20 @@ class SwinTransformerMultiTask(nn.Module):
 
 
 class SwinClassificationHead(nn.Module):
-    def __init__(self, patch_num, input_feature, num_classes, class_act):
+    def __init__(self, patch_num, input_feature, num_classes, class_act,
+                 dropout_proba=0.05):
         super().__init__()
         self.attn_pool = AttentionPool1d(patch_num, input_feature,
                                          num_heads=4, output_dim=input_feature * 2,
                                          channel_first=False)
+        self.dropout = nn.Dropout(p=dropout_proba, inplace=True)
         self.linear = nn.Linear(input_feature * 2,
                                 num_classes) if num_classes > 0 else nn.Identity()
         self.act = get_act(class_act)
 
     def forward(self, x):
         x = self.attn_pool(x)  # B L C
+        x = self.dropout(x)
         x = self.linear(x)
         x = self.act(x)
         return x
