@@ -144,7 +144,7 @@ class ClassificationHeadSimple(nn.Module):
 class ClassificationHead(nn.Module):
     def __init__(self, feature_zhw, in_channels, num_classes, dropout_proba, activation):
         super(ClassificationHead, self).__init__()
-        self.attn_pool = AttentionPool(spacial_dim=np.prod(feature_zhw), embed_dim=in_channels,
+        self.attn_pool = AttentionPool(feature_num=np.prod(feature_zhw), embed_dim=in_channels,
                                        num_heads=4, output_dim=in_channels * 2)
         self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.fc = nn.Linear(in_channels * 2, num_classes)
