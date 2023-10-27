@@ -147,15 +147,15 @@ class ConvBlock3D(nn.Module):
                               bias=bias)
         if not bias:
             # in keras, scale=False
-            self.norm = get_norm(norm, out_channels, mode="3d")
+            self.norm_layer = get_norm(norm, out_channels, mode="3d")
         else:
-            self.norm = nn.Identity()
+            self.norm_layer = nn.Identity()
 
         self.act = get_act(activation)
 
     def forward(self, x):
         conv = self.conv(x)
-        norm = self.norm(conv)
+        norm = self.norm_layer(conv)
         act = self.act(norm)
         return act
 
