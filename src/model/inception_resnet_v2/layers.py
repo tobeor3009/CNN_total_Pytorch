@@ -147,7 +147,7 @@ class ConvBlock3D(nn.Module):
                               bias=bias)
         if not bias:
             # in keras, scale=False
-            self.norm_layer = get_norm(norm, out_channels, mode="3d")
+            self.norm = get_norm(norm, out_channels, mode="3d")
         else:
             self.norm = nn.Identity()
 
