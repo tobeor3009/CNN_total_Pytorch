@@ -7,10 +7,12 @@ def compute_gradient_penalty(D, real_samples, fake_samples, blend_labels, mode="
     device = real_samples.device
     if mode == "2d":
         alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(device)
+        inter_mode = "bilinear"
     elif mode == "3d":
         alpha = torch.rand(real_samples.size(0), 1, 1, 1, 1).to(device)
+        inter_mode = "trilinear"
     blend_labels = F.interpolate(blend_labels.float(), size=real_samples.shape[2:],
-                                 mode='bilinear', align_corners=False) > 0.5
+                                 mode=inter_mode, align_corners=False) > 0.5
     real_samples = torch.where(~blend_labels,
                                real_samples,
                                torch.zeros_like(real_samples))
@@ -77,9 +79,9 @@ def get_blend_images_3d(target_images, fake_images, patch_size=64, disc_channel=
     grid_size_w = W // patch_size
 
     # 레이블 배열 초기화
-    label_array = torch.zeros((B, 
-                               grid_size_d, 
-                               grid_size_h, 
+    label_array = torch.zeros((B,
+                               grid_size_d,
+                               grid_size_h,
                                grid_size_w), dtype=bool)
     blended_image = torch.zeros_like(target_images)
 
