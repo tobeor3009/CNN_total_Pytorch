@@ -485,8 +485,9 @@ class PatchExpanding(nn.Module):
     def forward(self, x):
         Z, H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == Z * H * W, f"input feature has wrong size {L} != {H}, {W}"
-        assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+        assert L == Z * H * \
+            W, f"input feature has wrong size {L} != {Z}, {H}, {W}"
+        assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({Z}*{H}*{W}) are not even."
         x = x.permute(0, 2, 1).view(B, C, Z, H, W)
         x = self.pixel_shuffle_conv_1(x)
         x = self.pixel_shuffle(x)

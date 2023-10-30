@@ -10,6 +10,7 @@ from .swin_layers import BasicLayerV1, BasicLayerV2
 from .swin_layers import trunc_normal_, to_2tuple
 from ..layers import ConvBlock2D, AttentionPool1d
 from ..layers import get_act
+import math
 
 
 class SwinXray2CT(nn.Module):
@@ -187,22 +188,35 @@ class SwinXray2CT(nn.Module):
 class PatchExpanding2D_3D(nn.Module):
     def __init__(self, feature_hw, embed_dim):
         super().__init__()
-        self.expand_2d_1 = PatchExpanding(input_resolution=feature_hw, dim=embed_dim,
-                                          return_vector=True)
-        # self.expand_2d_2 = PatchExpanding(input_resolution=(feature_hw[0] * 2,
-        #                                                     feature_hw[1]), dim=embed_dim,
-        #   return_vector=True)
-        self.expand_3d_1 = PatchExpanding3D(input_resolution=(2, *feature_hw), dim=embed_dim,
-                                            return_vector=True)
-        # self.expand_3d_2 = PatchExpanding3D(input_resolution=(16, *feature_hw), dim=embed_dim,
-        #                                     return_vector=True)
+        power = int(math.log(feature_hw[0], 2))
+        power_4 = power // 3
+        power_2 = power - power_4 * 2
+
+        self.expand_2d_list = nn.ModuleList([])
+        self.expand_3d_list = nn.ModuleList([])
+
+        for idx_2d in range(power_2):
+            h_ratio = 2 ** (idx_2d // 2)
+            w_ratio = 2 ** (idx_2d // 2 + idx_2d % 2)
+            expand_2d = PatchExpanding(input_resolution=(feature_hw[0] * h_ratio,
+                                                         feature_hw[1] * w_ratio),
+                                       dim=embed_dim,
+                                       return_vector=True)
+            self.expand_2d_list.append(expand_2d)
+
+        up_ratio_2d = 2 ** (idx_2d + 1)
+        for idx_3d in range(power_4):
+            up_ratio_3d = 4 ** idx_3d
+            upsample_resolution = (up_ratio_2d * up_ratio_3d, *feature_hw)
+            expand_3d = PatchExpanding3D(input_resolution=upsample_resolution, dim=embed_dim,
+                                         return_vector=True)
+            self.expand_3d_list.append(expand_3d)
 
     def forward(self, x):
-
-        x = self.block_process(x, self.expand_2d_1)
-        # x = self.block_process(x, self.expand_2d_2)
-        x = self.block_process(x, self.expand_3d_1)
-        # x = self.block_process(x, self.expand_3d_2)
+        for expand_2d in self.expand_2d_list:
+            x = self.block_process(x, expand_2d)
+        for expand_3d in self.expand_3d_list:
+            x = self.block_process(x, expand_3d)
         return x
 
     def block_process(self, x, expand_block):
