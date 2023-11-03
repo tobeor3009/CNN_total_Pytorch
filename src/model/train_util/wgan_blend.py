@@ -5,11 +5,14 @@ import torch.nn.functional as F
 def compute_gradient_penalty(D, real_samples, fake_samples, blend_labels, mode="2d"):
     """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2 using blended images."""
     device = real_samples.device
+    dtype = real_samples.dtype
     if mode == "2d":
-        alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(device)
+        alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(device,
+                                                             dtype=dtype)
         inter_mode = "bilinear"
     elif mode == "3d":
-        alpha = torch.rand(real_samples.size(0), 1, 1, 1, 1).to(device)
+        alpha = torch.rand(real_samples.size(0), 1, 1, 1, 1).to(device,
+                                                                dtype=dtype)
         inter_mode = "trilinear"
     blend_labels = F.interpolate(blend_labels.float(), size=real_samples.shape[2:],
                                  mode=inter_mode, align_corners=False) > 0.5
