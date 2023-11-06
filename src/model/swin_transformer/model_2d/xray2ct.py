@@ -111,14 +111,17 @@ class SwinXray2CT(nn.Module):
         self.seg_final_expanding_list = nn.ModuleList([])
         expanding_num = int(math.log2(patch_size))
         for idx in range(expanding_num):
-            seg_final_expanding = PatchExpanding3D(input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                                                     patches_resolution[0] // (
-                2 ** i_layer),
-                patches_resolution[1] // (2 ** i_layer)),
-                dim=target_dim // (2 ** idx),
-                return_vector=False if idx == (expanding_num - 1) else True,
-                dim_scale=patch_size,
-                norm_layer=norm_layer)
+            current_patch_size = patches_resolution[0] // (
+                2 ** i_layer) * (2 ** idx)
+            seg_final_expanding = PatchExpanding3D(input_resolution=(current_patch_size,
+                                                                     current_patch_size,
+                                                                     current_patch_size),
+                                                   dim=target_dim // (2 **
+                                                                      idx),
+                                                   return_vector=False if idx == (
+                                                       expanding_num - 1) else True,
+                                                   dim_scale=2,
+                                                   norm_layer=norm_layer)
             self.seg_final_expanding_list.append(seg_final_expanding)
         self.seg_final_conv = nn.Conv3d(target_dim // (2 ** expanding_num), 1,
                                         kernel_size=1, padding=0)
