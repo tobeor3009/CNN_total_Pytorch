@@ -9,13 +9,15 @@ def compute_gradient_penalty(D, real_samples, fake_samples, blend_labels, mode="
     if mode == "2d":
         alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(device,
                                                              dtype=dtype)
-        inter_mode = "bilinear"
+        inter_mode = "nearest"
     elif mode == "3d":
         alpha = torch.rand(real_samples.size(0), 1, 1, 1, 1).to(device,
                                                                 dtype=dtype)
-        inter_mode = "trilinear"
-    blend_labels = F.interpolate(blend_labels.float(), size=real_samples.shape[2:],
-                                 mode=inter_mode, align_corners=False) > 0.5
+        inter_mode = "nearest"
+    blend_labels = F.interpolate(blend_labels.to(device,
+                                                 dtype=torch.float32),
+                                 size=real_samples.shape[2:],
+                                 mode=inter_mode).detach() > 0.5
     real_samples = torch.where(~blend_labels,
                                real_samples,
                                torch.zeros_like(real_samples))
@@ -41,7 +43,11 @@ def compute_gradient_penalty(D, real_samples, fake_samples, blend_labels, mode="
         only_inputs=True
     )[0]
     gradients = gradients.view(gradients.size(0), -1)
-    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    # chanege pradient penalty code for fix gradient's stable when training fp16
+    # gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    gradients_norm = gradients.norm(2, dim=1)
+    gradient_penalty = F.mse_loss(gradients_norm,
+                                  torch.ones_like(gradients_norm))
     return gradient_penalty
 
 

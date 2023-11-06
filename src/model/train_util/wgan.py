@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 
 def compute_gradient_penalty(D, real_samples, fake_samples, mode="2d"):
@@ -14,7 +15,11 @@ def compute_gradient_penalty(D, real_samples, fake_samples, mode="2d"):
 
     interpolates = (alpha * real_samples + (1 - alpha)
                     * fake_samples).requires_grad_(True)
-    _, d_interpolates = D(interpolates)
+    d_output = D(interpolates)
+    if type(d_output) == list:
+        _, d_interpolates = d_output
+    else:
+        d_interpolates = d_output
     fake = torch.ones(d_interpolates.size()).to(device)
 
     gradients = torch.autograd.grad(
@@ -26,5 +31,9 @@ def compute_gradient_penalty(D, real_samples, fake_samples, mode="2d"):
         only_inputs=True
     )[0]
     gradients = gradients.view(gradients.size(0), -1)
-    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    # chanege pradient penalty code for fix gradient's stable when training fp16
+    # gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    gradients_norm = gradients.norm(2, dim=1)
+    gradient_penalty = F.mse_loss(gradients_norm,
+                                  torch.ones_like(gradients_norm))
     return gradient_penalty

@@ -6,17 +6,19 @@ from timm.models.layers import DropPath, to_3tuple, trunc_normal_
 import numpy as np
 from einops import rearrange
 from ..layers import get_act, PixelShuffle3D
+DEFAULT_ACT = get_act("leakyrelu")
+DROPOUT_INPLACE = True
 
 
 class Mlp(nn.Module):
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=DEFAULT_ACT, drop=0.):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer()
         self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
+        self.drop = nn.Dropout(drop, inplace=DROPOUT_INPLACE)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -187,9 +189,9 @@ class WindowAttention(nn.Module):
         else:
             self.q_bias = None
             self.v_bias = None
-        self.attn_drop = nn.Dropout(attn_drop)
+        self.attn_drop = nn.Dropout(attn_drop, inplace=DROPOUT_INPLACE)
         self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
+        self.proj_drop = nn.Dropout(proj_drop, inplace=DROPOUT_INPLACE)
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x, mask=None):
@@ -282,7 +284,7 @@ class SwinTransformerBlock(nn.Module):
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm, pretrained_window_size=0):
+                 act_layer=DEFAULT_ACT, norm_layer=nn.LayerNorm, pretrained_window_size=0):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution

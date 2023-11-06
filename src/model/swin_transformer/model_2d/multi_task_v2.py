@@ -2,7 +2,6 @@ import torch
 import numpy as np
 from torch import nn
 from .swin_layers import PatchEmbed, PatchMerging, PatchExpanding
-from .swin_layers import PatchExtract, PatchEmbedding
 from .swin_layers import BasicLayerV1, BasicLayerV2
 from .swin_layers import trunc_normal_, to_2tuple
 from ..layers import ConvBlock2D, AttentionPool1d
@@ -249,6 +248,53 @@ class SwinTransformerMultiTask(nn.Module):
             output = x
         return output
 
+    def forward_debug(self, x):
+        output = []
+        x, skip_connect_list = self.encode_forward(x)
+        self.print_tensor_info(x)
+        if self.inject_num_classes is not None:
+            inject_class = self.inject_linear(inject_class)
+            inject_class = self.inject_norm(inject_class)
+            inject_class = inject_class.unsqueeze(1).repeat(1, x.shape[1], 1)
+            inject_class = inject_class + self.inject_absolute_pos_embed
+            x = torch.cat([x, inject_class], dim=-1)
+            x = self.inject_cat_linear(x)
+        if self.get_class:
+            class_output = self.class_head(x)
+            self.print_tensor_info(class_output)
+            output.append(class_output)
+        if self.get_seg:
+            seg_output = self.decode_forward(x, skip_connect_list)
+            self.print_tensor_info(seg_output)
+            output.append(seg_output)
+            self.print_tensor_info(x)
+        if self.get_validity:
+            validity_output = self.validity_forward(x)
+            self.print_tensor_info(validity_output)
+            output.append(validity_output)
+        if len(output) == 1:
+            output = output[0]
+        if len(output) == 0:
+            output = x
+        return output
+
+    def encode_forward_bebug(self, x):
+        x = self.patch_embed(x)
+        self.print_tensor_info(x)
+        if self.ape:
+            x = x + self.absolute_pos_embed
+        self.print_tensor_info(x)
+        x = self.pos_drop(x)
+        self.print_tensor_info(x)
+        skip_connect_list = []
+        for idx, layer in enumerate(self.encode_layers):
+            x = layer(x)
+            self.print_tensor_info(x)
+            if idx < len(self.encode_layers) - 1:
+                skip_connect_list.insert(0, x)
+
+        return x, skip_connect_list
+
     def flops(self):
         flops = 0
         flops += self.patch_embed.flops()
@@ -259,6 +305,9 @@ class SwinTransformerMultiTask(nn.Module):
             self.patches_resolution[1] // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
         return flops
+
+    def print_tensor_info(self, tensor):
+        print(tensor.min(), tensor.max(), torch.isnan(tensor).any())
 
 
 class SwinClassificationHead(nn.Module):

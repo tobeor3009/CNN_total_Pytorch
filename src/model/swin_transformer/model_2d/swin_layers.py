@@ -6,8 +6,8 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import numpy as np
 from einops import rearrange
 from ..layers import get_act
-
 DEFAULT_ACT = get_act("leakyrelu")
+DROPOUT_INPLACE = True
 
 
 class Mlp(nn.Module):
@@ -18,7 +18,7 @@ class Mlp(nn.Module):
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer
         self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
+        self.drop = nn.Dropout(drop, inplace=DROPOUT_INPLACE)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -87,18 +87,18 @@ class WindowAttention(nn.Module):
         self.pretrained_window_size = pretrained_window_size
         self.num_heads = num_heads
 
-        self.logit_scale = nn.Parameter(
-            torch.log(10 * torch.ones((num_heads, 1, 1))), requires_grad=True)
+        self.logit_scale = nn.Parameter(torch.log(10 * torch.ones((num_heads, 1, 1))),
+                                        requires_grad=True)
 
         # mlp to generate continuous relative position bias
         self.cpb_mlp = nn.Sequential(nn.Linear(2, 512, bias=True),
                                      nn.ReLU(inplace=True),
                                      nn.Linear(512, num_heads, bias=False))
         # get relative_coords_table
-        relative_coords_h = torch.arange(
-            -(self.window_size[0] - 1), self.window_size[0], dtype=torch.float32)
-        relative_coords_w = torch.arange(
-            -(self.window_size[1] - 1), self.window_size[1], dtype=torch.float32)
+        relative_coords_h = torch.arange(-(self.window_size[0] - 1),
+                                         self.window_size[0], dtype=torch.float32)
+        relative_coords_w = torch.arange(-(self.window_size[1] - 1),
+                                         self.window_size[1], dtype=torch.float32)
         relative_coords_table = torch.meshgrid([relative_coords_h,
                                                 relative_coords_w], indexing='ij')
         relative_coords_table = torch.stack(relative_coords_table, dim=0)
@@ -143,9 +143,9 @@ class WindowAttention(nn.Module):
         else:
             self.q_bias = None
             self.v_bias = None
-        self.attn_drop = nn.Dropout(attn_drop)
+        self.attn_drop = nn.Dropout(attn_drop, inplace=DROPOUT_INPLACE)
         self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
+        self.proj_drop = nn.Dropout(proj_drop, inplace=DROPOUT_INPLACE)
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x, mask=None):
@@ -325,8 +325,9 @@ class SwinTransformerBlock(nn.Module):
 
         # reverse cyclic shift
         if self.shift_size > 0:
-            x = torch.roll(shifted_x, shifts=(
-                self.shift_size, self.shift_size), dims=(1, 2))
+            x = torch.roll(shifted_x,
+                           shifts=(self.shift_size,
+                                   self.shift_size), dims=(1, 2))
         else:
             x = shifted_x
         x = x.view(B, H * W, C)
