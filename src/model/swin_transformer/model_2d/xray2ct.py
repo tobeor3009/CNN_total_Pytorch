@@ -107,16 +107,20 @@ class SwinXray2CT(nn.Module):
             self.decode_layers.append(layer)
         for bly in self.decode_layers:
             bly._init_respostnorm()
-        self.seg_final_expanding = PatchExpanding3D(input_resolution=(patches_resolution[0] // (2 ** i_layer),
-                                                                      patches_resolution[0] // (
-                                                                          2 ** i_layer),
-                                                                      patches_resolution[1] // (2 ** i_layer)),
-                                                    dim=target_dim,
-                                                    return_vector=False,
-                                                    dim_scale=patch_size,
-                                                    norm_layer=norm_layer
-                                                    )
-        self.seg_final_conv = nn.Conv3d(target_dim // 2, 1,
+
+        self.seg_final_expanding_list = nn.ModuleList([])
+        expanding_num = int(math.log2(patch_size))
+        for idx in range(expanding_num):
+            seg_final_expanding = PatchExpanding3D(input_resolution=(patches_resolution[0] // (2 ** i_layer),
+                                                                     patches_resolution[0] // (
+                2 ** i_layer),
+                patches_resolution[1] // (2 ** i_layer)),
+                dim=target_dim,
+                return_vector=False if idx == (expanding_num - 1) else True,
+                dim_scale=patch_size,
+                norm_layer=norm_layer)
+            self.seg_final_expanding_list.append(seg_final_expanding)
+        self.seg_final_conv = nn.Conv3d(target_dim // (2 ** expanding_num), 1,
                                         kernel_size=1, padding=0)
         self.seg_final_act = get_act(last_act)
         self.apply(self._init_weights)
@@ -161,7 +165,8 @@ class SwinXray2CT(nn.Module):
                 x = torch.cat([x, skip_connect], dim=-1)
                 x = cat_linear(x)
             x = layer(x)
-        x = self.seg_final_expanding(x)
+        for seg_final_expanding in self.seg_final_expanding_list:
+            x = seg_final_expanding(x)
         x = self.seg_final_conv(x)
         x = self.seg_final_act(x)
         return x
