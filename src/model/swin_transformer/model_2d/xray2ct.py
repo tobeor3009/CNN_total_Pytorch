@@ -115,7 +115,7 @@ class SwinXray2CT(nn.Module):
                                                                      patches_resolution[0] // (
                 2 ** i_layer),
                 patches_resolution[1] // (2 ** i_layer)),
-                dim=target_dim,
+                dim=target_dim // (2 ** idx),
                 return_vector=False if idx == (expanding_num - 1) else True,
                 dim_scale=patch_size,
                 norm_layer=norm_layer)
