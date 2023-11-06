@@ -418,9 +418,6 @@ class PatchExpanding(nn.Module):
         self.pixel_shuffle_conv_1 = nn.Conv2d(dim, dim * (dim_scale ** 2) // 2,
                                               kernel_size=1, padding=0, bias=False)
         self.pixel_shuffle = nn.PixelShuffle(dim_scale)
-        self.pixel_shuffle_conv_2 = nn.Conv2d(dim // 2, dim // 2,
-                                              kernel_size=3, padding="same",
-                                              bias=False)
         self.norm_layer = norm_layer(dim // 2)
 
     def forward(self, x):
@@ -431,7 +428,6 @@ class PatchExpanding(nn.Module):
         x = x.permute(0, 2, 1).view(B, C, H, W)
         x = self.pixel_shuffle_conv_1(x)
         x = self.pixel_shuffle(x)
-        x = self.pixel_shuffle_conv_2(x)
         x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
         x = self.norm_layer(x)
         if not self.return_vector:
