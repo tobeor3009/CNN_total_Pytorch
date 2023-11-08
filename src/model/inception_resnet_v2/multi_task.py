@@ -86,9 +86,8 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             self.inject_linear = nn.Linear(inject_class_channel,
                                            feature_channel_num, bias=False)
             self.inject_norm = get_norm("layer", feature_channel_num, "2d")
-            inject_pos_embed_shape = torch.zeros(1,
-                                                 *self.feature_shape[1:],
-                                                 1)
+            inject_pos_embed_shape = torch.zeros(1, 1,
+                                                 *self.feature_shape[1:])
             self.inject_absolute_pos_embed = nn.Parameter(
                 inject_pos_embed_shape)
             trunc_normal_(self.inject_absolute_pos_embed, std=.02)
@@ -101,7 +100,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         x = self.validity_out_conv(x)
         return x
 
-    def forward(self, input_tensor):
+    def forward(self, input_tensor, inject_class=None):
         output = []
         encode_feature = self.base_model(input_tensor)
         decoded = encode_feature
@@ -109,11 +108,15 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             if self.inject_class_channel is not None:
                 inject_class = self.inject_linear(inject_class)
                 inject_class = self.inject_norm(inject_class)
-                inject_class = inject_class.unsqueeze(
-                    1).repeat(1, 1, x.shape[2], x.shape[3])
+                inject_class = inject_class[:, :, None, None]
+                inject_class = inject_class.repeat(1, 1,
+                                                   decoded.shape[2],
+                                                   decoded.shape[3])
+                print(inject_class.shape, self.inject_absolute_pos_embed.shape)
                 inject_class = inject_class + self.inject_absolute_pos_embed
-                x = torch.cat([x, inject_class], dim=1)
-                x = self.inject_cat_conv(x)
+                decoded = torch.cat([decoded, inject_class], dim=1)
+                decoded = self.inject_cat_conv(decoded)
+
             for decode_i in range(0, 5):
                 if self.skip_connect:
                     skip_connect_tensor = getattr(self.base_model,
