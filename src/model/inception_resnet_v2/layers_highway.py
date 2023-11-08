@@ -11,13 +11,14 @@ from .layers import get_act, get_norm
 class MultiDecoder2D(nn.Module):
     def __init__(self, input_hw, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2,
-                 use_highway=False):
+                 use_highway=False, use_pixel_shuffle_only=False):
         super().__init__()
         h, w = input_hw
+        self.use_highway = use_highway
+        self.use_pixel_shuffle_only = use_pixel_shuffle_only
         upsample_shape = (out_channels,
                           kernel_size * h,
                           kernel_size * w)
-        self.use_highway = use_highway
         conv_before_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
                                               out_channels=in_channels *
                                               (kernel_size ** 2),
@@ -31,32 +32,36 @@ class MultiDecoder2D(nn.Module):
             pixel_shuffle_layer,
             conv_after_pixel_shuffle
         )
-        upsample_layer = nn.Upsample(scale_factor=kernel_size)
-        conv_after_upsample = nn.Conv2d(in_channels=in_channels,
-                                        out_channels=out_channels,
-                                        kernel_size=1)
-        self.upsample = nn.Sequential(
-            upsample_layer,
-            conv_after_upsample
-        )
-        if self.use_highway:
-            self.highway = HighwayLayer(in_channels=out_channels,
-                                        mode="2d")
-        else:
-            self.concat_conv = nn.Conv2d(in_channels=out_channels * 2,
-                                         out_channels=out_channels,
-                                         kernel_size=3, padding=1)
+        if self.use_pixel_shuffle_only:
+            upsample_layer = nn.Upsample(scale_factor=kernel_size)
+            conv_after_upsample = nn.Conv2d(in_channels=in_channels,
+                                            out_channels=out_channels,
+                                            kernel_size=1)
+            self.upsample = nn.Sequential(
+                upsample_layer,
+                conv_after_upsample
+            )
+            if self.use_highway:
+                self.highway = HighwayLayer(in_channels=out_channels,
+                                            mode="2d")
+            else:
+                self.concat_conv = nn.Conv2d(in_channels=out_channels * 2,
+                                             out_channels=out_channels,
+                                             kernel_size=3, padding=1)
         self.norm = get_norm(norm, upsample_shape, mode="2d")
         self.act = get_act(act)
 
     def forward(self, x):
         pixel_shuffle = self.pixel_shuffle(x)
-        upsample = self.upsample(x)
-        if self.use_highway:
-            out = self.highway(pixel_shuffle, upsample)
+        if self.use_pixel_shuffle_only:
+            upsample = self.upsample(x)
+            if self.use_highway:
+                out = self.highway(pixel_shuffle, upsample)
+            else:
+                out = torch.cat([pixel_shuffle, upsample], dim=1)
+                out = self.concat_conv(out)
         else:
-            out = torch.cat([pixel_shuffle, upsample], dim=1)
-            out = self.concat_conv(out)
+            out = pixel_shuffle
         out = self.norm(out)
         out = self.act(out)
         return out
@@ -65,8 +70,10 @@ class MultiDecoder2D(nn.Module):
 class MultiDecoder3D(nn.Module):
     def __init__(self, input_zhw, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2,
-                 use_highway=False):
+                 use_highway=False, use_pixel_shuffle_only=False):
         super().__init__()
+        self.use_highway = use_highway
+        self.use_pixel_shuffle_only = use_pixel_shuffle_only
         z, h, w = input_zhw
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size, kernel_size)
@@ -74,7 +81,6 @@ class MultiDecoder3D(nn.Module):
                           kernel_size[0] * z,
                           kernel_size[1] * h,
                           kernel_size[2] * w)
-        self.use_highway = use_highway
         conv_before_pixel_shuffle = nn.Conv3d(in_channels=in_channels,
                                               out_channels=(in_channels *
                                                             np.prod(kernel_size)),
@@ -88,32 +94,36 @@ class MultiDecoder3D(nn.Module):
             pixel_shuffle_layer,
             conv_after_pixel_shuffle
         )
-        upsample_layer = nn.Upsample(scale_factor=kernel_size)
-        conv_after_upsample = nn.Conv3d(in_channels=in_channels,
-                                        out_channels=out_channels,
-                                        kernel_size=1)
-        self.upsample = nn.Sequential(
-            upsample_layer,
-            conv_after_upsample
-        )
-        if self.use_highway:
-            self.highway = HighwayLayer(in_channels=out_channels,
-                                        mode="3d")
-        else:
-            self.concat_conv = nn.Conv3d(in_channels=out_channels * 2,
-                                         out_channels=out_channels,
-                                         kernel_size=3, padding=1)
+        if self.use_pixel_shuffle_only:
+            upsample_layer = nn.Upsample(scale_factor=kernel_size)
+            conv_after_upsample = nn.Conv3d(in_channels=in_channels,
+                                            out_channels=out_channels,
+                                            kernel_size=1)
+            self.upsample = nn.Sequential(
+                upsample_layer,
+                conv_after_upsample
+            )
+            if self.use_highway:
+                self.highway = HighwayLayer(in_channels=out_channels,
+                                            mode="3d")
+            else:
+                self.concat_conv = nn.Conv3d(in_channels=out_channels * 2,
+                                             out_channels=out_channels,
+                                             kernel_size=3, padding=1)
         self.norm = get_norm(norm, upsample_shape, mode="3d")
         self.act = get_act(act)
 
     def forward(self, x):
         pixel_shuffle = self.pixel_shuffle(x)
-        upsample = self.upsample(x)
-        if self.use_highway:
-            out = self.highway(pixel_shuffle, upsample)
+        if self.use_pixel_shuffle_only:
+            upsample = self.upsample(x)
+            if self.use_highway:
+                out = self.highway(pixel_shuffle, upsample)
+            else:
+                out = torch.cat([pixel_shuffle, upsample], dim=1)
+                out = self.concat_conv(out)
         else:
-            out = torch.cat([pixel_shuffle, upsample], dim=1)
-            out = self.concat_conv(out)
+            out = pixel_shuffle
         out = self.norm(out)
         out = self.act(out)
         return out

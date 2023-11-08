@@ -18,7 +18,8 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                  z_channel_preserve=False, include_context=False, decode_init_channel=None,
                  skip_connect=True, dropout_proba=0.05,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
-                 get_seg=True, get_class=True, get_validity=False, use_class_head_simple=True, use_seg_pixelshuffle=True
+                 get_seg=True, get_class=True, get_validity=False,
+                 use_class_head_simple=True, use_seg_pixelshuffle_only=False
                  ):
         super().__init__()
 
@@ -26,7 +27,8 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         self.get_class = get_class
         self.get_validity = get_validity
         self.inject_class_channel = inject_class_channel
-        decode_init_channel = block_size * 48 if decode_init_channel is None else decode_init_channel
+        decode_init_channel = block_size * \
+            48 if decode_init_channel is None else decode_init_channel
         input_shape = np.array(input_shape)
         n_input_channels, init_z, init_h, init_w = input_shape
         feature_z, feature_h, feature_w = (init_z // (2 ** 5),
@@ -63,7 +65,8 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                            in_channels=decode_out_channels,
                                            out_channels=decode_out_channels,
                                            kernel_size=decode_kernel_size,
-                                           use_highway=False)
+                                           use_highway=False,
+                                           use_seg_pixelshuffle_only=use_seg_pixelshuffle_only)
                 setattr(self, f"decode_conv_{decode_i}", decode_conv)
                 setattr(self, f"decode_up_{decode_i}", decode_up)
 
