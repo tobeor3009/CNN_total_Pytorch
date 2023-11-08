@@ -15,7 +15,7 @@ USE_INPLACE = True
 class InceptionResNetV2MultiTask3D(nn.Module):
     def __init__(self, input_shape, class_channel=None, seg_channels=None, validity_shape=(1, 8, 8, 8),
                  inject_class_channel=None, block_size=16,
-                 z_channel_preserve=False, include_context=False, decode_init_channel=768,
+                 z_channel_preserve=False, include_context=False, decode_init_channel=None,
                  skip_connect=True, dropout_proba=0.05,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_validity=False, use_class_head_simple=True, use_seg_pixelshuffle=True
@@ -26,7 +26,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         self.get_class = get_class
         self.get_validity = get_validity
         self.inject_class_channel = inject_class_channel
-
+        decode_init_channel = block_size * 48 if decode_init_channel is None else decode_init_channel
         input_shape = np.array(input_shape)
         n_input_channels, init_z, init_h, init_w = input_shape
         feature_z, feature_h, feature_w = (init_z // (2 ** 5),
