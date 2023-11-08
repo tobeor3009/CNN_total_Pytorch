@@ -108,12 +108,12 @@ class PixelShuffle3D(nn.Module):
         out_height = in_height * self.scale[1]
         out_width = in_width * self.scale[2]
 
-        input_view = input.contiguous().view(batch_size, nOut, self.scale[0], self.scale[1],
+        input_view = input.reshape(batch_size, nOut, self.scale[0], self.scale[1],
                                              self.scale[2], in_depth, in_height, in_width)
 
-        output = input_view.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+        output = input_view.permute(0, 1, 5, 2, 6, 3, 7, 4)
 
-        return output.view(batch_size, nOut, out_depth, out_height, out_width)
+        return output.reshape(batch_size, nOut, out_depth, out_height, out_width)
 
 
 class ConvBlock2D(nn.Module):
