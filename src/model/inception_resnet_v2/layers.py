@@ -9,26 +9,26 @@ INPLACE = False
 DEFAULT_ACT = "relu6"
 
 
-def get_act(activation):
-    if isinstance(activation, nn.Module) or callable(activation):
-        act = activation
-    if activation == 'relu6':
+def get_act(act):
+    if isinstance(act, nn.Module) or callable(act):
+        act = act
+    if act == 'relu6':
         act = nn.ReLU6(inplace=INPLACE)
-    elif activation == 'relu':
+    elif act == 'relu':
         act = nn.ReLU(inplace=INPLACE)
-    elif activation == "leakyrelu":
+    elif act == "leakyrelu":
         act = nn.LeakyReLU(0.1)
-    elif activation == "gelu":
+    elif act == "gelu":
         act = nn.GELU()
-    elif activation == "mish":
+    elif act == "mish":
         act = nn.Mish()
-    elif activation == "sigmoid":
+    elif act == "sigmoid":
         act = torch.sigmoid
-    elif activation == "tanh":
+    elif act == "tanh":
         act = torch.tanh
-    elif activation == "softmax":
+    elif act == "softmax":
         act = partial(torch.softmax, dim=1)
-    elif activation is None:
+    elif act is None:
         act = nn.Identity()
     return act
 
@@ -140,7 +140,7 @@ class ConvBlock2D(nn.Module):
 class ConvBlock3D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 activation=DEFAULT_ACT, norm="batch", bias=False, name=None):
+                 act=DEFAULT_ACT, norm="batch", bias=False, name=None):
         super().__init__()
         self.conv = nn.Conv3d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
@@ -151,7 +151,7 @@ class ConvBlock3D(nn.Module):
         else:
             self.norm_layer = nn.Identity()
 
-        self.act = get_act(activation)
+        self.act = get_act(act)
 
     def forward(self, x):
         conv = self.conv(x)
@@ -239,7 +239,7 @@ class HighwayLayer(nn.Module):
 
 class Decoder2D(nn.Module):
     def __init__(self, input_hw, in_channels, out_channels,
-                 activation=DEFAULT_ACT, norm="layer", kernel_size=2,
+                 act=DEFAULT_ACT, norm="layer", kernel_size=2,
                  use_pixelshuffle=True):
         super().__init__()
         h, w = input_hw
@@ -270,7 +270,7 @@ class Decoder2D(nn.Module):
                 conv_after_upsample
             )
         self.norm_layer = get_norm(norm, upsample_shape)
-        self.act_layer = get_act(activation)
+        self.act_layer = get_act(act)
 
     def forward(self, x):
         out = self.upsample_block(x)
@@ -281,7 +281,7 @@ class Decoder2D(nn.Module):
 
 class Decoder3D(nn.Module):
     def __init__(self, input_zhw, in_channels, out_channels,
-                 activation=DEFAULT_ACT, kernel_size=2,
+                 act=DEFAULT_ACT, kernel_size=2,
                  use_pixelshuffle=True):
         super().__init__()
         z, h, w = input_zhw
@@ -318,7 +318,7 @@ class Decoder3D(nn.Module):
             )
         self.norm = nn.LayerNorm(normalized_shape=upsample_shape,
                                  elementwise_affine=False)
-        self.act = get_act(activation)
+        self.act = get_act(act)
 
     def forward(self, x):
         out = self.upsample_block(x)
@@ -329,7 +329,7 @@ class Decoder3D(nn.Module):
 
 class Output2D(nn.Module):
     def __init__(self, in_channels, out_channels,
-                 activation="tanh"):
+                 act="tanh"):
         super().__init__()
         self.conv_5x5 = nn.Conv2d(in_channels=in_channels,
                                   out_channels=out_channels,
@@ -337,7 +337,7 @@ class Output2D(nn.Module):
         self.conv_3x3 = nn.Conv2d(in_channels=in_channels,
                                   out_channels=out_channels,
                                   kernel_size=3, padding=1)
-        self.act = get_act(activation)
+        self.act = get_act(act)
 
     def forward(self, x):
         conv_5x5 = self.conv_5x5(x)
@@ -349,12 +349,12 @@ class Output2D(nn.Module):
 
 class Output3D(nn.Module):
     def __init__(self, in_channels, out_channels,
-                 activation="tanh"):
+                 act="tanh"):
         super().__init__()
         self.conv_1x1x1 = nn.Conv3d(in_channels=in_channels,
                                     out_channels=out_channels,
                                     kernel_size=1, padding=0)
-        self.act = get_act(activation)
+        self.act = get_act(act)
 
     def forward(self, x):
         conv_1x1x1 = self.conv_1x1x1(x)

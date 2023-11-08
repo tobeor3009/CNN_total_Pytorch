@@ -64,7 +64,7 @@ class MultiDecoder2D(nn.Module):
 
 class MultiDecoder3D(nn.Module):
     def __init__(self, input_zhw, in_channels, out_channels,
-                 norm="layer", activation=DEFAULT_ACT, kernel_size=2,
+                 norm="layer", act=DEFAULT_ACT, kernel_size=2,
                  use_highway=False):
         super().__init__()
         z, h, w = input_zhw
@@ -104,7 +104,7 @@ class MultiDecoder3D(nn.Module):
                                          out_channels=out_channels,
                                          kernel_size=3, padding=1)
         self.norm = get_norm(norm, upsample_shape, mode="3d")
-        self.act = get_act(activation)
+        self.act = get_act(act)
 
     def forward(self, x):
         pixel_shuffle = self.pixel_shuffle(x)
@@ -154,7 +154,7 @@ class HighwayOutput2D(nn.Module):
 
 class HighwayOutput3D(nn.Module):
     def __init__(self, in_channels, out_channels,
-                 use_highway=True, activation="tanh", init_bias=-3.0):
+                 use_highway=True, act="tanh", init_bias=-3.0):
         super().__init__()
         self.use_highway = use_highway
         conv_out_channels = out_channels if self.use_highway else in_channels // 2
@@ -171,7 +171,7 @@ class HighwayOutput3D(nn.Module):
             self.concat_conv = nn.Conv3d(in_channels=conv_out_channels * 2,
                                          out_channels=out_channels,
                                          kernel_size=3, padding=1)
-        self.act = get_act(activation)
+        self.act = get_act(act)
 
     def forward(self, x):
         conv_5x5x5 = self.conv_5x5x5(x)

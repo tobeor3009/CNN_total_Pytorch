@@ -207,7 +207,7 @@ class MiniInceptionResNetV2_2D(nn.Module):
         ])
         # Final convolution block: 8 x 8 x 1536
         self.final_conv = ConvBlock2D(block_size * 20, block_size * 32 * last_channel_ratio, 1,
-                                      activation=last_act)
+                                      act=last_act)
 
     def forward(self, input_tensor):
         skip_connect_index = 0
@@ -330,7 +330,7 @@ class InceptionResNetV2_3D(nn.Module):
         ])
         # Final convolution block: 8 x 8 x 1536
         self.final_conv = ConvBlock3D(block_size * 130, block_size * 96, 1,
-                                      activation=last_act)
+                                      act=last_act)
 
     def forward(self, input_tensor):
         skip_connect_index = 0

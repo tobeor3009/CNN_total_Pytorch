@@ -4,6 +4,7 @@ import numpy as np
 import json
 import nibabel as nib
 from collections.abc import Mapping
+from pathlib import Path
 
 
 def imread(img_path, policy=None, channel=None):
@@ -106,3 +107,22 @@ def read_json_as_dict(json_path):
     json_dict = json.loads(json_str)
 
     return json_dict
+
+
+def find_directory_upwards(target_dir_name):
+    # 현재 디렉토리부터 시작합니다.
+    current_dir = Path(os.getcwd())
+
+    # 루트 디렉토리에 도달할 때까지 반복합니다.
+    while current_dir != current_dir.parent:
+        # 현재 디렉토리에 대상 디렉토리가 있는지 확인합니다.
+        potential_dir = current_dir / target_dir_name
+        if potential_dir.is_dir():
+            # 대상 디렉토리를 찾으면 경로를 반환합니다.
+            return str(potential_dir)
+
+        # 대상 디렉토리를 찾지 못하면 상위 디렉토리로 이동합니다.
+        current_dir = current_dir.parent
+
+    # 대상 디렉토리를 찾지 못하면 None을 반환합니다.
+    return None

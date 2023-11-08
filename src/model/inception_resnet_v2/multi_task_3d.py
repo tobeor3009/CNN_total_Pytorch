@@ -2,7 +2,8 @@ import torch
 import math
 from torch import nn
 import numpy as np
-from .layers import get_act
+from .layers import get_act, get_norm
+from timm.models.layers import trunc_normal_
 from .base_model import InceptionResNetV2_3D, get_skip_connect_channel_list
 from .transformer_layers import PositionalEncoding
 from .layers import space_to_depth_3d
@@ -12,15 +13,19 @@ USE_INPLACE = True
 
 
 class InceptionResNetV2MultiTask3D(nn.Module):
-    def __init__(self, input_shape, class_channel, seg_channels, block_size=16,
+    def __init__(self, input_shape, class_channel=None, seg_channels=None, validity_shape=(1, 8, 8, 8),
+                 inject_class_channel=None, block_size=16,
                  z_channel_preserve=False, include_context=False, decode_init_channel=768,
-                 skip_connect=True, dropout_proba=0.05, class_act="softmax", seg_act="sigmoid",
-                 get_seg=True, get_class=True, use_class_head_simple=True, use_seg_pixelshuffle=True
+                 skip_connect=True, dropout_proba=0.05,
+                 class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
+                 get_seg=True, get_class=True, get_validity=False, use_class_head_simple=True, use_seg_pixelshuffle=True
                  ):
         super().__init__()
 
         self.get_seg = get_seg
         self.get_class = get_class
+        self.get_validity = get_validity
+        self.inject_class_channel = inject_class_channel
 
         input_shape = np.array(input_shape)
         n_input_channels, init_z, init_h, init_w = input_shape
@@ -28,6 +33,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                            init_h // (2 ** 5),
                                            init_w // (2 ** 5),)
         feature_channel_num = block_size * 96
+
         self.feature_shape = np.array([feature_channel_num,
                                        input_shape[1] // 32,
                                        input_shape[2] // 32,
@@ -63,7 +69,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
 
             self.seg_output_conv = HighwayOutput3D(in_channels=decode_out_channels,
                                                    out_channels=seg_channels,
-                                                   activation=seg_act, use_highway=False)
+                                                   act=seg_act, use_highway=False)
         if self.get_class:
             if use_class_head_simple:
                 self.classfication_head = ClassificationHeadSimple(feature_channel_num,
@@ -74,12 +80,48 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                              feature_channel_num,
                                                              class_channel,
                                                              dropout_proba, class_act)
+        if get_validity:
+            self.validity_conv_1 = ConvBlock3D(feature_channel_num, feature_channel_num // 2,
+                                               kernel_size=3, act="gelu", norm=None)
+            self.validity_avg_pool = nn.AdaptiveAvgPool3d(validity_shape[1:])
+            self.validity_out_conv = ConvBlock3D(feature_channel_num // 2, validity_shape[0],
+                                                 kernel_size=1, act=validity_act, norm=None)
+        if inject_class_channel is not None and get_seg:
+            self.inject_linear = nn.Linear(inject_class_channel,
+                                           feature_channel_num, bias=False)
+            self.inject_norm = get_norm("layer", feature_channel_num, "3d")
+            inject_pos_embed_shape = torch.zeros(1, 1,
+                                                 *self.feature_shape[1:],
+                                                 )
+            self.inject_absolute_pos_embed = nn.Parameter(
+                inject_pos_embed_shape)
+            trunc_normal_(self.inject_absolute_pos_embed, std=.02)
+            self.inject_cat_conv = nn.Conv3d(feature_channel_num * 2,
+                                             feature_channel_num, kernel_size=3, padding=1, bias=False)
 
-    def forward(self, input_tensor):
+    def validity_forward(self, x):
+        x = self.validity_conv_1(x)
+        x = self.validity_avg_pool(x)
+        x = self.validity_out_conv(x)
+        return x
+
+    def forward(self, input_tensor, inject_class=None):
         output = []
         encode_feature = self.base_model(input_tensor)
-        decoded = encode_feature
         if self.get_seg:
+            decoded = encode_feature
+            if self.inject_class_channel is not None:
+                inject_class = self.inject_linear(inject_class)
+                inject_class = self.inject_norm(inject_class)
+                inject_class = inject_class[:, :, None, None, None]
+                inject_class = inject_class.repeat(1, 1,
+                                                   decoded.shape[2],
+                                                   decoded.shape[3],
+                                                   decoded.shape[4])
+                inject_class = inject_class + self.inject_absolute_pos_embed
+                decoded = torch.cat([decoded, inject_class], dim=1)
+                decoded = self.inject_cat_conv(decoded)
+
             for decode_i in range(0, 5):
                 if self.skip_connect:
                     skip_connect_tensor = getattr(self.base_model,
@@ -96,6 +138,10 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         if self.get_class:
             class_output = self.classfication_head(encode_feature)
             output.append(class_output)
+
+        if self.get_validity:
+            validity_output = self.validity_forward(encode_feature)
+            output.append(validity_output)
         if len(output) == 1:
             output = output[0]
         return output
@@ -121,14 +167,14 @@ class PositionalEncoding(nn.Module):
 
 
 class ClassificationHeadSimple(nn.Module):
-    def __init__(self, in_channels, num_classes, dropout_proba, activation):
+    def __init__(self, in_channels, num_classes, dropout_proba, act):
         super(ClassificationHeadSimple, self).__init__()
         self.gap_layer = nn.AdaptiveAvgPool3d((2, 2, 2))
         self.fc_1 = nn.Linear(in_channels * 8, in_channels)
         self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.relu_layer = nn.ReLU6(inplace=USE_INPLACE)
         self.fc_2 = nn.Linear(in_channels, num_classes)
-        self.act = get_act(activation)
+        self.act = get_act(act)
 
     def forward(self, x):
         x = self.gap_layer(x)
@@ -142,13 +188,13 @@ class ClassificationHeadSimple(nn.Module):
 
 
 class ClassificationHead(nn.Module):
-    def __init__(self, feature_zhw, in_channels, num_classes, dropout_proba, activation):
+    def __init__(self, feature_zhw, in_channels, num_classes, dropout_proba, act):
         super(ClassificationHead, self).__init__()
         self.attn_pool = AttentionPool(feature_num=np.prod(feature_zhw), embed_dim=in_channels,
                                        num_heads=4, output_dim=in_channels * 2)
         self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.fc = nn.Linear(in_channels * 2, num_classes)
-        self.act = get_act(activation)
+        self.act = get_act(act)
 
     def forward(self, x):
         x = self.attn_pool(x)

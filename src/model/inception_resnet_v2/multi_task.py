@@ -13,16 +13,17 @@ USE_INPLACE = True
 
 
 class InceptionResNetV2MultiTask2D(nn.Module):
-    def __init__(self, input_shape, class_channel, seg_channels, inject_class_channel=None,
+    def __init__(self, input_shape, class_channel=None, seg_channels=None, validity_shape=(1, 8, 8), inject_class_channel=None,
                  block_size=16, include_cbam=False, include_context=False, decode_init_channel=768,
                  skip_connect=True, dropout_proba=0.05, norm="batch", act=DEFAULT_ACT,
-                 class_act="softmax", seg_act="sigmoid",
-                 get_seg=True, get_class=True, use_class_head_simple=True, use_seg_pixelshuffle=True
+                 class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
+                 get_seg=True, get_class=True, get_validity=False, use_class_head_simple=True
                  ):
         super().__init__()
 
         self.get_seg = get_seg
         self.get_class = get_class
+        self.get_validity = get_validity
         self.inject_class_channel = inject_class_channel
         input_shape = np.array(input_shape)
         n_input_channels, init_h, init_w = input_shape
@@ -74,6 +75,13 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                              feature_channel_num,
                                                              class_channel,
                                                              dropout_proba, class_act)
+        if get_validity:
+            self.validity_conv_1 = ConvBlock2D(feature_channel_num, feature_channel_num // 2,
+                                               kernel_size=3, act="gelu", norm=None)
+            self.validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
+            self.validity_out_conv = ConvBlock2D(feature_channel_num // 2, validity_shape[0],
+                                                 kernel_size=1, act=validity_act, norm=None)
+
         if inject_class_channel is not None and get_seg:
             self.inject_linear = nn.Linear(inject_class_channel,
                                            feature_channel_num, bias=False)
@@ -86,6 +94,12 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             trunc_normal_(self.inject_absolute_pos_embed, std=.02)
             self.inject_cat_conv = nn.Conv2d(feature_channel_num * 2,
                                              feature_channel_num, kernel_size=3, padding=1, bias=False)
+
+    def validity_forward(self, x):
+        x = self.validity_conv_1(x)
+        x = self.validity_avg_pool(x)
+        x = self.validity_out_conv(x)
+        return x
 
     def forward(self, input_tensor):
         output = []
@@ -116,6 +130,11 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         if self.get_class:
             class_output = self.classfication_head(encode_feature)
             output.append(class_output)
+
+        if self.get_validity:
+            validity_output = self.validity_forward(encode_feature)
+            output.append(validity_output)
+
         if len(output) == 1:
             output = output[0]
         if len(output) == 0:
