@@ -66,7 +66,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                            out_channels=decode_out_channels,
                                            kernel_size=decode_kernel_size,
                                            use_highway=False,
-                                           use_seg_pixelshuffle_only=use_seg_pixelshuffle_only)
+                                           use_pixelshuffle_only=use_seg_pixelshuffle_only)
                 setattr(self, f"decode_conv_{decode_i}", decode_conv)
                 setattr(self, f"decode_up_{decode_i}", decode_up)
 
