@@ -11,11 +11,11 @@ from .layers import get_act, get_norm
 class MultiDecoder2D(nn.Module):
     def __init__(self, input_hw, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2,
-                 use_highway=False, use_pixel_shuffle_only=False):
+                 use_highway=False, use_pixelshuffle_only=False):
         super().__init__()
         h, w = input_hw
         self.use_highway = use_highway
-        self.use_pixel_shuffle_only = use_pixel_shuffle_only
+        self.use_pixelshuffle_only = use_pixelshuffle_only
         upsample_shape = (out_channels,
                           kernel_size * h,
                           kernel_size * w)
@@ -70,10 +70,10 @@ class MultiDecoder2D(nn.Module):
 class MultiDecoder3D(nn.Module):
     def __init__(self, input_zhw, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2,
-                 use_highway=False, use_pixel_shuffle_only=False):
+                 use_highway=False, use_pixelshuffle_only=False):
         super().__init__()
         self.use_highway = use_highway
-        self.use_pixel_shuffle_only = use_pixel_shuffle_only
+        self.use_pixelshuffle_only = use_pixelshuffle_only
         z, h, w = input_zhw
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size, kernel_size)
