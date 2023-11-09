@@ -28,7 +28,7 @@ def get_act(activation):
         act = torch.tanh
     elif activation == "softmax":
         act = partial(torch.softmax, dim=1)
-    elif activation is None:
+    elif activation is None or activation is False:
         act = nn.Identity()
     return act
 

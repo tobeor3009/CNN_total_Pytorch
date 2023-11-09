@@ -141,7 +141,7 @@ class SwinTransformerMultiTask(nn.Module):
                                                       dim_scale=patch_size,
                                                       norm_layer=norm_layer
                                                       )
-            self.seg_final_conv = nn.Conv2d(target_dim // 2, seg_num_classes,
+            self.seg_final_conv = nn.Conv3d(target_dim // 2, seg_num_classes,
                                             kernel_size=1, padding=0)
             self.seg_final_act = get_act(seg_act)
         if get_validity:
