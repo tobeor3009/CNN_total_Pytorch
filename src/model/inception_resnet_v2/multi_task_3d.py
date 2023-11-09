@@ -7,7 +7,7 @@ from timm.models.layers import trunc_normal_
 from .base_model import InceptionResNetV2_3D, get_skip_connect_channel_list
 from .transformer_layers import PositionalEncoding
 from .layers import space_to_depth_3d
-from .layers import ConvBlock3D, AttentionPool
+from .layers import ConvBlock3D, AttentionPool, Output3D
 from .layers_highway import MultiDecoder3D, HighwayOutput3D
 USE_INPLACE = True
 
@@ -19,7 +19,8 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                  skip_connect=True, dropout_proba=0.05,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_validity=False,
-                 use_class_head_simple=True, use_seg_pixelshuffle_only=False
+                 use_class_head_simple=True,
+                 use_seg_pixelshuffle_only=False, use_seg_simpleoutput=False
                  ):
         super().__init__()
 
@@ -69,10 +70,14 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                            use_pixelshuffle_only=use_seg_pixelshuffle_only)
                 setattr(self, f"decode_conv_{decode_i}", decode_conv)
                 setattr(self, f"decode_up_{decode_i}", decode_up)
-
-            self.seg_output_conv = HighwayOutput3D(in_channels=decode_out_channels,
-                                                   out_channels=seg_channels,
-                                                   act=seg_act, use_highway=False)
+            if use_seg_simpleoutput:
+                self.seg_output_conv = Output3D(in_channels=decode_out_channels,
+                                                out_channels=seg_channels,
+                                                act=seg_act)
+            else:
+                self.seg_output_conv = HighwayOutput3D(in_channels=decode_out_channels,
+                                                       out_channels=seg_channels,
+                                                       act=seg_act, use_highway=False)
         if self.get_class:
             if use_class_head_simple:
                 self.classfication_head = ClassificationHeadSimple(feature_channel_num,
