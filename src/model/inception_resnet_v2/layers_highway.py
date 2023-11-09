@@ -53,7 +53,7 @@ class MultiDecoder2D(nn.Module):
 
     def forward(self, x):
         pixel_shuffle = self.pixel_shuffle(x)
-        if self.use_pixelshuffle_only:
+        if not self.use_pixelshuffle_only:
             upsample = self.upsample(x)
             if self.use_highway:
                 out = self.highway(pixel_shuffle, upsample)
@@ -115,7 +115,7 @@ class MultiDecoder3D(nn.Module):
 
     def forward(self, x):
         pixel_shuffle = self.pixel_shuffle(x)
-        if self.use_pixelshuffle_only:
+        if not self.use_pixelshuffle_only:
             upsample = self.upsample(x)
             if self.use_highway:
                 out = self.highway(pixel_shuffle, upsample)
