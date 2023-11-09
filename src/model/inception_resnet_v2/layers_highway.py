@@ -32,7 +32,7 @@ class MultiDecoder2D(nn.Module):
             pixel_shuffle_layer,
             conv_after_pixel_shuffle
         )
-        if self.use_pixelshuffle_only:
+        if not self.use_pixelshuffle_only:
             upsample_layer = nn.Upsample(scale_factor=kernel_size)
             conv_after_upsample = nn.Conv2d(in_channels=in_channels,
                                             out_channels=out_channels,
@@ -94,7 +94,7 @@ class MultiDecoder3D(nn.Module):
             pixel_shuffle_layer,
             conv_after_pixel_shuffle
         )
-        if self.use_pixelshuffle_only:
+        if not self.use_pixelshuffle_only:
             upsample_layer = nn.Upsample(scale_factor=kernel_size)
             conv_after_upsample = nn.Conv3d(in_channels=in_channels,
                                             out_channels=out_channels,
