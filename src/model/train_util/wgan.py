@@ -2,16 +2,9 @@ import torch
 import torch.nn.functional as F
 
 
-def compute_gradient_penalty(D, real_samples, fake_samples, mode="2d"):
+def compute_gradient_penalty(D, real_samples, fake_samples):
     """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2."""
-    device = real_samples.device
-    dtype = real_samples.dtype
-    if mode == "2d":
-        alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(device,
-                                                             dtype=dtype)
-    elif mode == "3d":
-        alpha = torch.rand(real_samples.size(0), 1, 1, 1, 1).to(device,
-                                                                dtype=dtype)
+    alpha = torch.rand_like(real_samples)
 
     interpolates = (alpha * real_samples + (1 - alpha)
                     * fake_samples).requires_grad_(True)
@@ -20,7 +13,7 @@ def compute_gradient_penalty(D, real_samples, fake_samples, mode="2d"):
         _, d_interpolates = d_output
     else:
         d_interpolates = d_output
-    fake = torch.ones(d_interpolates.size()).to(device)
+    fake = torch.ones_like(d_interpolates)
 
     gradients = torch.autograd.grad(
         outputs=d_interpolates,
