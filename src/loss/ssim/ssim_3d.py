@@ -5,8 +5,8 @@ from math import exp
 
 
 def gaussian_3d(window_size, sigma):
-    gauss_1d = torch.Tensor(
-        [exp(-(x - window_size // 2)**2 / float(2 * sigma**2)) for x in range(window_size)])
+    gauss_1d = torch.Tensor([exp(-(x - window_size // 2)**2 / float(2 * sigma**2))
+                             for x in range(window_size)])
     gauss_1d = gauss_1d / gauss_1d.sum()
 
     # Create 3D window using outer product three times
@@ -66,7 +66,7 @@ class SSIM3D(torch.nn.Module):
             window = create_window_3d(self.window_size, channel)
 
             if img1.is_cuda:
-                window = window.cuda(img1.get_device())
+                window = window.to(img1.device, dtype=img1.dtype)
             window = window.type_as(img1)
 
             self.window = window
