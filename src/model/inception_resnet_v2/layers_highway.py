@@ -83,10 +83,10 @@ class MultiDecoder3D(nn.Module):
                           kernel_size[2] * w)
         conv_before_pixel_shuffle = nn.Conv3d(in_channels=in_channels,
                                               out_channels=(in_channels *
-                                                            np.prod(kernel_size)),
+                                                            np.prod(kernel_size)) // 4,
                                               kernel_size=1)
         pixel_shuffle_layer = PixelShuffle3D(upscale_factor=kernel_size)
-        conv_after_pixel_shuffle = nn.Conv3d(in_channels=in_channels,
+        conv_after_pixel_shuffle = nn.Conv3d(in_channels=in_channels // 4,
                                              out_channels=out_channels,
                                              kernel_size=1)
         self.pixel_shuffle = nn.Sequential(
@@ -109,7 +109,7 @@ class MultiDecoder3D(nn.Module):
             else:
                 self.concat_conv = nn.Conv3d(in_channels=out_channels * 2,
                                              out_channels=out_channels,
-                                             kernel_size=3, padding=1)
+                                             kernel_size=1, padding=0)
         self.norm = get_norm(norm, upsample_shape, mode="3d")
         self.act = get_act(act)
 

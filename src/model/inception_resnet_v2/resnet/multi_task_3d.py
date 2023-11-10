@@ -2,25 +2,22 @@ import torch
 import math
 from torch import nn
 import numpy as np
-from .layers import get_act, get_norm
+from ..layers import get_act, get_norm
 from timm.models.layers import trunc_normal_
-from .base_model import InceptionResNetV2_3D, get_skip_connect_channel_list
-from .transformer_layers import PositionalEncoding
-from .layers import space_to_depth_3d
-from .layers import ConvBlock3D, AttentionPool, Output3D
-from .layers_highway import MultiDecoder3D, HighwayOutput3D
+from .resnet_3d import resnet
+from ..transformer_layers import PositionalEncoding
+from ..layers import ConvBlock3D, AttentionPool, Output3D
+from ..layers_highway import MultiDecoder3D, HighwayOutput3D
 USE_INPLACE = True
 
 
-class InceptionResNetV2MultiTask3D(nn.Module):
+class ResNetMultiTask3D(nn.Module):
     def __init__(self, input_shape, class_channel=None, seg_channels=None, validity_shape=(1, 8, 8, 8),
-                 inject_class_channel=None, block_size=16,
-                 z_channel_preserve=False, include_context=False, decode_init_channel=None,
-                 skip_connect=True, dropout_proba=0.05,
+                 block_size_list=[3, 4, 6, 3], inject_class_channel=None, decode_init_channel=None, dropout_proba=0.05,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_validity=False,
                  use_class_head_simple=True,
-                 use_seg_pixelshuffle_only=False, use_seg_simpleoutput=False
+                 use_seg_pixelshuffle_only=True, use_seg_simpleoutput=False
                  ):
         super().__init__()
 
@@ -28,27 +25,22 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         self.get_class = get_class
         self.get_validity = get_validity
         self.inject_class_channel = inject_class_channel
-        decode_init_channel = block_size * \
-            48 if decode_init_channel is None else decode_init_channel
+        decode_init_channel = 512 if decode_init_channel is None else decode_init_channel
+        skip_connect_channel_list = [64, 256, 512, 1024]
         input_shape = np.array(input_shape)
         n_input_channels, init_z, init_h, init_w = input_shape
         feature_z, feature_h, feature_w = (init_z // (2 ** 5),
                                            init_h // (2 ** 5),
                                            init_w // (2 ** 5),)
-        feature_channel_num = block_size * 96
+        feature_channel_num = 2048
 
         self.feature_shape = np.array([feature_channel_num,
                                        input_shape[1] // 32,
                                        input_shape[2] // 32,
                                        input_shape[3] // 32])
-        self.skip_connect = skip_connect
 
-        skip_connect_channel_list = get_skip_connect_channel_list(block_size)
-
-        self.base_model = InceptionResNetV2_3D(n_input_channels=n_input_channels, block_size=block_size,
-                                               padding="same", z_channel_preserve=z_channel_preserve,
-                                               include_context=include_context,
-                                               include_skip_connection_tensor=skip_connect)
+        self.base_model = resnet(in_channel=n_input_channels,
+                                 block_size_list=block_size_list)
         if self.get_seg:
             self.decode_init_conv = ConvBlock3D(in_channels=feature_channel_num,
                                                 out_channels=decode_init_channel, kernel_size=1)
@@ -56,20 +48,29 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                 z, h, w = (init_z // (2 ** (5 - decode_i)),
                            init_h // (2 ** (5 - decode_i)),
                            init_w // (2 ** (5 - decode_i)))
-                decode_in_channels = decode_init_channel // (
-                    2 ** (decode_i - 1))
-                if skip_connect:
-                    decode_in_channels += skip_connect_channel_list[4 - decode_i]
-                decode_out_channels = decode_init_channel // (2 ** decode_i)
+                decode_in_channels = int(decode_init_channel // (
+                    2 ** (decode_i - 1)))
+                if decode_i > 0:
+                    skip_conv = nn.Conv3d(in_channels=(decode_in_channels +
+                                                       skip_connect_channel_list[-decode_i]),
+                                          out_channels=decode_in_channels, kernel_size=1)
+                    setattr(self, f"decode_skip_conv_{decode_i}", skip_conv)
+
+                decode_out_channels = decode_in_channels * 2
                 decode_conv = ConvBlock3D(in_channels=decode_in_channels,
-                                          out_channels=decode_out_channels, kernel_size=3)
-                decode_kernel_size = (1, 2, 2) if z_channel_preserve else 2
+                                          out_channels=decode_out_channels,
+                                          kernel_size=1 if decode_i == 0 else 3)
+                decode_kernel_size = (2, 2, 2)
+                if decode_i == 0:
+                    use_pixelshuffle_only = True
+                else:
+                    use_pixelshuffle_only = use_seg_pixelshuffle_only
                 decode_up = MultiDecoder3D(input_zhw=(z, h, w),
                                            in_channels=decode_out_channels,
                                            out_channels=decode_out_channels,
                                            kernel_size=decode_kernel_size,
                                            use_highway=False,
-                                           use_pixelshuffle_only=use_seg_pixelshuffle_only)
+                                           use_pixelshuffle_only=use_pixelshuffle_only)
                 setattr(self, f"decode_conv_{decode_i}", decode_conv)
                 setattr(self, f"decode_up_{decode_i}", decode_up)
             if use_seg_simpleoutput:
@@ -98,16 +99,16 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                  kernel_size=1, act=validity_act, norm=None)
         if inject_class_channel is not None and get_seg:
             self.inject_linear = nn.Linear(inject_class_channel,
-                                           decode_in_channels, bias=False)
-            self.inject_norm = get_norm("layer", decode_in_channels, "3d")
+                                           decode_init_channel, bias=False)
+            self.inject_norm = get_norm("layer", decode_init_channel, "3d")
             inject_pos_embed_shape = torch.zeros(1, 1,
                                                  *self.feature_shape[1:],
                                                  )
             self.inject_absolute_pos_embed = nn.Parameter(
                 inject_pos_embed_shape)
             trunc_normal_(self.inject_absolute_pos_embed, std=.02)
-            self.inject_cat_conv = nn.Conv3d(decode_in_channels * 2,
-                                             decode_in_channels, kernel_size=1, padding=0, bias=False)
+            self.inject_cat_conv = nn.Conv3d(decode_init_channel * 2,
+                                             decode_init_channel, kernel_size=1, padding=0, bias=False)
 
     def validity_forward(self, x):
         x = self.validity_conv_1(x)
@@ -117,9 +118,10 @@ class InceptionResNetV2MultiTask3D(nn.Module):
 
     def forward(self, input_tensor, inject_class=None):
         output = []
-        encode_feature = self.base_model(input_tensor)
+        encode_feature, skip_connect_list = self.base_model(input_tensor)
         if self.get_seg:
             decoded = encode_feature
+            decoded = self.decode_init_conv(decoded)
             if self.inject_class_channel is not None:
                 inject_class = self.inject_linear(inject_class)
                 inject_class = self.inject_norm(inject_class)
@@ -133,11 +135,13 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                 decoded = self.inject_cat_conv(decoded)
 
             for decode_i in range(0, 5):
-                if self.skip_connect:
-                    skip_connect_tensor = getattr(self.base_model,
-                                                  f"skip_connect_tensor_{4 - decode_i}")
+                if decode_i > 0:
+                    skip_connect_tensor = skip_connect_list[-decode_i]
                     decoded = torch.cat([decoded,
-                                         skip_connect_tensor], dim=1)
+                                        skip_connect_tensor], dim=1)
+                    decoded_skip_conv = getattr(self,
+                                                f"decode_skip_conv_{decode_i}")
+                    decoded = decoded_skip_conv(decoded)
                 decode_conv = getattr(self, f"decode_conv_{decode_i}")
                 decode_up = getattr(self, f"decode_up_{decode_i}")
                 decoded = decode_conv(decoded)
