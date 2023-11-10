@@ -140,11 +140,11 @@ class ConvBlock2D(nn.Module):
 class ConvBlock3D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 act=DEFAULT_ACT, norm="batch", bias=False, name=None):
+                 act=DEFAULT_ACT, norm="batch", groups=1, bias=False, name=None):
         super().__init__()
         self.conv = nn.Conv3d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
-                              bias=bias)
+                              groups=groups, bias=bias)
         if not bias:
             # in keras, scale=False
             self.norm_layer = get_norm(norm, out_channels, mode="3d")

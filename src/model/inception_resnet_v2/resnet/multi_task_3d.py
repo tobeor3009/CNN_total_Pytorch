@@ -65,7 +65,8 @@ class ResNetMultiTask3D(nn.Module):
                 decode_out_channels = decode_in_channels // 2
                 decode_conv = ConvBlock3D(in_channels=decode_in_channels,
                                           out_channels=decode_out_channels,
-                                          kernel_size=1 if decode_i == 0 else 3)
+                                          kernel_size=3,
+                                          groups=8 if decode_i == 0 else 1)
                 decode_kernel_size = (2, 2, 2)
                 if decode_i == 0:
                     use_pixelshuffle_only = True
