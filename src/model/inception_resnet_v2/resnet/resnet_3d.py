@@ -167,6 +167,7 @@ class ResNet3D(nn.Module):
     def __init__(
         self,
         block: Type[Union[BasicBlock, Bottleneck]],
+        block_size: int,
         layers: List[int],
         in_channel: int = 3,
         zero_init_residual: bool = False,
@@ -181,7 +182,7 @@ class ResNet3D(nn.Module):
             norm_layer = nn.BatchNorm3d
         self._norm_layer = norm_layer
 
-        self.inplanes = 64
+        self.inplanes = block_size
         self.dilation = 1
         if replace_stride_with_dilation is None:
             # each element in the tuple indicates if we should replace
@@ -199,12 +200,12 @@ class ResNet3D(nn.Module):
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool3d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1],
+        self.layer1 = self._make_layer(block, block_size, layers[0])
+        self.layer2 = self._make_layer(block, block_size * 2, layers[1],
                                        stride=2, dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2],
+        self.layer3 = self._make_layer(block, block_size * 4, layers[2],
                                        stride=2, dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3],
+        self.layer4 = self._make_layer(block, block_size * 8, layers[3],
                                        stride=2, dilate=replace_stride_with_dilation[2])
 
         for m in self.modules():
@@ -291,6 +292,7 @@ class ResNet3D(nn.Module):
 
 def _resnet(
     block: Type[Union[BasicBlock, Bottleneck]],
+    block_size: int,
     layers: List[int],
     in_channel: int,
     weights: Optional[WeightsEnum],
@@ -301,7 +303,7 @@ def _resnet(
         _ovewrite_named_param(kwargs, "num_classes",
                               len(weights.meta["categories"]))
 
-    model = ResNet3D(block, layers, in_channel, **kwargs)
+    model = ResNet3D(block, block_size, layers, in_channel, **kwargs)
 
     if weights is not None:
         model.load_state_dict(weights.get_state_dict(
@@ -309,20 +311,23 @@ def _resnet(
 
     return model
 
-def resnet(in_channel=3, block_size_list=[1, 2, 3, 1], progress: bool = True, **kwargs: Any) -> ResNet3D:
+
+def resnet(in_channel=3, block_size=64, block_depth_list=[1, 2, 3, 1],
+           progress: bool = True, **kwargs: Any) -> ResNet3D:
     weights = None
-    return _resnet(Bottleneck, block_size_list, in_channel, weights, progress, **kwargs)
+    return _resnet(Bottleneck, block_size, block_depth_list, in_channel, weights, progress, **kwargs)
+
 
 def resnet_tiny(in_channel=3, progress: bool = True, **kwargs: Any) -> ResNet3D:
     weights = None
-    return _resnet(Bottleneck, [1, 2, 3, 1], in_channel, weights, progress, **kwargs)
+    return _resnet(Bottleneck, 64, [1, 2, 3, 1], in_channel, weights, progress, **kwargs)
 
 
 def resnet50(in_channel=3, progress: bool = True, **kwargs: Any) -> ResNet3D:
     weights = None
-    return _resnet(Bottleneck, [3, 4, 6, 3], in_channel, weights, progress, **kwargs)
+    return _resnet(Bottleneck, 64, [3, 4, 6, 3], in_channel, weights, progress, **kwargs)
 
 
 def resnet101(in_channel=3, progress: bool = True, **kwargs: Any) -> ResNet3D:
     weights = None
-    return _resnet(Bottleneck, [3, 4, 23, 3], in_channel, weights, progress, **kwargs)
+    return _resnet(Bottleneck, 64, [3, 4, 23, 3], in_channel, weights, progress, **kwargs)

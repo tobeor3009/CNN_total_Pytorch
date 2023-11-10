@@ -13,7 +13,8 @@ USE_INPLACE = True
 
 class ResNetMultiTask3D(nn.Module):
     def __init__(self, input_shape, class_channel=None, seg_channels=None, validity_shape=(1, 8, 8, 8),
-                 block_size_list=[3, 4, 6, 3], inject_class_channel=None, decode_init_channel=None, dropout_proba=0.05,
+                 block_size=64, block_depth_list=[3, 4, 6, 3],
+                 inject_class_channel=None, decode_init_channel=None, dropout_proba=0.05,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_validity=False,
                  use_class_head_simple=True,
@@ -25,14 +26,18 @@ class ResNetMultiTask3D(nn.Module):
         self.get_class = get_class
         self.get_validity = get_validity
         self.inject_class_channel = inject_class_channel
-        decode_init_channel = 512 if decode_init_channel is None else decode_init_channel
-        skip_connect_channel_list = [64, 256, 512, 1024]
+        if decode_init_channel is None:
+            decode_init_channel = block_size * 16
+        skip_connect_channel_list = [block_size,
+                                     block_size * 4,
+                                     block_size * 8,
+                                     block_size * 16]
         input_shape = np.array(input_shape)
         n_input_channels, init_z, init_h, init_w = input_shape
         feature_z, feature_h, feature_w = (init_z // (2 ** 5),
                                            init_h // (2 ** 5),
                                            init_w // (2 ** 5),)
-        feature_channel_num = 2048
+        feature_channel_num = block_size * 32
 
         self.feature_shape = np.array([feature_channel_num,
                                        input_shape[1] // 32,
@@ -40,7 +45,8 @@ class ResNetMultiTask3D(nn.Module):
                                        input_shape[3] // 32])
 
         self.base_model = resnet(in_channel=n_input_channels,
-                                 block_size_list=block_size_list)
+                                 block_size=block_size,
+                                 block_depth_list=block_depth_list)
         if self.get_seg:
             self.decode_init_conv = ConvBlock3D(in_channels=feature_channel_num,
                                                 out_channels=decode_init_channel, kernel_size=1)
@@ -92,10 +98,10 @@ class ResNetMultiTask3D(nn.Module):
                                                              class_channel,
                                                              dropout_proba, class_act)
         if get_validity:
-            self.validity_conv_1 = ConvBlock3D(feature_channel_num, 128,
+            self.validity_conv_1 = ConvBlock3D(feature_channel_num, block_size * 2,
                                                kernel_size=3, act="gelu", norm=None)
             self.validity_avg_pool = nn.AdaptiveAvgPool3d(validity_shape[1:])
-            self.validity_out_conv = ConvBlock3D(128, validity_shape[0],
+            self.validity_out_conv = ConvBlock3D(block_size * 2, validity_shape[0],
                                                  kernel_size=1, act=validity_act, norm=None)
         if inject_class_channel is not None and get_seg:
             self.inject_linear = nn.Linear(inject_class_channel,
