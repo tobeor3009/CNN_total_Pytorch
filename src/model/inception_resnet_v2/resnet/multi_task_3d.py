@@ -92,10 +92,10 @@ class ResNetMultiTask3D(nn.Module):
                                                              class_channel,
                                                              dropout_proba, class_act)
         if get_validity:
-            self.validity_conv_1 = ConvBlock3D(feature_channel_num, feature_channel_num // 2,
+            self.validity_conv_1 = ConvBlock3D(feature_channel_num, 128,
                                                kernel_size=3, act="gelu", norm=None)
             self.validity_avg_pool = nn.AdaptiveAvgPool3d(validity_shape[1:])
-            self.validity_out_conv = ConvBlock3D(feature_channel_num // 2, validity_shape[0],
+            self.validity_out_conv = ConvBlock3D(128, validity_shape[0],
                                                  kernel_size=1, act=validity_act, norm=None)
         if inject_class_channel is not None and get_seg:
             self.inject_linear = nn.Linear(inject_class_channel,
@@ -137,13 +137,10 @@ class ResNetMultiTask3D(nn.Module):
             for decode_i in range(0, 5):
                 if decode_i > 0:
                     skip_connect_tensor = skip_connect_list[-decode_i]
-                    print(decoded.shape, skip_connect_tensor.shape)
                     decoded = torch.cat([decoded,
                                         skip_connect_tensor], dim=1)
                     decoded_skip_conv = getattr(self,
                                                 f"decode_skip_conv_{decode_i}")
-                    print(decoded.shape)
-                    print(decoded_skip_conv)
                     decoded = decoded_skip_conv(decoded)
                 decode_conv = getattr(self, f"decode_conv_{decode_i}")
                 decode_up = getattr(self, f"decode_up_{decode_i}")
@@ -186,11 +183,11 @@ class PositionalEncoding(nn.Module):
 class ClassificationHeadSimple(nn.Module):
     def __init__(self, in_channels, num_classes, dropout_proba, act):
         super(ClassificationHeadSimple, self).__init__()
-        self.gap_layer = nn.AdaptiveAvgPool3d((2, 2, 2))
-        self.fc_1 = nn.Linear(in_channels * 8, in_channels)
+        self.gap_layer = nn.AdaptiveAvgPool3d((1, 1, 1))
+        self.fc_1 = nn.Linear(in_channels, in_channels // 2)
         self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.relu_layer = nn.ReLU6(inplace=USE_INPLACE)
-        self.fc_2 = nn.Linear(in_channels, num_classes)
+        self.fc_2 = nn.Linear(in_channels // 2, num_classes)
         self.act = get_act(act)
 
     def forward(self, x):
