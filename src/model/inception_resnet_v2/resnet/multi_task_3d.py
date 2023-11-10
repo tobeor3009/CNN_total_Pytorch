@@ -48,15 +48,15 @@ class ResNetMultiTask3D(nn.Module):
                 z, h, w = (init_z // (2 ** (5 - decode_i)),
                            init_h // (2 ** (5 - decode_i)),
                            init_w // (2 ** (5 - decode_i)))
-                decode_in_channels = int(decode_init_channel // (
-                    2 ** (decode_i - 1)))
+                decode_in_channels = int(decode_init_channel //
+                                         (2 ** decode_i))
                 if decode_i > 0:
                     skip_conv = nn.Conv3d(in_channels=(decode_in_channels +
                                                        skip_connect_channel_list[-decode_i]),
                                           out_channels=decode_in_channels, kernel_size=1)
                     setattr(self, f"decode_skip_conv_{decode_i}", skip_conv)
 
-                decode_out_channels = decode_in_channels * 2
+                decode_out_channels = decode_in_channels // 2
                 decode_conv = ConvBlock3D(in_channels=decode_in_channels,
                                           out_channels=decode_out_channels,
                                           kernel_size=1 if decode_i == 0 else 3)
@@ -137,10 +137,13 @@ class ResNetMultiTask3D(nn.Module):
             for decode_i in range(0, 5):
                 if decode_i > 0:
                     skip_connect_tensor = skip_connect_list[-decode_i]
+                    print(decoded.shape, skip_connect_tensor.shape)
                     decoded = torch.cat([decoded,
                                         skip_connect_tensor], dim=1)
                     decoded_skip_conv = getattr(self,
                                                 f"decode_skip_conv_{decode_i}")
+                    print(decoded.shape)
+                    print(decoded_skip_conv)
                     decoded = decoded_skip_conv(decoded)
                 decode_conv = getattr(self, f"decode_conv_{decode_i}")
                 decode_up = getattr(self, f"decode_up_{decode_i}")
