@@ -129,7 +129,7 @@ class ResNetMultiTask2D(nn.Module):
             if self.inject_class_channel is not None:
                 inject_class = self.inject_linear(inject_class)
                 inject_class = self.inject_norm(inject_class)
-                inject_class = inject_class[:, :, None, None, None]
+                inject_class = inject_class[:, :, None, None]
                 inject_class = inject_class.repeat(1, 1,
                                                    decoded.shape[2],
                                                    decoded.shape[3])
