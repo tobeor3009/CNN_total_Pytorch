@@ -79,7 +79,7 @@ class ResNetMultiTask2D(nn.Module):
                     use_pixelshuffle_only = True
                 else:
                     use_pixelshuffle_only = use_seg_pixelshuffle_only
-                decode_up = MultiDecoder2D(input_zhw=(h, w),
+                decode_up = MultiDecoder2D(input_hw=(h, w),
                                            in_channels=decode_out_channels,
                                            out_channels=decode_out_channels,
                                            kernel_size=decode_kernel_size,
@@ -212,9 +212,9 @@ class ClassificationHeadSimple(nn.Module):
 
 
 class ClassificationHead(nn.Module):
-    def __init__(self, feature_zhw, in_channels, num_classes, dropout_proba, act):
+    def __init__(self, feature_hw, in_channels, num_classes, dropout_proba, act):
         super(ClassificationHead, self).__init__()
-        self.attn_pool = AttentionPool(feature_num=np.prod(feature_zhw), embed_dim=in_channels,
+        self.attn_pool = AttentionPool(feature_num=np.prod(feature_hw), embed_dim=in_channels,
                                        num_heads=4, output_dim=in_channels * 2)
         self.dropout = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.fc = nn.Linear(in_channels * 2, num_classes)
