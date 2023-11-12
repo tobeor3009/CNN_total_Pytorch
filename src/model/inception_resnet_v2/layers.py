@@ -119,11 +119,11 @@ class PixelShuffle3D(nn.Module):
 class ConvBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 norm="batch", act=DEFAULT_ACT, bias=False, name=None):
+                 norm="batch", groups=1, act=DEFAULT_ACT, bias=False, name=None):
         super().__init__()
         self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
-                              bias=bias)
+                              groups=groups,  bias=bias)
         if not bias:
             self.norm_layer = get_norm(norm, out_channels, mode="2d")
         else:
