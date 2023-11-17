@@ -2,13 +2,13 @@ import torch
 import math
 from torch import nn
 import numpy as np
-from .layers import get_act, get_norm
 from timm.models.layers import trunc_normal_
-from .base_model import InceptionResNetV2_3D, get_skip_connect_channel_list
-from .transformer_layers import PositionalEncoding
-from .layers import space_to_depth_3d, DEFAULT_ACT
-from .layers import ConvBlock3D, AttentionPool, Output3D
-from .layers_highway import MultiDecoder3D, HighwayOutput3D
+from ..common_module.layers import get_act, get_norm
+from ..common_module.base_model import InceptionResNetV2_3D, get_skip_connect_channel_list
+from ..common_module.transformer_layers import PositionalEncoding
+from ..common_module.layers import space_to_depth_3d, DEFAULT_ACT
+from ..common_module.layers import ConvBlock3D, AttentionPool, Output3D
+from ..common_module.layers_highway import MultiDecoder3D, HighwayOutput3D
 USE_INPLACE = True
 
 

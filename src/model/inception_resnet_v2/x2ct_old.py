@@ -1,11 +1,11 @@
 import torch
 import numpy as np
 from torch import nn
-from .transformer_layers import PositionalEncoding
-from .base_model import InceptionResNetV2_2D, InceptionResNetV2_3D, get_skip_connect_channel_list
-from .layers import ConvBlock3D, SkipUpSample3D, Decoder3D, HighwayOutput3D
-from reformer_pytorch import Reformer
+from common_module.transformer_layers import PositionalEncoding
+from common_module.base_model import InceptionResNetV2_2D, InceptionResNetV2_3D, get_skip_connect_channel_list
+from common_module.layers import ConvBlock3D, SkipUpSample3D, Decoder3D, HighwayOutput3D
 from einops import rearrange
+from reformer_pytorch import Reformer
 
 USE_HIGHWAY = True
 

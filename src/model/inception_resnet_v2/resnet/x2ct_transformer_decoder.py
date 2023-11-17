@@ -2,12 +2,12 @@ import torch
 import math
 from torch import nn
 import numpy as np
-from ..layers import get_act, get_norm
 from timm.models.layers import trunc_normal_
 from .resnet_2d import resnet
-from ..transformer_layers import PositionalEncoding
-from ..layers import ConvBlock2D, ConvBlock3D, Output3D, SkipUpSample3D
-from ..layers_highway import MultiDecoder3D, HighwayOutput3D
+from ..common_module.layers import get_act, get_norm
+from ..common_module.transformer_layers import PositionalEncoding
+from ..common_module.layers import ConvBlock2D, ConvBlock3D, Output3D, SkipUpSample3D
+from ..common_module.layers_highway import MultiDecoder3D, HighwayOutput3D
 from ...swin_transformer.model_2d.swin_layers import PatchEmbed as PatchEmbed2D
 from ...swin_transformer.model_2d.swin_layers import PatchExpanding as PatchExpanding2D
 from ...swin_transformer.model_3d.swin_layers import PatchExpanding as PatchExpanding3D
