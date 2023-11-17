@@ -64,9 +64,9 @@ class ResNetMultiTask2D(nn.Module):
                 decode_in_channels = int(decode_init_channel //
                                          (2 ** decode_i))
                 if decode_i > 0:
-                    skip_conv = nn.Conv2d(in_channels=(decode_in_channels +
-                                                       skip_connect_channel_list[-decode_i]),
-                                          out_channels=decode_in_channels, kernel_size=1)
+                    skip_conv = ConvBlock2D(in_channels=(decode_in_channels +
+                                                         skip_connect_channel_list[-decode_i]),
+                                            out_channels=decode_in_channels, kernel_size=1)
                     setattr(self, f"decode_skip_conv_{decode_i}", skip_conv)
 
                 decode_out_channels = decode_in_channels // 2

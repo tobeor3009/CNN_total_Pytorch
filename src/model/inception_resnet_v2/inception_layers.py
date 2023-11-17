@@ -85,28 +85,38 @@ class Inception_Resnet_Block2D(nn.Module):
 
 class Inception_Resnet_Block3D(nn.Module):
     def __init__(self, in_channels, scale, block_type, block_size=16,
-                 act='relu6', include_context=False, context_head_nums=8):
+                 norm="batch", act=DEFAULT_ACT, include_context=False, context_head_nums=8):
         super().__init__()
         if block_type == 'block35':
-            branch_0 = ConvBlock3D(in_channels, block_size * 2, 1)
+            branch_0 = ConvBlock3D(in_channels, block_size * 2, 1,
+                                   norm=norm, act=act)
             branch_1 = nn.Sequential(
-                ConvBlock3D(in_channels, block_size * 2, 1),
-                ConvBlock3D(block_size * 2, block_size * 2, 3)
+                ConvBlock3D(in_channels, block_size * 2, 1,
+                            norm=norm, act=act),
+                ConvBlock3D(block_size * 2, block_size * 2, 3,
+                            norm=norm, act=act)
             )
             branch_2 = nn.Sequential(
-                ConvBlock3D(in_channels, block_size * 2, 1),
-                ConvBlock3D(block_size * 2, block_size * 3, 3),
-                ConvBlock3D(block_size * 3, block_size * 4, 3)
+                ConvBlock3D(in_channels, block_size * 2, 1,
+                            norm=norm, act=act),
+                ConvBlock3D(block_size * 2, block_size * 3, 3,
+                            norm=norm, act=act),
+                ConvBlock3D(block_size * 3, block_size * 4, 3,
+                            norm=norm, act=act)
             )
             mixed_channel = block_size * 8
             branches = [branch_0, branch_1, branch_2]
         elif block_type == 'block17':
             branch_0 = ConvBlock3D(in_channels, block_size * 12, 1)
             branch_1 = nn.Sequential(
-                ConvBlock3D(in_channels, block_size * 8, 1),
-                ConvBlock3D(block_size * 8, block_size * 10, [1, 1, 7]),
-                ConvBlock3D(block_size * 10, block_size * 11, [1, 7, 1]),
-                ConvBlock3D(block_size * 11, block_size * 12, [7, 1, 1])
+                ConvBlock3D(in_channels, block_size * 8, 1,
+                            norm=norm, act=act),
+                ConvBlock3D(block_size * 8, block_size * 10, [1, 1, 7],
+                            norm=norm, act=act),
+                ConvBlock3D(block_size * 10, block_size * 11, [1, 7, 1],
+                            norm=norm, act=act),
+                ConvBlock3D(block_size * 11, block_size * 12, [7, 1, 1],
+                            norm=norm, act=act)
             )
             mixed_channel = block_size * 24
             branches = [branch_0, branch_1]
@@ -114,9 +124,12 @@ class Inception_Resnet_Block3D(nn.Module):
             branch_0 = ConvBlock3D(in_channels, block_size * 12, 1)
             branch_1 = nn.Sequential(
                 ConvBlock3D(in_channels, block_size * 12, 1),
-                ConvBlock3D(block_size * 12, block_size * 13, [1, 1, 3]),
-                ConvBlock3D(block_size * 13, block_size * 14, [1, 3, 1]),
-                ConvBlock3D(block_size * 14, block_size * 16, [3, 1, 1])
+                ConvBlock3D(block_size * 12, block_size * 13, [1, 1, 3],
+                            norm=norm, act=act),
+                ConvBlock3D(block_size * 13, block_size * 14, [1, 3, 1],
+                            norm=norm, act=act),
+                ConvBlock3D(block_size * 14, block_size * 16, [3, 1, 1],
+                            norm=norm, act=act)
             )
             mixed_channel = block_size * 28
             branches = [branch_0, branch_1]
@@ -127,15 +140,11 @@ class Inception_Resnet_Block3D(nn.Module):
         self.mixed = ConcatBlock(branches)
         # TBD: Name?
         self.up = ConvBlock3D(mixed_channel, in_channels, 1,
-                              act=None, bias=True)
+                              bias=True, norm=norm, act=None)
         # TBD: implement of include_context
         self.residual_add = LambdaLayer(
             lambda inputs: inputs[0] + inputs[1] * scale)
-
-        if act == 'relu6':
-            self.act = nn.ReLU6(inplace=INPLACE)
-        elif act is None:
-            self.act = nn.Identity()
+        self.act = get_act(act)
 
     def forward(self, x):
         mixed = self.mixed(x)

@@ -15,7 +15,7 @@ class MultiDecoder2D(nn.Module):
         super().__init__()
         h, w = input_hw
         if isinstance(kernel_size, int):
-            kernel_size = (kernel_size, kernel_size, kernel_size)
+            kernel_size = (kernel_size, kernel_size)
         self.use_highway = use_highway
         self.use_pixelshuffle_only = use_pixelshuffle_only
         upsample_shape = (out_channels,
@@ -25,7 +25,9 @@ class MultiDecoder2D(nn.Module):
                                               out_channels=in_channels *
                                               np.prod(kernel_size),
                                               kernel_size=1)
-        pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=kernel_size)
+        pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=(kernel_size
+                                            if isinstance(kernel_size, int)
+                                            else kernel_size[0]))
         conv_after_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
                                              out_channels=out_channels,
                                              kernel_size=1)
