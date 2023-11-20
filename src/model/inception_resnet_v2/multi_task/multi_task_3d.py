@@ -29,7 +29,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         self.get_validity = get_validity
         self.inject_class_channel = inject_class_channel
         decode_init_channel = block_size * \
-            48 if decode_init_channel is None else decode_init_channel
+            64 if decode_init_channel is None else decode_init_channel
         input_shape = np.array(input_shape)
         n_input_channels, init_z, init_h, init_w = input_shape
         feature_z, feature_h, feature_w = (init_z // (2 ** 5),
