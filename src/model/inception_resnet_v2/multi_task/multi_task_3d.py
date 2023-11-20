@@ -99,10 +99,10 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                              class_channel,
                                                              dropout_proba, class_act)
         if get_validity:
-            self.validity_conv_1 = ConvBlock3D(feature_channel_num, block_size * 32,
+            self.validity_conv_1 = ConvBlock3D(feature_channel_num, block_size * 8,
                                                kernel_size=3, act="gelu", norm=None)
             self.validity_avg_pool = nn.AdaptiveAvgPool3d(validity_shape[1:])
-            self.validity_out_conv = ConvBlock3D(block_size * 32, validity_shape[0],
+            self.validity_out_conv = ConvBlock3D(block_size * 8, validity_shape[0],
                                                  kernel_size=3, act=validity_act, norm=None)
         if inject_class_channel is not None and get_seg:
             self.inject_linear = nn.Linear(inject_class_channel,
