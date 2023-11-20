@@ -9,13 +9,18 @@ from ..common_module.transformer_layers import PositionalEncoding
 from ..common_module.layers import space_to_depth_3d, DEFAULT_ACT
 from ..common_module.layers import ConvBlock3D, AttentionPool, Output3D
 from ..common_module.layers_highway import MultiDecoder3D, HighwayOutput3D
+from ...swin_transformer.model_3d.swin_layers import PatchEmbed, PatchExpanding
+
 USE_INPLACE = True
 
 
 class InceptionResNetV2MultiTask3D(nn.Module):
-    def __init__(self, input_shape, class_channel=None, seg_channels=None, validity_shape=(1, 8, 8, 8),
-                 inject_class_channel=None, block_size=16,
-                 z_channel_preserve=False, include_context=False, decode_init_channel=None,
+    def __init__(self, input_shape,
+                 class_channel=None, seg_channels=None, validity_shape=(1, 8, 8, 8),
+                 inject_class_channel=None,
+                 block_size=16, z_channel_preserve=False, include_context=False,
+                 decode_depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
+                 decode_init_channel=None,
                  skip_connect=True, dropout_proba=0.05, norm="batch", act=DEFAULT_ACT,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_validity=False,
@@ -32,9 +37,10 @@ class InceptionResNetV2MultiTask3D(nn.Module):
             48 if decode_init_channel is None else decode_init_channel
         input_shape = np.array(input_shape)
         n_input_channels, init_z, init_h, init_w = input_shape
-        feature_z, feature_h, feature_w = (init_z // (2 ** 5),
+        feature_zhw = (init_z // (2 ** 5),
                                            init_h // (2 ** 5),
-                                           init_w // (2 ** 5),)
+                                           init_w // (2 ** 5))
+        feature_z, feature_h, feature_w = feature_zhw
         feature_channel_num = block_size * 96
 
         self.feature_shape = np.array([feature_channel_num,
@@ -50,9 +56,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                z_channel_preserve=z_channel_preserve, include_context=include_context,
                                                include_skip_connection_tensor=skip_connect)
         if self.get_seg:
-            self.decode_init_conv = ConvBlock3D(in_channels=feature_channel_num,
-                                                out_channels=decode_init_channel,
-                                                kernel_size=1, norm=norm, act=act)
+            self.decode_init_embed = PatchEmbed(img_size=)
             for decode_i in range(0, 5):
                 z, h, w = (init_z // (2 ** (5 - decode_i)),
                            init_h // (2 ** (5 - decode_i)),
@@ -63,22 +67,21 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                           (2 ** (decode_i + 1)))
                 if skip_connect:
                     skip_channel = skip_connect_channel_list[4 - decode_i]
-                    decode_skip_conv = ConvBlock3D(in_channels=skip_channel,
-                                                   out_channels=decode_in_channels,
-                                                   kernel_size=1, norm=norm, act=act)
+                    decode_skip_embed = ConvBlock3D(in_channels=skip_channel,
+                                                    out_channels=decode_in_channels,
+                                                    kernel_size=1, norm=norm, act=act)
                     decode_in_channels *= 2
                     setattr(self,
-                            f"decode_skip_conv_{decode_i}", decode_skip_conv)
-                decode_conv = ConvBlock3D(in_channels=decode_in_channels,
-                                          out_channels=decode_out_channels, kernel_size=3)
-                decode_kernel_size = (1, 2, 2) if z_channel_preserve else 2
+                            f"decode_skip_embed_{decode_i}", decode_skip_embed)
+                decode_block = ConvBlock3D(in_channels=decode_in_channels,
+                                           out_channels=decode_out_channels, kernel_size=3)
                 decode_up = MultiDecoder3D(input_zhw=(z, h, w),
                                            in_channels=decode_out_channels,
                                            out_channels=decode_out_channels,
                                            kernel_size=decode_kernel_size,
                                            use_highway=False,
                                            use_pixelshuffle_only=use_seg_pixelshuffle_only)
-                setattr(self, f"decode_conv_{decode_i}", decode_conv)
+                setattr(self, f"decode_block_{decode_i}", decode_block)
                 setattr(self, f"decode_up_{decode_i}", decode_up)
             if use_seg_simpleoutput:
                 self.seg_output_conv = Output3D(in_channels=decode_out_channels,

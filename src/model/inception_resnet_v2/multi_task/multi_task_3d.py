@@ -191,11 +191,11 @@ class PositionalEncoding(nn.Module):
 class ClassificationHeadSimple(nn.Module):
     def __init__(self, in_channels, num_classes, dropout_proba, act):
         super(ClassificationHeadSimple, self).__init__()
-        self.gap_layer = nn.AdaptiveAvgPool3d((2, 2, 2))
-        self.fc_1 = nn.Linear(in_channels * 8, in_channels)
+        self.gap_layer = nn.AdaptiveAvgPool3d((1, 1, 1))
+        self.fc_1 = nn.Linear(in_channels, in_channels // 2)
         self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.relu_layer = nn.ReLU6(inplace=USE_INPLACE)
-        self.fc_2 = nn.Linear(in_channels, num_classes)
+        self.fc_2 = nn.Linear(in_channels // 2, num_classes)
         self.act = get_act(act)
 
     def forward(self, x):

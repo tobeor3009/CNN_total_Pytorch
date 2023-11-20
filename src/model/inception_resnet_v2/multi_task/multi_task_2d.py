@@ -32,7 +32,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         input_shape = np.array(input_shape)
         n_input_channels, init_h, init_w = input_shape
         feature_h, feature_w = (init_h // (2 ** 5),
-                                init_w // (2 ** 5),)
+                                init_w // (2 ** 5))
 
         feature_channel_num = block_size * 96
         self.feature_shape = np.array([feature_channel_num,
@@ -184,11 +184,11 @@ class PositionalEncoding(nn.Module):
 class ClassificationHeadSimple(nn.Module):
     def __init__(self, in_channels, num_classes, dropout_proba, activation):
         super(ClassificationHeadSimple, self).__init__()
-        self.gap_layer = nn.AdaptiveAvgPool2d((2, 2))
-        self.fc_1 = nn.Linear(in_channels * 4, in_channels)
+        self.gap_layer = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc_1 = nn.Linear(in_channels, in_channels // 2)
         self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.relu_layer = nn.ReLU6(inplace=USE_INPLACE)
-        self.fc_2 = nn.Linear(in_channels, num_classes)
+        self.fc_2 = nn.Linear(in_channels // 2, num_classes)
         self.act = get_act(activation)
 
     def forward(self, x):

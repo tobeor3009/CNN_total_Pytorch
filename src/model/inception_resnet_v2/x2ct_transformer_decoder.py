@@ -3,46 +3,49 @@ import math
 from torch import nn
 import numpy as np
 from timm.models.layers import trunc_normal_
-from .resnet_2d import resnet
-from ..common_module.layers import get_act, get_norm
-from ..common_module.transformer_layers import PositionalEncoding
-from ..common_module.layers import ConvBlock2D, ConvBlock3D, Output3D, SkipUpSample3D
-from ..common_module.layers_highway import MultiDecoder3D, HighwayOutput3D
-from ...swin_transformer.model_2d.swin_layers import PatchEmbed as PatchEmbed2D
-from ...swin_transformer.model_2d.swin_layers import PatchExpanding as PatchExpanding2D
-from ...swin_transformer.model_3d.swin_layers import PatchExpanding as PatchExpanding3D
+from common_module.base_model import InceptionResNetV2_2D
+from common_module.layers import get_act, get_norm
+from common_module.transformer_layers import PositionalEncoding
+from common_module.layers import ConvBlock2D, ConvBlock3D, Output3D, SkipUpSample3D
+from common_module.layers_highway import MultiDecoder3D, HighwayOutput3D
+from ..swin_transformer.model_2d.swin_layers import PatchEmbed as PatchEmbed2D
+from ..swin_transformer.model_2d.swin_layers import PatchExpanding as PatchExpanding2D
+from ..swin_transformer.model_3d.swin_layers import PatchExpanding as PatchExpanding3D
 
 USE_INPLACE = True
 
 
 class ResNetX2CT(nn.Module):
     def __init__(self, input_shape, seg_channels=1,
-                 patch_size=4,
-                 block_size=64, block_depth_list=[3, 4, 6, 3], decode_init_channels=None,
+                 conv_norm=nn.LayerNorm, conv_act="relu6",
+                 cnn_block_size=64, decode_init_channels=None,
+                 patch_size=4, block_depth_list=[3, 4, 6, 3],
                  seg_act="sigmoid",
                  ):
         super().__init__()
 
         if decode_init_channels is None:
-            decode_init_channel = block_size * 16
-        skip_connect_channel_list = [block_size,
-                                     block_size * 4,
-                                     block_size * 8,
-                                     block_size * 16]
+            decode_init_channel = cnn_block_size * 16
+        skip_connect_channel_list = [cnn_block_size,
+                                     cnn_block_size * 4,
+                                     cnn_block_size * 8,
+                                     cnn_block_size * 16]
         input_shape = np.array(input_shape)
         n_input_channels, init_h, init_w = input_shape
-        feature_h, feature_w = (init_h // (2 ** 5),
-                                init_w // (2 ** 5),)
-
-        feature_channel_num = block_size * 32
+        feature_hw = (init_h // (2 ** 5),
+                      init_w // (2 ** 5))
+        feature_h, feature_w = feature_hw
+        feature_channel_num = cnn_block_size * 32
 
         self.feature_shape = np.array([feature_channel_num,
                                        input_shape[1] // 32,
                                        input_shape[2] // 32])
 
-        self.base_model = resnet(in_channel=n_input_channels,
-                                 block_size=block_size,
-                                 block_depth_list=block_depth_list)
+        self.base_model = InceptionResNetV2_2D(n_input_channels=n_input_channels,
+                                               block_size=cnn_block_size,
+                                               padding="same", norm=conv_norm, act=conv_act,
+                                               include_cbam=False, include_context=False,
+                                               include_skip_connection_tensor=True)
         self.decode_init_conv = SkipUpSample3D(in_channels=feature_channel_num,
                                                out_channels=decode_init_channel,
                                                cbam=cbam)
@@ -108,12 +111,12 @@ class PatchExpanding2D_3D(nn.Module):
         power_4 = power // 3
         power_2 = power - power_4 * 2
 
-        self.patch_extract_2d = PatchEmbed2D(img_size=feature_hw[0],
-                                             stride_size=patch_size,
-                                             in_chans=embed_dim,
-                                             embed_dim=embed_dim,
-
-                                             )
+        self.patch_embed_2d = PatchEmbed2D(img_size=feature_hw[0],
+                                           stride_size=patch_size,
+                                           in_chans=embed_dim,
+                                           embed_dim=embed_dim)
+        num_patches = self.patch_embed_2d.num_patches
+        patches_resolution = self.patch_embed_2d.patches_resolution
 
         self.expand_2d_list = nn.ModuleList([])
         self.expand_3d_list = nn.ModuleList([])
