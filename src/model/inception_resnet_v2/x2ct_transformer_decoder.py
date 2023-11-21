@@ -22,14 +22,14 @@ class InceptionResNetV2_X2CT(nn.Module):
     def __init__(self, input_shape, seg_channels=1,
                  conv_norm="instance", conv_act="relu6",
                  trans_norm=nn.LayerNorm, trans_act="relu6",
-                 cnn_block_size=16, decode_init_channels=None,
+                 cnn_block_size=16, decode_init_channel=None,
                  patch_size=4, depths=[2, 2, 2, 2, 2], num_heads=[8, 4, 4, 2, 2],
                  window_sizes=[4, 4, 2, 2, 2], mlp_ratio=4.0,
                  seg_act="sigmoid",
                  ):
         super().__init__()
 
-        if decode_init_channels is None:
+        if decode_init_channel is None:
             decode_init_channel = cnn_block_size * 32
         skip_connect_channel_list = get_skip_connect_channel_list(
             cnn_block_size)
