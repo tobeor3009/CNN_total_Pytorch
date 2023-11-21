@@ -208,7 +208,7 @@ class PatchExpanding2D_3D(nn.Module):
             x = self.block_process(x, expand_2d)
         for expand_3d in self.expand_3d_list:
             x = self.block_process(x, expand_3d)
-        x = x + self.absolute_pos   _embed
+        x = x + self.absolute_pos_embed
         return x
 
     def block_process(self, x, expand_block):
