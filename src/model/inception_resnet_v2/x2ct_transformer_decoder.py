@@ -150,8 +150,14 @@ class PatchExpanding2D_3D(nn.Module):
                                            in_chans=embed_dim,
                                            embed_dim=embed_dim,
                                            norm_layer=norm_layer)
+
         num_patches = self.patch_embed_2d.num_patches
         patches_resolution = self.patch_embed_2d.patches_resolution
+
+        pos_embed_shape = torch.zeros(
+            1, num_patches * patches_resolution[0], embed_dim)
+        self.absolute_pos_embed = nn.Parameter(pos_embed_shape)
+        trunc_normal_(self.absolute_pos_embed, std=.02)
 
         self.expand_2d_list = nn.ModuleList([])
         self.expand_3d_list = nn.ModuleList([])
@@ -202,6 +208,7 @@ class PatchExpanding2D_3D(nn.Module):
             x = self.block_process(x, expand_2d)
         for expand_3d in self.expand_3d_list:
             x = self.block_process(x, expand_3d)
+        x = x + self.absolute_pos   _embed
         return x
 
     def block_process(self, x, expand_block):
