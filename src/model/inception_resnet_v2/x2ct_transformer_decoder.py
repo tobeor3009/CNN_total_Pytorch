@@ -23,7 +23,7 @@ class InceptionResNetV2_X2CT(nn.Module):
                  conv_norm="instance", conv_act="relu6",
                  trans_norm=nn.LayerNorm, trans_act="relu6",
                  cnn_block_size=16, decode_init_channel=None,
-                 patch_size=4, depths=[2, 2, 2, 2, 2], num_heads=[8, 4, 4, 2, 2],
+                 patch_size=4, depths=[2, 2, 2, 2, 2], num_heads=[4, 2, 2, 1, 1],
                  window_sizes=[2, 2, 2, 4, 4], mlp_ratio=4.0,
                  seg_act="sigmoid",
                  ):
