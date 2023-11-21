@@ -41,6 +41,8 @@ def get_norm(norm, shape, mode="2d"):
     if isinstance(norm, nn.Module) or callable(norm):
         norm_layer = norm
     if norm == 'layer':
+        if len(shape) == 1:
+            shape = shape[0]
         norm_layer = nn.LayerNorm(normalized_shape=shape,
                                   elementwise_affine=False)
     elif norm == 'instance':
@@ -48,13 +50,17 @@ def get_norm(norm, shape, mode="2d"):
             norm_layer = nn.InstanceNorm2d(num_features=shape[0])
         elif mode == "3d":
             norm_layer = nn.InstanceNorm3d(num_features=shape[0])
-
+        elif mode == "1d":
+            norm_layer = nn.InstanceNorm1d(num_features=shape[0])
     elif norm == 'batch':
         if mode == "2d":
             norm_layer = nn.BatchNorm2d(num_features=shape[0],
                                         affine=False)
         elif mode == "3d":
             norm_layer = nn.BatchNorm3d(num_features=shape[0],
+                                        affine=False)
+        elif mode == "1d":
+            norm_layer = nn.BatchNorm1d(num_features=shape[0],
                                         affine=False)
     elif norm is None:
         norm_layer = nn.Identity()
@@ -116,6 +122,53 @@ class PixelShuffle3D(nn.Module):
         output = input_view.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
 
         return output.view(batch_size, nOut, out_depth, out_height, out_width)
+
+
+class ConvBlock1D(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, padding='same',
+                 norm="batch", groups=1, act=DEFAULT_ACT, bias=False, channel_last=False):
+        super().__init__()
+        self.channel_last = channel_last
+        self.conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
+                              kernel_size=kernel_size, stride=stride, padding=padding,
+                              groups=groups,  bias=bias)
+        if not bias:
+            self.norm_layer = get_norm(norm, out_channels, mode="1d")
+        else:
+            self.norm_layer = nn.Identity()
+        self.act_layer = get_act(act)
+
+    def forward(self, x):
+        if self.channel_last:
+            x = x.permute(0, 2, 1)
+        conv = self.conv(x)
+        norm = self.norm_layer(conv)
+        act = self.act_layer(norm)
+        if self.channel_last:
+            act = act.permute(0, 2, 1)
+        return act
+
+
+class ConvBlock2D(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, padding='same',
+                 norm="batch", groups=1, act=DEFAULT_ACT, bias=False, name=None):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
+                              kernel_size=kernel_size, stride=stride, padding=padding,
+                              groups=groups,  bias=bias)
+        if not bias:
+            self.norm_layer = get_norm(norm, out_channels, mode="2d")
+        else:
+            self.norm_layer = nn.Identity()
+        self.act_layer = get_act(act)
+
+    def forward(self, x):
+        conv = self.conv(x)
+        norm = self.norm_layer(conv)
+        act = self.act_layer(norm)
+        return act
 
 
 class ConvBlock2D(nn.Module):
