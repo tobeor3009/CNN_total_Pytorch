@@ -598,7 +598,7 @@ class BasicLayerV2(nn.Module):
             self.upsample = upsample(input_resolution,
                                      dim=dim, norm_layer=norm_layer)
             dim //= 2
-            num_heads //= 2
+            num_heads = max(num_heads // 2, 1)
             window_size *= 2
             input_resolution = [input_resolution[0] * 2,
                                 input_resolution[1] * 2,
