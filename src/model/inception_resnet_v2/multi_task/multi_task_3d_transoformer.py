@@ -19,13 +19,14 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                  class_channel=None, seg_channels=None, validity_shape=(1, 8, 8, 8),
                  inject_class_channel=None,
                  block_size=16, z_channel_preserve=False, include_context=False,
-                 decode_depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
-                 decode_init_channel=None,
-                 skip_connect=True, dropout_proba=0.05, norm="batch", act=DEFAULT_ACT,
+                 conv_norm="instance", conv_act=DEFAULT_ACT,
+                 trans_norm=nn.LayerNorm, trans_act=DEFAULT_ACT, decode_init_channel=None,
+                 patch_size=4, depths=[2, 2, 2, 2, 2], num_heads=[4, 2, 2, 1, 1],
+                 window_sizes=[2, 2, 2, 4, 4], mlp_ratio=4.0,
+                 skip_connect=True, dropout_proba=0.05,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_validity=False,
-                 use_class_head_simple=True,
-                 use_seg_pixelshuffle_only=False, use_seg_simpleoutput=False
+                 use_class_head_simple=True
                  ):
         super().__init__()
 
@@ -34,7 +35,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         self.get_validity = get_validity
         self.inject_class_channel = inject_class_channel
         decode_init_channel = block_size * \
-            48 if decode_init_channel is None else decode_init_channel
+            32 if decode_init_channel is None else decode_init_channel
         input_shape = np.array(input_shape)
         n_input_channels, init_z, init_h, init_w = input_shape
         feature_zhw = (init_z // (2 ** 5),
@@ -52,7 +53,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         skip_connect_channel_list = get_skip_connect_channel_list(block_size)
 
         self.base_model = InceptionResNetV2_3D(n_input_channels=n_input_channels, block_size=block_size,
-                                               padding="same", norm=norm, act=act,
+                                               padding="same", norm=conv_norm, act=conv_act,
                                                z_channel_preserve=z_channel_preserve, include_context=include_context,
                                                include_skip_connection_tensor=skip_connect)
         if self.get_seg:
@@ -69,7 +70,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                     skip_channel = skip_connect_channel_list[4 - decode_i]
                     decode_skip_embed = ConvBlock3D(in_channels=skip_channel,
                                                     out_channels=decode_in_channels,
-                                                    kernel_size=1, norm=norm, act=act)
+                                                    kernel_size=1, norm=conv_norm, act=conv_act)
                     decode_in_channels *= 2
                     setattr(self,
                             f"decode_skip_embed_{decode_i}", decode_skip_embed)
@@ -194,11 +195,11 @@ class PositionalEncoding(nn.Module):
 class ClassificationHeadSimple(nn.Module):
     def __init__(self, in_channels, num_classes, dropout_proba, act):
         super(ClassificationHeadSimple, self).__init__()
-        self.gap_layer = nn.AdaptiveAvgPool3d((2, 2, 2))
-        self.fc_1 = nn.Linear(in_channels * 8, in_channels)
+        self.gap_layer = nn.AdaptiveAvgPool3d((1, 1, 1))
+        self.fc_1 = nn.Linear(in_channels, in_channels // 2)
         self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=USE_INPLACE)
         self.relu_layer = nn.ReLU6(inplace=USE_INPLACE)
-        self.fc_2 = nn.Linear(in_channels, num_classes)
+        self.fc_2 = nn.Linear(in_channels // 2, num_classes)
         self.act = get_act(act)
 
     def forward(self, x):
