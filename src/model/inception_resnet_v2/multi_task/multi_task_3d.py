@@ -100,7 +100,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                              dropout_proba, class_act)
         if get_validity:
             self.validity_conv_1 = ConvBlock3D(feature_channel_num, block_size * 8,
-                                               kernel_size=3, act="gelu", norm=ac)
+                                               kernel_size=3, act="gelu", norm=norm)
             self.validity_avg_pool = nn.AdaptiveAvgPool3d(validity_shape[1:])
             self.validity_out_conv = ConvBlock3D(block_size * 8, validity_shape[0],
                                                  kernel_size=3, act=validity_act, norm=norm)
