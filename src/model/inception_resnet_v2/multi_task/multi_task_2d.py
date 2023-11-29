@@ -92,7 +92,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                              dropout_proba, class_act)
         if get_validity:
             self.validity_conv_1 = ConvBlock2D(feature_channel_num, block_size * 32,
-                                               kernel_size=3, act="gelu", norm=None)
+                                               kernel_size=3, act="gelu", norm=norm)
             self.validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
             self.validity_out_conv = ConvBlock2D(block_size * 32, validity_shape[0],
                                                  kernel_size=3, act=validity_act, norm=None)
