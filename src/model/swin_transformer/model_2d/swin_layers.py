@@ -437,6 +437,47 @@ class PatchExpanding(nn.Module):
         return x
 
 
+class PatchExpandingConcat(nn.Module):
+    def __init__(self, input_resolution, dim,
+                 return_vector=True, dim_scale=2,
+                 norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.return_vector = return_vector
+        self.dim_scale = dim_scale
+        self.pixel_shuffle_conv = nn.Conv2d(dim, dim * (dim_scale ** 2) // 2,
+                                            kernel_size=1, padding=0, bias=False)
+        self.pixel_shuffle = nn.PixelShuffle(dim_scale)
+        self.upsample = nn.Upsample(scale_factor=(dim_scale, dim_scale),
+                                    mode='bilinear')
+        self.upsample_conv = nn.Conv2d(dim, dim // 2,
+                                       kernel_size=3, padding=1, bias=False)
+        self.cat_conv = nn.Conv2d(dim, dim // 2,
+                                  kernel_size=1, padding=0, bias=False)
+        self.norm_layer = norm_layer(dim // 2)
+
+    def forward(self, x):
+        H, W = self.input_resolution
+        B, L, C = x.shape
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
+        assert H % 2 == 0 and W % 2 == 0, f"x size (*{H}*{W}) are not even."
+        x = x.permute(0, 2, 1).view(B, C, H, W)
+        pixel_shuffle = self.pixel_shuffle_conv(x)
+        pixel_shuffle = self.pixel_shuffle(pixel_shuffle)
+        upsample = self.upsample(x)
+        upsample = self.upsample_conv(upsample)
+        x = torch.cat([pixel_shuffle, upsample], dim=1)
+        x = self.cat_conv(x)
+        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
+        x = self.norm_layer(x)
+        if not self.return_vector:
+            x = x.permute(0, 2, 1).view(B, self.dim // 2,
+                                        H * self.dim_scale,
+                                        W * self.dim_scale)
+        return x
+
+
 class BasicLayerV1(nn.Module):
     """ A basic Swin Transformer layer for one stage.
 

@@ -7,9 +7,9 @@ from ..common_module.layers import get_act, get_norm
 from ..common_module.base_model import InceptionResNetV2_3D, get_skip_connect_channel_list
 from ..common_module.transformer_layers import PositionalEncoding
 from ..common_module.layers import space_to_depth_3d, DEFAULT_ACT
-from ..common_module.layers import ConvBlock3D, AttentionPool, Output3D
-from ..common_module.layers_highway import MultiDecoder3D, HighwayOutput3D
-from ...swin_transformer.model_3d.swin_layers import PatchEmbed, PatchExpanding
+from ..common_module.layers import ConvBlock3D, AttentionPool, ConvBlock1D
+from ...swin_transformer.model_3d.swin_layers import PatchEmbed, BasicLayerV2
+from ...swin_transformer.model_3d.swin_layers import PatchExpanding, PatchExpandingConcat
 
 USE_INPLACE = True
 
@@ -26,10 +26,13 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                  skip_connect=True, dropout_proba=0.05,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_validity=False,
-                 use_class_head_simple=True
+                 decoder_simple=True, use_class_head_simple=True
                  ):
         super().__init__()
-
+        if decoder_simple:
+            expand_block = PatchExpanding
+        else:
+            expand_block = PatchExpandingConcat
         self.get_seg = get_seg
         self.get_class = get_class
         self.get_validity = get_validity
@@ -39,8 +42,8 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         input_shape = np.array(input_shape)
         n_input_channels, init_z, init_h, init_w = input_shape
         feature_zhw = (init_z // (2 ** 5),
-                                           init_h // (2 ** 5),
-                                           init_w // (2 ** 5))
+                       init_h // (2 ** 5),
+                       init_w // (2 ** 5))
         feature_z, feature_h, feature_w = feature_zhw
         feature_channel_num = block_size * 96
 
@@ -57,41 +60,57 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                z_channel_preserve=z_channel_preserve, include_context=include_context,
                                                include_skip_connection_tensor=skip_connect)
         if self.get_seg:
-            self.decode_init_embed = PatchEmbed(img_size=)
+            self.decode_init_embed = PatchEmbed(img_size=feature_zhw, patch_size=patch_size,
+                                                in_chans=feature_channel_num,
+                                                embed_dim=decode_init_channel,
+                                                norm_layer=trans_norm)
             for decode_i in range(0, 5):
-                z, h, w = (init_z // (2 ** (5 - decode_i)),
-                           init_h // (2 ** (5 - decode_i)),
-                           init_w // (2 ** (5 - decode_i)))
+                down_ratio = 2 ** (5 - decode_i)
+                channel_down_ratio = 2 ** decode_i
+                z, h, w = (init_z // down_ratio,
+                           init_h // down_ratio,
+                           init_w // down_ratio)
+                resolution_3d = (init_z // down_ratio // patch_size,
+                                 init_h // down_ratio // patch_size,
+                                 init_w // down_ratio // patch_size)
                 decode_in_channels = int(decode_init_channel //
-                                         (2 ** decode_i))
-                decode_out_channels = int(decode_init_channel //
-                                          (2 ** (decode_i + 1)))
+                                         channel_down_ratio)
                 if skip_connect:
                     skip_channel = skip_connect_channel_list[4 - decode_i]
-                    decode_skip_embed = ConvBlock3D(in_channels=skip_channel,
-                                                    out_channels=decode_in_channels,
-                                                    kernel_size=1, norm=conv_norm, act=conv_act)
-                    decode_in_channels *= 2
+                    decode_skip_embed = PatchEmbed(img_size=(z, h, w), patch_size=patch_size,
+                                                   in_chans=skip_channel,
+                                                   embed_dim=decode_in_channels,
+                                                   norm_layer=trans_norm)
+                    skip_conv = ConvBlock1D(in_channels=decode_in_channels * 2,
+                                            out_channels=decode_in_channels,
+                                            kernel_size=1, channel_last=True)
                     setattr(self,
                             f"decode_skip_embed_{decode_i}", decode_skip_embed)
-                decode_block = ConvBlock3D(in_channels=decode_in_channels,
-                                           out_channels=decode_out_channels, kernel_size=3)
-                decode_up = MultiDecoder3D(input_zhw=(z, h, w),
-                                           in_channels=decode_out_channels,
-                                           out_channels=decode_out_channels,
-                                           kernel_size=decode_kernel_size,
-                                           use_highway=False,
-                                           use_pixelshuffle_only=use_seg_pixelshuffle_only)
-                setattr(self, f"decode_block_{decode_i}", decode_block)
-                setattr(self, f"decode_up_{decode_i}", decode_up)
-            if use_seg_simpleoutput:
-                self.seg_output_conv = Output3D(in_channels=decode_out_channels,
-                                                out_channels=seg_channels,
-                                                act=seg_act)
-            else:
-                self.seg_output_conv = HighwayOutput3D(in_channels=decode_out_channels,
-                                                       out_channels=seg_channels,
-                                                       act=seg_act, use_highway=False)
+                    setattr(self,
+                            f"decode_skip_conv_{decode_i}", skip_conv)
+                decode_up_trans = BasicLayerV2(dim=decode_in_channels,
+                                               input_resolution=resolution_3d,
+                                               depth=depths[decode_i],
+                                               num_heads=num_heads[decode_i],
+                                               window_size=window_sizes[decode_i],
+                                               mlp_ratio=mlp_ratio,
+                                               qkv_bias=True,
+                                               drop=0.0, attn_drop=0.0,
+                                               drop_path=0.,
+                                               norm_layer=trans_norm,
+                                               upsample=expand_block)
+                setattr(self, f"decode_up_trans_{decode_i}", decode_up_trans)
+        resolution_3d = np.array(resolution_3d) * 2
+        decode_out_channels = decode_in_channels // 2
+        self.seg_final_expanding = expand_block(input_resolution=resolution_3d,
+                                                dim=decode_out_channels,
+                                                return_vector=False,
+                                                dim_scale=patch_size,
+                                                norm_layer=trans_norm
+                                                )
+        self.seg_final_conv = nn.Conv3d(decode_out_channels // 2, seg_channels,
+                                        kernel_size=1, padding=0)
+        self.seg_final_act = get_act(seg_act)
         if self.get_class:
             if use_class_head_simple:
                 self.classfication_head = ClassificationHeadSimple(feature_channel_num,
@@ -132,7 +151,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         encode_feature = self.base_model(input_tensor)
         if self.get_seg:
             decoded = encode_feature
-            decoded = self.decode_init_conv(decoded)
+            decoded = self.decode_init_embed(decoded)
             if self.inject_class_channel is not None:
                 inject_class = self.inject_linear(inject_class)
                 inject_class = self.inject_norm(inject_class)
@@ -149,16 +168,20 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                 if self.skip_connect:
                     skip_connect_tensor = getattr(self.base_model,
                                                   f"skip_connect_tensor_{4 - decode_i}")
+                    decode_skip_embed = getattr(self,
+                                                f"decode_skip_embed_{decode_i}")
                     skip_conv = getattr(self,
                                         f"decode_skip_conv_{decode_i}")
-                    skip_connect_tensor = skip_conv(skip_connect_tensor)
+                    skip_connect_tensor = decode_skip_embed(
+                        skip_connect_tensor)
                     decoded = torch.cat([decoded,
-                                         skip_connect_tensor], axis=1)
-                decode_conv = getattr(self, f"decode_conv_{decode_i}")
-                decode_up = getattr(self, f"decode_up_{decode_i}")
-                decoded = decode_conv(decoded)
-                decoded = decode_up(decoded)
-            seg_output = self.seg_output_conv(decoded)
+                                         skip_connect_tensor], axis=-1)
+                    decoded = skip_conv(decoded)
+                decode_up_trans = getattr(self, f"decode_up_trans_{decode_i}")
+                decoded = decode_up_trans(decoded)
+            seg_output = self.seg_final_expanding(decoded)
+            seg_output = self.seg_final_conv(seg_output)
+            seg_output = self.seg_final_act(seg_output)
             output.append(seg_output)
 
         if self.get_class:
