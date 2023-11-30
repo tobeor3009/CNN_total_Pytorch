@@ -6,7 +6,7 @@ from torch.nn import functional as F
 import numpy as np
 from .cbam import CBAM as CBAM2D
 from .cbam_3d import CBAM3D
-
+from torch.nn.utils import spectral_norm
 INPLACE = False
 DEFAULT_ACT = "relu6"
 
@@ -133,7 +133,9 @@ class ConvBlock1D(nn.Module):
         self.conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias)
-        if not bias:
+        if norm == "spectral":
+            self.conv = spectral_norm(self.conv)
+        if not bias or norm != "spectral":
             self.norm_layer = get_norm(norm, out_channels, mode="1d")
         else:
             self.norm_layer = nn.Identity()
@@ -179,7 +181,9 @@ class ConvBlock2D(nn.Module):
         self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups,  bias=bias)
-        if not bias:
+        if norm == "spectral":
+            self.conv = spectral_norm(self.conv)
+        if not bias or norm != "spectral":
             self.norm_layer = get_norm(norm, out_channels, mode="2d")
         else:
             self.norm_layer = nn.Identity()
@@ -200,7 +204,9 @@ class ConvBlock3D(nn.Module):
         self.conv = nn.Conv3d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups, bias=bias)
-        if not bias:
+        if norm == "spectral":
+            self.conv = spectral_norm(self.conv)
+        if not bias or norm != "spectral":
             # in keras, scale=False
             self.norm_layer = get_norm(norm, out_channels, mode="3d")
         else:
