@@ -32,6 +32,8 @@ def get_act(act):
         act = partial(torch.softmax, dim=1)
     elif act is None:
         act = nn.Identity()
+    else:
+        act = nn.Identity()
     return act
 
 
@@ -63,6 +65,8 @@ def get_norm(norm, shape, mode="2d"):
             norm_layer = nn.BatchNorm1d(num_features=shape[0],
                                         affine=False)
     elif norm is None:
+        norm_layer = nn.Identity()
+    else:
         norm_layer = nn.Identity()
     return norm_layer
 
