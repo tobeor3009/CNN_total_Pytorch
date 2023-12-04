@@ -51,6 +51,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                        input_shape[1] // 32,
                                        input_shape[2] // 32,
                                        input_shape[3] // 32])
+        embed_num = np.prod(self.feature_shape[1:] // patch_size)
         self.skip_connect = skip_connect
 
         skip_connect_channel_list = get_skip_connect_channel_list(block_size)
@@ -161,14 +162,16 @@ class InceptionResNetV2MultiTask3D(nn.Module):
             self.inject_linear = nn.Linear(inject_class_channel,
                                            decode_init_channel, bias=False)
             self.inject_norm = get_norm("layer", decode_init_channel, "3d")
-            inject_pos_embed_shape = torch.zeros(1, 1,
-                                                 *self.feature_shape[1:],
-                                                 )
+            inject_pos_embed_shape = torch.zeros(1, embed_num,
+                                                 decode_init_channel)
             self.inject_absolute_pos_embed = nn.Parameter(
                 inject_pos_embed_shape)
             trunc_normal_(self.inject_absolute_pos_embed, std=.02)
-            self.inject_cat_conv = nn.Conv3d(decode_init_channel * 2,
-                                             decode_init_channel, kernel_size=1, padding=0, bias=False)
+            self.inject_cat_conv = ConvBlock1D(decode_init_channel * 2,
+                                               decode_init_channel,
+                                               kernel_size=1, padding=0, bias=False,
+                                               norm=None, act=trans_act,
+                                               channel_last=True)
 
     def validity_forward(self, x):
         x = self.validity_embed(x)
@@ -188,13 +191,10 @@ class InceptionResNetV2MultiTask3D(nn.Module):
             if self.inject_class_channel is not None:
                 inject_class = self.inject_linear(inject_class)
                 inject_class = self.inject_norm(inject_class)
-                inject_class = inject_class[:, :, None, None, None]
-                inject_class = inject_class.repeat(1, 1,
-                                                   decoded.shape[2],
-                                                   decoded.shape[3],
-                                                   decoded.shape[4])
+                inject_class = inject_class[:, None, :]
+                inject_class = inject_class.repeat(1, decoded.shape[1], 1)
                 inject_class = inject_class + self.inject_absolute_pos_embed
-                decoded = torch.cat([decoded, inject_class], dim=1)
+                decoded = torch.cat([decoded, inject_class], dim=-1)
                 decoded = self.inject_cat_conv(decoded)
 
             for decode_i in range(0, 5):
