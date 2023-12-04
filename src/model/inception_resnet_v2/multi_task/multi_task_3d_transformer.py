@@ -84,8 +84,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                    norm_layer=trans_norm)
                     skip_conv = ConvBlock1D(in_channels=decode_in_channels * 2,
                                             out_channels=decode_in_channels,
-                                            kernel_size=1, norm=conv_norm,
-                                            act=conv_act, channel_last=True)
+                                            kernel_size=1, channel_last=True)
                     setattr(self,
                             f"decode_skip_embed_{decode_i}", decode_skip_embed)
                     setattr(self,
@@ -170,8 +169,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
             trunc_normal_(self.inject_absolute_pos_embed, std=.02)
             self.inject_cat_conv = ConvBlock1D(in_channels=decode_init_channel * 2,
                                                out_channels=decode_init_channel,
-                                               kernel_size=1, norm=conv_norm,
-                                               act=conv_act, channel_last=True)
+                                               kernel_size=1, channel_last=True)
 
     def validity_forward(self, x):
         x = self.validity_embed(x)
