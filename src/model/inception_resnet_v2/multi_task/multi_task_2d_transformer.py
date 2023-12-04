@@ -120,11 +120,11 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             validity_init_channel = block_size * 32
             self.validity_conv_1 = ConvBlock2D(feature_channel_num, validity_init_channel,
                                                kernel_size=3, padding=1,
-                                               norm=norm, act=act)
+                                               norm=conv_norm, act=conv_act)
             self.validity_conv_2 = ConvBlock2D(validity_init_channel,
                                                validity_init_channel // 2,
                                                kernel_size=3, padding=1,
-                                               norm=norm, act=act)
+                                               norm=conv_norm, act=conv_act)
             self.validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
             self.validity_final_conv = ConvBlock2D(validity_init_channel // 2, validity_shape[0],
                                                    kernel_size=1, act=validity_act, norm=None)
