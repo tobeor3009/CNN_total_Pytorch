@@ -125,38 +125,13 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                              dropout_proba, class_act)
         if get_validity:
             validity_init_channel = block_size * 32
-            patch_zhw = np.array(feature_zhw) // patch_size
-
-            self.validity_embed = PatchEmbed(img_size=feature_zhw, patch_size=patch_size,
-                                             in_chans=feature_channel_num,
-                                             embed_dim=validity_init_channel,
-                                             norm_layer=trans_norm)
-            self.validity_block_1 = BasicLayerV2(dim=validity_init_channel,
-                                                 input_resolution=patch_zhw,
-                                                 depth=depths[0],
-                                                 num_heads=num_heads[0],
-                                                 window_size=window_sizes[0],
-                                                 mlp_ratio=mlp_ratio,
-                                                 qkv_bias=True,
-                                                 drop=0.0, attn_drop=0.0,
-                                                 drop_path=0.,
-                                                 norm_layer=trans_norm)
-            self.validity_block_2 = BasicLayerV2(dim=validity_init_channel,
-                                                 input_resolution=patch_zhw,
-                                                 depth=depths[1],
-                                                 num_heads=num_heads[1],
-                                                 window_size=window_sizes[1],
-                                                 mlp_ratio=mlp_ratio,
-                                                 qkv_bias=True,
-                                                 drop=0.0, attn_drop=0.0,
-                                                 drop_path=0.,
-                                                 norm_layer=trans_norm)
-            self.validity_final_expanding = expand_block(input_resolution=patch_zhw,
-                                                         dim=validity_init_channel,
-                                                         return_vector=False,
-                                                         dim_scale=patch_size,
-                                                         norm_layer=trans_norm
-                                                         )
+            self.validity_conv_1 = ConvBlock3D(feature_channel_num, validity_init_channel,
+                                               kernel_size=3, padding=1,
+                                               norm=conv_norm, act=conv_act)
+            self.validity_conv_2 = ConvBlock3D(validity_init_channel,
+                                               validity_init_channel // 2,
+                                               kernel_size=3, padding=1,
+                                               norm=conv_norm, act=conv_act)
             self.validity_avg_pool = nn.AdaptiveAvgPool3d(validity_shape[1:])
             self.validity_final_conv = ConvBlock3D(validity_init_channel // 2, validity_shape[0],
                                                    kernel_size=1, act=validity_act, norm=None)
@@ -174,10 +149,8 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                              bias=False)
 
     def validity_forward(self, x):
-        x = self.validity_embed(x)
-        x = self.validity_block_1(x)
-        x = self.validity_block_2(x)
-        x = self.validity_final_expanding(x)
+        x = self.validity_conv_1(x)
+        x = self.validity_conv_2(x)
         x = self.validity_avg_pool(x)
         x = self.validity_final_conv(x)
         return x
