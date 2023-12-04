@@ -98,12 +98,12 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             self.validity_conv_1 = ConvBlock2D(feature_channel_num, validity_init_channel,
                                                kernel_size=3, padding=1,
                                                norm=norm, act=act)
-            self.validity_conv_2 = ConvBlock2D(validity_init_channel // 2,
-                                               validity_init_channel // 4,
+            self.validity_conv_2 = ConvBlock2D(validity_init_channel,
+                                               validity_init_channel // 2,
                                                kernel_size=3, padding=1,
                                                norm=norm, act=act)
             self.validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
-            self.validity_final_conv = ConvBlock2D(validity_init_channel // 4, validity_shape[0],
+            self.validity_final_conv = ConvBlock2D(validity_init_channel // 2, validity_shape[0],
                                                    kernel_size=1, act=validity_act, norm=None)
         if inject_class_channel is not None and get_seg:
             self.inject_linear = nn.Linear(inject_class_channel,
