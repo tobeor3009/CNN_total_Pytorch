@@ -43,12 +43,11 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         feature_hw = (init_h // (2 ** 5),
                       init_w // (2 ** 5))
         feature_h, feature_w = feature_hw
-
+        embed_num = np.prod(np.array(feature_hw) // patch_size)
         feature_channel_num = block_size * 96
         self.feature_shape = np.array([feature_channel_num,
                                        input_shape[1] // 32,
                                        input_shape[2] // 32])
-        embed_num = np.prod(self.feature_shape[1:] // patch_size)
         self.skip_connect = skip_connect
 
         skip_connect_channel_list = get_skip_connect_channel_list(block_size)

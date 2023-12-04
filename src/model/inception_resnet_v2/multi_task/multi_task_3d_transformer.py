@@ -45,13 +45,14 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                        init_h // (2 ** 5),
                        init_w // (2 ** 5))
         feature_z, feature_h, feature_w = feature_zhw
+        embed_num = np.prod(np.array(feature_zhw) // patch_size)
+
         feature_channel_num = block_size * 96
 
         self.feature_shape = np.array([feature_channel_num,
                                        input_shape[1] // 32,
                                        input_shape[2] // 32,
                                        input_shape[3] // 32])
-        embed_num = np.prod(self.feature_shape[1:] // patch_size)
         self.skip_connect = skip_connect
 
         skip_connect_channel_list = get_skip_connect_channel_list(block_size)
@@ -125,6 +126,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         if get_validity:
             validity_init_channel = block_size * 32
             patch_zhw = np.array(feature_zhw) // patch_size
+
             self.validity_embed = PatchEmbed(img_size=feature_zhw, patch_size=patch_size,
                                              in_chans=feature_channel_num,
                                              embed_dim=validity_init_channel,
