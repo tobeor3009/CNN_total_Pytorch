@@ -117,12 +117,41 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                              class_channel,
                                                              dropout_proba, class_act)
         if get_validity:
-            self.validity_conv_1 = ConvBlock2D(feature_channel_num, block_size * 32,
-                                               kernel_size=3, act="gelu", norm=conv_norm)
+            validity_init_channel = block_size * 32
+            patch_hw = np.array(feature_hw) // patch_size
+            self.validity_embed = PatchEmbed(img_size=feature_hw, patch_size=patch_size,
+                                             in_chans=feature_channel_num,
+                                             embed_dim=validity_init_channel,
+                                             norm_layer=trans_norm)
+            self.validity_block_1 = BasicLayerV2(dim=validity_init_channel,
+                                                 input_resolution=patch_hw,
+                                                 depth=depths[0],
+                                                 num_heads=num_heads[0],
+                                                 window_size=window_sizes[0],
+                                                 mlp_ratio=mlp_ratio,
+                                                 qkv_bias=True,
+                                                 drop=0.0, attn_drop=0.0,
+                                                 drop_path=0.,
+                                                 norm_layer=trans_norm)
+            self.validity_block_2 = BasicLayerV2(dim=validity_init_channel,
+                                                 input_resolution=patch_hw,
+                                                 depth=depths[1],
+                                                 num_heads=num_heads[1],
+                                                 window_size=window_sizes[1],
+                                                 mlp_ratio=mlp_ratio,
+                                                 qkv_bias=True,
+                                                 drop=0.0, attn_drop=0.0,
+                                                 drop_path=0.,
+                                                 norm_layer=trans_norm)
+            self.validity_final_expanding = expand_block(input_resolution=patch_hw,
+                                                         dim=validity_init_channel,
+                                                         return_vector=False,
+                                                         dim_scale=patch_size,
+                                                         norm_layer=trans_norm
+                                                         )
             self.validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
-            self.validity_out_conv = ConvBlock2D(block_size * 32, validity_shape[0],
-                                                 kernel_size=3, act=validity_act, norm=None)
-
+            self.validity_final_conv = ConvBlock2D(validity_init_channel // 2, validity_shape[0],
+                                                   kernel_size=1, act=validity_act, norm=None)
         if inject_class_channel is not None and get_seg:
             self.inject_linear = nn.Linear(inject_class_channel,
                                            decode_init_channel, bias=False)
@@ -136,9 +165,12 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                              decode_init_channel, kernel_size=1, padding=0, bias=False)
 
     def validity_forward(self, x):
-        x = self.validity_conv_1(x)
+        x = self.validity_embed(x)
+        x = self.validity_block_1(x)
+        x = self.validity_block_2(x)
+        x = self.validity_final_expanding(x)
         x = self.validity_avg_pool(x)
-        x = self.validity_out_conv(x)
+        x = self.validity_final_conv(x)
         return x
 
     def forward(self, input_tensor, inject_class=None):
