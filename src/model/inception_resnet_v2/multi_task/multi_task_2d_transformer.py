@@ -77,9 +77,9 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                    in_chans=skip_channel,
                                                    embed_dim=decode_in_channels,
                                                    norm_layer=trans_norm)
-                    skip_conv = ConvBlock1D(in_channels=decode_in_channels * 2,
-                                            out_channels=decode_in_channels,
-                                            kernel_size=1, channel_last=True)
+                    skip_conv = nn.Linear(in_features=decode_in_channels * 2,
+                                          out_features=decode_in_channels,
+                                          bias=False)
                     setattr(self,
                             f"decode_skip_embed_{decode_i}", decode_skip_embed)
                     setattr(self,
@@ -162,10 +162,9 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             self.inject_absolute_pos_embed = nn.Parameter(
                 inject_pos_embed_shape)
             trunc_normal_(self.inject_absolute_pos_embed, std=.02)
-            self.inject_cat_conv = ConvBlock1D(decode_init_channel * 2,
-                                               decode_init_channel,
-                                               kernel_size=1,
-                                               channel_last=True)
+            self.inject_cat_conv = nn.Linear(in_features=decode_init_channel * 2,
+                                             out_features=decode_init_channel,
+                                             bias=False)
 
     def validity_forward(self, x):
         x = self.validity_embed(x)
