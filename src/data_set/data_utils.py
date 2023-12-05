@@ -15,7 +15,8 @@ base_augmentation_policy_dict = {
 ################### Resize Constant ###################
 INTER_DICT = {
     "bilinear": cv2.INTER_LINEAR,
-    "cubic": cv2.INTER_CUBIC
+    "cubic": cv2.INTER_CUBIC,
+    "nearest": cv2.INTER_NEAREST
 }
 ################### Augment Constant ###################
 positional_transform = A.OneOf([

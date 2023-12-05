@@ -68,7 +68,7 @@ class SegDataset(BaseDataset):
                                             self.interpolation)
             mask_array = get_resized_array(mask_array,
                                            self.target_size,
-                                           self.interpolation)
+                                           "nearest")
         if (not self.on_memory) or (self.on_memory and self.is_data_ready):
             image_array, mask_array = get_seg_augumented_array(image_array, mask_array,
                                                                self.augmentation_proba,
