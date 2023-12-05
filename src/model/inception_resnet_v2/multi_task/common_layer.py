@@ -30,10 +30,9 @@ class ClassificationHeadSimple(nn.Module):
         # Third fully connected layer
         self.fc_3 = nn.Linear(in_channels, in_channels // 2)
         self.in_3 = nn.InstanceNorm1d(in_channels // 2)
-        self.act_3 = get_act(act)
-
         # Output layer
         self.fc_out = nn.Linear(in_channels // 2, num_classes)
+        self.act_3 = get_act(act)
 
     def forward(self, x):
         x = self.gap_layer(x)
@@ -51,9 +50,10 @@ class ClassificationHeadSimple(nn.Module):
 
         x = self.fc_3(x)
         x = self.in_3(x)
-        x = self.act_3(x)
 
         x = self.fc_out(x)
+        x = self.act_3(x)
+
         return x
 
 
