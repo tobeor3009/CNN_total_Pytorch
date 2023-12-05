@@ -14,7 +14,7 @@ DEFAULT_ACT = "relu6"
 def get_act(act):
     if isinstance(act, nn.Module) or callable(act):
         act = act
-    if act == 'relu6':
+    elif act == 'relu6':
         act = nn.ReLU6(inplace=INPLACE)
     elif act == 'relu':
         act = nn.ReLU(inplace=INPLACE)
@@ -42,7 +42,7 @@ def get_norm(norm, shape, mode="2d"):
         shape = [shape]
     if isinstance(norm, nn.Module) or callable(norm):
         norm_layer = norm
-    if norm == 'layer':
+    elif norm == 'layer':
         if len(shape) == 1:
             shape = shape[0]
         norm_layer = nn.LayerNorm(normalized_shape=shape,

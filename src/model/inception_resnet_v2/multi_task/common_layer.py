@@ -20,7 +20,7 @@ class ClassificationHeadSimple(nn.Module):
         # First fully connected layer
         self.fc_1 = nn.Linear(in_channels, in_channels * 2)
         self.in_1 = nn.InstanceNorm1d(in_channels * 2)
-        self.act_1 = get_act(act)
+        self.act_1 = nn.ReLU6(inplace=USE_INPLACE)
 
         # Second fully connected layer
         self.fc_2 = nn.Linear(in_channels * 2, in_channels)
