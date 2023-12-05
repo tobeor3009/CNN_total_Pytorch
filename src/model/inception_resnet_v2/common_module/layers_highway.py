@@ -37,7 +37,8 @@ class MultiDecoder2D(nn.Module):
             conv_after_pixel_shuffle
         )
         if not self.use_pixelshuffle_only:
-            upsample_layer = nn.Upsample(scale_factor=kernel_size)
+            upsample_layer = nn.Upsample(scale_factor=kernel_size,
+                                         mode='bilinear')
             conv_after_upsample = nn.Conv2d(in_channels=in_channels,
                                             out_channels=out_channels,
                                             kernel_size=1)
@@ -56,9 +57,9 @@ class MultiDecoder2D(nn.Module):
         self.act = get_act(act)
 
     def forward(self, x):
-        pixel_shuffle = self.pixel_shuffle(x.contiguous())
+        pixel_shuffle = self.pixel_shuffle(x)
         if not self.use_pixelshuffle_only:
-            upsample = self.upsample(x.contiguous())
+            upsample = self.upsample(x)
             if self.use_highway:
                 out = self.highway(pixel_shuffle, upsample)
             else:
@@ -99,7 +100,8 @@ class MultiDecoder3D(nn.Module):
             conv_after_pixel_shuffle
         )
         if not self.use_pixelshuffle_only:
-            upsample_layer = nn.Upsample(scale_factor=kernel_size)
+            upsample_layer = nn.Upsample(scale_factor=kernel_size,
+                                         mode='trilinear')
             conv_after_upsample = nn.Conv3d(in_channels=in_channels,
                                             out_channels=out_channels,
                                             kernel_size=1)
