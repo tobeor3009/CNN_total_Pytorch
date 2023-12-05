@@ -9,8 +9,6 @@ from ..common_module.transformer_layers import PositionalEncoding
 from ..common_module.layers import space_to_depth, DEFAULT_ACT
 from ..common_module.layers import ConvBlock2D, AttentionPool
 from ..common_module.layers_highway import MultiDecoder2D, HighwayOutput2D
-from ...swin_transformer.model_2d.swin_layers import PatchEmbed, BasicLayerV2
-from ...swin_transformer.model_2d.swin_layers import PatchExpanding, PatchExpandingConcat
 USE_INPLACE = True
 
 
@@ -20,7 +18,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                  skip_connect=True, dropout_proba=0.05, norm="batch", act=DEFAULT_ACT,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_validity=False,
-                 use_class_head_simple=True, validity_patch_size=4, use_seg_pixelshuffle_only=False
+                 use_class_head_simple=True, use_seg_pixelshuffle_only=False
                  ):
         super().__init__()
 
@@ -97,11 +95,15 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             validity_init_channel = block_size * 32
             self.validity_conv_1 = ConvBlock2D(feature_channel_num, validity_init_channel,
                                                kernel_size=3, padding=1,
-                                               norm=norm, act=act)
+                                               norm="spectral", act=act)
             self.validity_conv_2 = ConvBlock2D(validity_init_channel,
                                                validity_init_channel // 2,
                                                kernel_size=3, padding=1,
-                                               norm=norm, act=act)
+                                               norm="spectral", act=act)
+            self.validity_conv_3 = ConvBlock2D(validity_init_channel // 2,
+                                               validity_init_channel // 2,
+                                               kernel_size=3, padding=1,
+                                               norm="spectral", act=act)
             self.validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
             self.validity_final_conv = ConvBlock2D(validity_init_channel // 2, validity_shape[0],
                                                    kernel_size=1, act=validity_act, norm=None)
@@ -120,6 +122,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
     def validity_forward(self, x):
         x = self.validity_conv_1(x)
         x = self.validity_conv_2(x)
+        x = self.validity_conv_3(x)
         x = self.validity_avg_pool(x)
         x = self.validity_final_conv(x)
         return x
