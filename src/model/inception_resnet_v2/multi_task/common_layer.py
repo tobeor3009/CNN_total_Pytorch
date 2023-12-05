@@ -9,10 +9,13 @@ USE_INPLACE = True
 
 
 class ClassificationHeadSimple(nn.Module):
-    def __init__(self, in_channels, num_classes, dropout_proba, act):
+    def __init__(self, in_channels, num_classes, dropout_proba, act, mode="2d"):
         super(ClassificationHeadSimple, self).__init__()
         # Global Average Pooling Layer
-        self.gap_layer = nn.AdaptiveAvgPool3d((1, 1, 1))
+        if mode == "2d":
+            self.gap_layer = nn.AdaptiveAvgPool2d((1, 1))
+        elif mode == "3d":
+            self.gap_layer = nn.AdaptiveAvgPool3d((1, 1, 1))
 
         # First fully connected layer
         self.fc_1 = nn.Linear(in_channels, in_channels * 2)

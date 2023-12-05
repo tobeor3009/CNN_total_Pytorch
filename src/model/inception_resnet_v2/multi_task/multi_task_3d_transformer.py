@@ -116,7 +116,8 @@ class InceptionResNetV2MultiTask3D(nn.Module):
             if use_class_head_simple:
                 self.classfication_head = ClassificationHeadSimple(feature_channel_num,
                                                                    class_channel,
-                                                                   dropout_proba, class_act)
+                                                                   dropout_proba, class_act,
+                                                                   mode="3d")
             else:
                 self.classfication_head = ClassificationHead((feature_z, feature_h, feature_w),
                                                              feature_channel_num,
