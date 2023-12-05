@@ -56,10 +56,9 @@ class MultiDecoder2D(nn.Module):
         self.act = get_act(act)
 
     def forward(self, x):
-        x = x.contiguous()
-        pixel_shuffle = self.pixel_shuffle(x)
+        pixel_shuffle = self.pixel_shuffle(x.contiguous())
         if not self.use_pixelshuffle_only:
-            upsample = self.upsample(x)
+            upsample = self.upsample(x.contiguous())
             if self.use_highway:
                 out = self.highway(pixel_shuffle, upsample)
             else:
