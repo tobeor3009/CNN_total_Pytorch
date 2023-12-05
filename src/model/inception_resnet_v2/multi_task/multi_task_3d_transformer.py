@@ -132,6 +132,10 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                validity_init_channel // 2,
                                                kernel_size=3, padding=1,
                                                norm=conv_norm, act=conv_act)
+            self.validity_conv_3 = ConvBlock3D(validity_init_channel // 2,
+                                               validity_init_channel // 2,
+                                               kernel_size=3, padding=1,
+                                               norm=conv_norm, act=conv_act)
             self.validity_avg_pool = nn.AdaptiveAvgPool3d(validity_shape[1:])
             self.validity_final_conv = ConvBlock3D(validity_init_channel // 2, validity_shape[0],
                                                    kernel_size=1, act=validity_act, norm=None)
@@ -151,6 +155,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
     def validity_forward(self, x):
         x = self.validity_conv_1(x)
         x = self.validity_conv_2(x)
+        x = self.validity_conv_3(x)
         x = self.validity_avg_pool(x)
         x = self.validity_final_conv(x)
         return x
