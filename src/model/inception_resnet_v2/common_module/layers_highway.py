@@ -26,8 +26,8 @@ class MultiDecoder2D(nn.Module):
                                               np.prod(kernel_size),
                                               kernel_size=1)
         pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=(kernel_size
-                                            if isinstance(kernel_size, int)
-                                            else kernel_size[0]))
+                                                              if isinstance(kernel_size, int)
+                                                              else kernel_size[0]))
         conv_after_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
                                              out_channels=out_channels,
                                              kernel_size=1)
@@ -56,6 +56,7 @@ class MultiDecoder2D(nn.Module):
         self.act = get_act(act)
 
     def forward(self, x):
+        x = x.contiguous()
         pixel_shuffle = self.pixel_shuffle(x)
         if not self.use_pixelshuffle_only:
             upsample = self.upsample(x)
