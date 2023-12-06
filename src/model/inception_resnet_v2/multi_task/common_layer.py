@@ -19,12 +19,10 @@ class ClassificationHeadSimple(nn.Module):
 
         # First fully connected layer
         self.fc_1 = nn.Linear(in_channels, in_channels * 2)
-        self.in_1 = nn.InstanceNorm1d(in_channels * 2)
         self.act_1 = nn.ReLU6(inplace=USE_INPLACE)
 
         # Second fully connected layer
         self.fc_2 = nn.Linear(in_channels * 2, in_channels)
-        self.in_2 = nn.InstanceNorm1d(in_channels)
         self.act_2 = nn.ReLU6(inplace=USE_INPLACE)
 
         # Dropout layer
@@ -32,7 +30,6 @@ class ClassificationHeadSimple(nn.Module):
 
         # Third fully connected layer
         self.fc_3 = nn.Linear(in_channels, in_channels // 2)
-        self.in_3 = nn.InstanceNorm1d(in_channels // 2)
         self.act_3 = nn.ReLU6(inplace=USE_INPLACE)
         # Output layer
         self.fc_out = nn.Linear(in_channels // 2, num_classes)
@@ -43,17 +40,14 @@ class ClassificationHeadSimple(nn.Module):
         x = x.flatten(start_dim=1, end_dim=-1)
 
         x = self.fc_1(x)
-        x = self.in_1(x)
+        x = self.dropout_layer(x)
         x = self.act_1(x)
-
         x = self.fc_2(x)
-        x = self.in_2(x)
+        x = self.dropout_layer(x)
         x = self.act_2(x)
 
-        x = self.dropout_layer(x)
-
         x = self.fc_3(x)
-        x = self.in_3(x)
+        x = self.dropout_layer(x)
         x = self.act_3(x)
         x = self.fc_out(x)
         x = self.last_act(x)
