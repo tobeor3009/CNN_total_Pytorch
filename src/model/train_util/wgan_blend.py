@@ -49,16 +49,16 @@ def compute_gradient_penalty(D, real_samples, fake_samples, blend_labels):
 def get_blend_images_2d(target_images, fake_images, patch_size=64, disc_channel=1):
     # 이미지의 크기 및 패치에 따른 격자 수를 확인
     B, C, H, W = target_images.shape
-    grid_size = H // patch_size
-
+    grid_H = H // patch_size
+    grid_W = W // patch_size
     # 레이블 배열 초기화
-    label_array = torch.zeros((B, grid_size, grid_size), dtype=bool)
+    label_array = torch.zeros((B, grid_H, grid_W), dtype=bool)
     blended_image = torch.zeros_like(target_images)
     for b in range(B):
         rand = random.random()
-        choice = torch.rand([grid_size, grid_size])
-        for i in range(grid_size):
-            for j in range(grid_size):
+        choice = torch.rand([grid_H, grid_W])
+        for i in range(grid_H):
+            for j in range(grid_W):
                 if choice[i, j].item() > rand:
                     blended_image[b, :, i * patch_size:(i + 1) * patch_size,
                                   j * patch_size:(j + 1) * patch_size] = target_images[b, :,
