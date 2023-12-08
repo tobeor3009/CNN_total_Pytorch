@@ -32,7 +32,7 @@ class InceptionResNetV2_X2CT(nn.Module):
         super().__init__()
 
         if decode_init_channel is None:
-            decode_init_channel = cnn_block_size * 32
+            decode_init_channel = cnn_block_size * 48
         skip_connect_channel_list = get_skip_connect_channel_list(
             cnn_block_size)
         input_shape = np.array(input_shape)
