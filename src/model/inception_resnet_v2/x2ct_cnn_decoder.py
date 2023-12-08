@@ -9,9 +9,9 @@ from .common_module.transformer_layers import PositionalEncoding
 from .common_module.layers import ConvBlock1D, ConvBlock2D, ConvBlock3D, Output3D
 from .common_module.layers_highway import MultiDecoder3D, HighwayOutput3D
 from ..swin_transformer.model_2d.swin_layers import PatchEmbed as PatchEmbed2D
-from ..swin_transformer.model_2d.swin_layers import PatchExpanding as PatchExpanding2D
+from ..swin_transformer.model_2d.swin_layers import PatchExpandingConcat as PatchExpanding2D
 from ..swin_transformer.model_2d.swin_layers import BasicLayerV2 as BasicLayerV2_2D
-from ..swin_transformer.model_3d.swin_layers import PatchExpanding as PatchExpanding3D
+from ..swin_transformer.model_3d.swin_layers import PatchExpandingConcat as PatchExpanding3D
 from ..swin_transformer.model_3d.swin_layers import BasicLayerV2 as BasicLayerV2_3D
 
 
@@ -60,13 +60,17 @@ class InceptionResNetV2_X2CT(nn.Module):
         for decode_i in range(0, 5):
             down_ratio = 2 ** (5 - decode_i)
             channel_down_ratio = 2 ** decode_i
-            resolution_3d = (init_h // down_ratio // patch_size,
-                             init_h // down_ratio // patch_size,
-                             init_w // down_ratio // patch_size)
+            resolution_3d = (init_h // down_ratio,
+                             init_h // down_ratio,
+                             init_w // down_ratio)
             decode_in_channels = int(decode_init_channel //
                                      channel_down_ratio)
-            skip_hw = np.array(feature_hw) * (channel_down_ratio)
+            decode_out_channels = int(decode_in_channels // 2)
+            skip_conv_channel = decode_in_channels
+            if decode_i > 0:
+                skip_conv_channel += decode_in_channels // 2
 
+            skip_hw = np.array(feature_hw) * (channel_down_ratio)
             skip_channel = skip_connect_channel_list[4 - decode_i]
             skip_2d_conv = ConvBlock2D(in_channels=skip_channel,
                                        out_channels=decode_in_channels,
@@ -77,36 +81,29 @@ class InceptionResNetV2_X2CT(nn.Module):
                                              num_head=num_heads[decode_i],
                                              window_size=window_sizes[decode_i],
                                              mlp_ratio=mlp_ratio, norm_layer=trans_norm)
-            skip_conv = ConvBlock1D(in_channels=decode_in_channels * 2,
+            skip_conv = ConvBlock3D(in_channels=skip_conv_channel,
                                     out_channels=decode_in_channels,
-                                    kernel_size=1, channel_last=True)
+                                    kernel_size=1)
             setattr(self, f"decode_skip_2d_conv_{decode_i}", skip_2d_conv)
             setattr(self, f"decode_skip_2d_3d_{decode_i}", skip_2d_3d)
             setattr(self, f"decode_skip_conv_{decode_i}", skip_conv)
 
-            decode_up_trans = BasicLayerV2_3D(dim=decode_in_channels,
-                                              input_resolution=resolution_3d,
-                                              depth=depths[decode_i],
-                                              num_heads=num_heads[decode_i],
-                                              window_size=window_sizes[decode_i],
-                                              mlp_ratio=mlp_ratio,
-                                              qkv_bias=True,
-                                              drop=0.0, attn_drop=0.0,
-                                              drop_path=0.,
-                                              norm_layer=trans_norm,
-                                              upsample=PatchExpanding3D)
-            setattr(self, f"decode_up_trans_{decode_i}", decode_up_trans)
+            decode_conv = ConvBlock3D(in_channels=decode_in_channels,
+                                      out_channels=decode_out_channels, kernel_size=3)
+            decode_kernel_size = 2
+            decode_up = MultiDecoder3D(input_zhw=resolution_3d,
+                                       in_channels=decode_out_channels,
+                                       out_channels=decode_out_channels,
+                                       kernel_size=decode_kernel_size,
+                                       use_highway=False,
+                                       use_pixelshuffle_only=False)
+            setattr(self, f"decode_conv_{decode_i}", decode_conv)
+            setattr(self, f"decode_up_{decode_i}", decode_up)
         resolution_3d = np.array(resolution_3d) * 2
         decode_out_channels = decode_in_channels // 2
-        self.seg_final_expanding = PatchExpanding3D(input_resolution=resolution_3d,
-                                                    dim=decode_out_channels,
-                                                    return_vector=False,
-                                                    dim_scale=patch_size,
-                                                    norm_layer=trans_norm
-                                                    )
-        self.seg_final_conv = nn.Conv3d(decode_out_channels // 2, seg_channels,
-                                        kernel_size=1, padding=0)
-        self.seg_final_act = get_act(seg_act)
+        self.seg_final_conv = HighwayOutput3D(in_channels=decode_out_channels,
+                                              out_channels=seg_channels,
+                                              act=seg_act, use_highway=False)
 
     def forward(self, input_tensor):
         encode_feature = self.base_model(input_tensor)
@@ -126,14 +123,14 @@ class InceptionResNetV2_X2CT(nn.Module):
             skip_connect_tensor = decode_skip_2d_conv(skip_connect_tensor)
             skip_connect_tensor = decode_skip_2d_3d(skip_connect_tensor)
             decoded = torch.cat([decoded,
-                                skip_connect_tensor], dim=-1)
+                                skip_connect_tensor], dim=1)
             decoded = decode_skip_conv(decoded)
 
-            decode_up_trans = getattr(self, f"decode_up_trans_{decode_i}")
-            decoded = decode_up_trans(decoded)
-        seg_output = self.seg_final_expanding(decoded)
-        seg_output = self.seg_final_conv(seg_output)
-        seg_output = self.seg_final_act(seg_output)
+            decode_conv = getattr(self, f"decode_conv_{decode_i}")
+            decode_up = getattr(self, f"decode_up_{decode_i}")
+            decoded = decode_conv(decoded)
+            decoded = decode_up(decoded)
+        seg_output = self.seg_final_conv(decoded)
         return seg_output
 
 
@@ -201,6 +198,12 @@ class PatchExpanding2D_3D(nn.Module):
                                         norm_layer=norm_layer,
                                         upsample=PatchExpanding3D)
             self.expand_3d_list.append(expand_3d)
+        resolution_3d = [feature_hw[0] // patch_size for _ in range(3)]
+        self.final_expand = PatchExpanding3D(input_resolution=resolution_3d,
+                                             dim=embed_dim,
+                                             return_vector=False,
+                                             dim_scale=patch_size,
+                                             norm_layer=norm_layer)
 
     def forward(self, x):
         x = self.patch_embed_2d(x)
@@ -209,6 +212,7 @@ class PatchExpanding2D_3D(nn.Module):
         for expand_3d in self.expand_3d_list:
             x = self.block_process(x, expand_3d)
         x = x + self.absolute_pos_embed
+        x = self.final_expand(x)
         return x
 
     def block_process(self, x, expand_block):

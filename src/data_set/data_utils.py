@@ -31,12 +31,16 @@ noise_transform = A.OneOf([
     A.GaussNoise(var_limit=(0.01, 5), p=1),
 ], p=1)
 
-elastic_tranform = A.ElasticTransform(p=1)
+elastic_tranform = A.ElasticTransform(always_apply=False, p=0.5,
+                                      alpha=0.20000000298023224, sigma=3.359999895095825,
+                                      alpha_affine=2.009999990463257, interpolation=1, border_mode=1,
+                                      value=(0, 0, 0), mask_value=None, approximate=False)
 
 brightness_value = 0.05
 brightness_contrast_transform = A.OneOf([
     A.RandomBrightnessContrast(
-        brightness_limit=(-brightness_value, brightness_value), contrast_limit=(-brightness_value, brightness_value), p=1),
+        brightness_limit=(-brightness_value, brightness_value),
+        contrast_limit=(-brightness_value, brightness_value), p=1),
 ], p=1)
 
 color_transform = A.OneOf([

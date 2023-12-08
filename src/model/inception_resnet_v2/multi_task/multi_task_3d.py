@@ -60,8 +60,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                            init_w // (2 ** (5 - decode_i)))
                 decode_in_channels = int(decode_init_channel //
                                          (2 ** decode_i))
-                decode_out_channels = int(decode_init_channel //
-                                          (2 ** (decode_i + 1)))
+                decode_out_channels = int(decode_in_channels // 2)
                 if skip_connect:
                     skip_channel = skip_connect_channel_list[4 - decode_i]
                     decode_skip_conv = ConvBlock3D(in_channels=skip_channel,

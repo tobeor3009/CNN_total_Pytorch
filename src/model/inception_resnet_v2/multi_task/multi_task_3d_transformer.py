@@ -6,7 +6,7 @@ from timm.models.layers import trunc_normal_
 from ..common_module.layers import get_act, get_norm
 from ..common_module.base_model import InceptionResNetV2_3D, get_skip_connect_channel_list
 from ..common_module.layers import DEFAULT_ACT
-from ..common_module.layers import ConvBlock3D
+from ..common_module.layers import ConvBlock3D, ConvBlock1D
 from ...swin_transformer.model_3d.swin_layers import PatchEmbed, BasicLayerV2
 from ...swin_transformer.model_3d.swin_layers import PatchExpanding, PatchExpandingConcat
 from .common_layer import ClassificationHeadSimple
@@ -82,13 +82,13 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                    in_chans=skip_channel,
                                                    embed_dim=decode_in_channels,
                                                    norm_layer=trans_norm)
-                    skip_conv = nn.Linear(in_features=decode_in_channels * 2,
-                                          out_features=decode_in_channels,
-                                          bias=False)
-                    setattr(self,
-                            f"decode_skip_embed_{decode_i}", decode_skip_embed)
-                    setattr(self,
-                            f"decode_skip_conv_{decode_i}", skip_conv)
+                    skip_conv = ConvBlock1D(in_channels=decode_in_channels * 2,
+                                            out_channel=decode_in_channels,
+                                            kernel_size=1, bias=False, channel_last=True)
+                    setattr(self, f"decode_skip_embed_{decode_i}",
+                            decode_skip_embed)
+                    setattr(self, f"decode_skip_conv_{decode_i}",
+                            skip_conv)
                 decode_up_trans = BasicLayerV2(dim=decode_in_channels,
                                                input_resolution=resolution_3d,
                                                depth=depths[decode_i],
@@ -148,9 +148,9 @@ class InceptionResNetV2MultiTask3D(nn.Module):
             self.inject_absolute_pos_embed = nn.Parameter(
                 inject_pos_embed_shape)
             trunc_normal_(self.inject_absolute_pos_embed, std=.02)
-            self.inject_cat_conv = nn.Linear(in_features=decode_init_channel * 2,
-                                             out_features=decode_init_channel,
-                                             bias=False)
+            self.inject_cat_conv = ConvBlock1D(in_channels=decode_init_channel * 2,
+                                               out_channels=decode_init_channel,
+                                               kernel_size=1, bias=False, channel_last=True)
 
     def validity_forward(self, x):
         x = self.validity_conv_1(x)
