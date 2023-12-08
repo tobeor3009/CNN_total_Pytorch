@@ -16,6 +16,7 @@ from ..swin_transformer.model_3d.swin_layers import BasicLayerV2 as BasicLayerV2
 from torch.utils.checkpoint import checkpoint
 
 USE_INPLACE = True
+USE_REENTRANT = False
 
 
 class InceptionResNetV2_X2CT(nn.Module):
@@ -106,7 +107,8 @@ class InceptionResNetV2_X2CT(nn.Module):
                                               act=seg_act, use_highway=False)
 
     def forward(self, input_tensor):
-        encode_feature = checkpoint(self.base_model, input_tensor)
+        encode_feature = checkpoint(self.base_model, input_tensor,
+                                    use_reentrant=USE_REENTRANT)
         decoded = encode_feature
         decoded = self.decode_init_conv(decoded)
         decoded = self.decode_init_trans(decoded)
@@ -119,13 +121,15 @@ class InceptionResNetV2_X2CT(nn.Module):
                                           f"skip_connect_tensor_{4 - decode_i}")
 
             skip_connect_tensor = checkpoint(decode_skip_embed,
-                                             skip_connect_tensor)
+                                             skip_connect_tensor,
+                                             use_reentrant=USE_REENTRANT)
             decoded = torch.cat([decoded,
                                 skip_connect_tensor], dim=1)
             decoded = decode_skip_conv(decoded)
 
             decode_upsample = getattr(self, f"decode_upsample_{decode_i}")
-            decoded = checkpoint(decode_upsample, decoded)
+            decoded = checkpoint(decode_upsample, decoded,
+                                 use_reentrant=USE_REENTRANT)
         seg_output = self.seg_final_conv(decoded)
         return seg_output
 
