@@ -540,7 +540,7 @@ class BasicLayerV1(nn.Module):
     def forward(self, x):
         for blk in self.blocks:
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint(blk, x)
             else:
                 x = blk(x)
         if self.downsample is not None:
