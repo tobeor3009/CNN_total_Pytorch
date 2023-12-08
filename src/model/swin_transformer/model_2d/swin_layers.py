@@ -167,7 +167,7 @@ class WindowAttention(nn.Module):
 
         # cosine attention
         attn = (F.normalize(q, dim=-1) @
-                F.normalize(k, dim=-1).transpose(-2, -1).contiguous())
+                F.normalize(k, dim=-1).transpose(-2, -1))
         logit_scale = torch.clamp(self.logit_scale,
                                   max=np.log(1. / 0.01)).exp()
         attn = attn * logit_scale
@@ -192,7 +192,7 @@ class WindowAttention(nn.Module):
 
         attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).contiguous().reshape(B_, N, C)
+        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -303,7 +303,7 @@ class SwinTransformerBlock(nn.Module):
         if self.shift_size > 0:
             shifted_x = torch.roll(x,
                                    shifts=(-self.shift_size, -self.shift_size),
-                                   dims=(1, 2)).contiguous()
+                                   dims=(1, 2))
         else:
             shifted_x = x
 
@@ -328,7 +328,7 @@ class SwinTransformerBlock(nn.Module):
         if self.shift_size > 0:
             x = torch.roll(shifted_x,
                            shifts=(self.shift_size,
-                                   self.shift_size), dims=(1, 2)).contiguous()
+                                   self.shift_size), dims=(1, 2))
         else:
             x = shifted_x
         x = x.view(B, H * W, C)
@@ -426,15 +426,15 @@ class PatchExpanding(nn.Module):
         B, L, C = x.shape
         assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
-        x = x.permute(0, 2, 1).contiguous().view(B, C, H, W)
+        x = x.permute(0, 2, 1).view(B, C, H, W)
         x = self.pixel_shuffle_conv_1(x)
         x = self.pixel_shuffle(x)
-        x = x.permute(0, 2, 3, 1).contiguous().view(B, -1, self.dim // 2)
+        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
         x = self.norm_layer(x)
         if not self.return_vector:
-            x = x.permute(0, 2, 1).contiguous().view(B, self.dim // 2,
-                                                     H * self.dim_scale,
-                                                     W * self.dim_scale)
+            x = x.permute(0, 2, 1).view(B, self.dim // 2,
+                                        H * self.dim_scale,
+                                        W * self.dim_scale)
         return x
 
 
@@ -463,19 +463,19 @@ class PatchExpandingConcat(nn.Module):
         B, L, C = x.shape
         assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
         assert H % 2 == 0 and W % 2 == 0, f"x size (*{H}*{W}) are not even."
-        x = x.permute(0, 2, 1).contiguous().view(B, C, H, W)
+        x = x.permute(0, 2, 1).view(B, C, H, W)
         pixel_shuffle = self.pixel_shuffle_conv(x)
         pixel_shuffle = self.pixel_shuffle(pixel_shuffle)
         upsample = self.upsample(x)
         upsample = self.upsample_conv(upsample)
         x = torch.cat([pixel_shuffle, upsample], dim=1)
         x = self.cat_conv(x)
-        x = x.permute(0, 2, 3, 1).contiguous().view(B, -1, self.dim // 2)
+        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
         x = self.norm_layer(x)
         if not self.return_vector:
-            x = x.permute(0, 2, 1).contiguous().view(B, self.dim // 2,
-                                                     H * self.dim_scale,
-                                                     W * self.dim_scale)
+            x = x.permute(0, 2, 1).view(B, self.dim // 2,
+                                        H * self.dim_scale,
+                                        W * self.dim_scale)
         return x
 
 
@@ -704,7 +704,7 @@ class PatchEmbed(nn.Module):
         # FIXME look at relaxing size constraints
         assert H == self.img_size[0] and W == self.img_size[1], \
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
-        x = self.proj(x).flatten(2).transpose(1, 2).contiguous()  # B Ph*Pw C
+        x = self.proj(x).flatten(2).transpose(1, 2)  # B Ph*Pw C
         if self.norm is not None:
             x = self.norm(x)
         return x

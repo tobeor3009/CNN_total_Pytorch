@@ -147,12 +147,12 @@ class ConvBlock1D(nn.Module):
 
     def forward(self, x):
         if self.channel_last:
-            x = x.permute(0, 2, 1).contiguous()
+            x = x.permute(0, 2, 1)
         conv = self.conv(x)
         norm = self.norm_layer(conv)
         act = self.act_layer(norm)
         if self.channel_last:
-            act = act.permute(0, 2, 1).contiguous()
+            act = act.permute(0, 2, 1)
         return act
 
 
@@ -448,7 +448,7 @@ class AttentionPool(nn.Module):
 
     def forward(self, x):
         x = x.flatten(start_dim=2).permute(
-            2, 0, 1).contiguous()  # BC(HW) -> NBC
+            2, 0, 1)  # BC(HW) -> NBC
         x = torch.cat([x.mean(dim=0, keepdim=True), x], dim=0)  # (N+1)NC
         x = x + self.positional_embedding[:, None, :].to(x.dtype)  # (N+1)NC
         x, _ = F.multi_head_attention_forward(

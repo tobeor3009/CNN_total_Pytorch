@@ -213,7 +213,7 @@ class WindowAttention(nn.Module):
 
         # cosine attention
         attn = (F.normalize(q, dim=-1) @
-                F.normalize(k, dim=-1).transpose(-2, -1).contiguous())
+                F.normalize(k, dim=-1).transpose(-2, -1))
 
         logit_scale = torch.clamp(self.logit_scale,
                                   max=np.log(1. / 0.01)).exp()
@@ -241,7 +241,7 @@ class WindowAttention(nn.Module):
 
         attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).contiguous().reshape(B_, N, C)
+        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -358,7 +358,7 @@ class SwinTransformerBlock(nn.Module):
                                    shifts=(-self.shift_size,
                                            -self.shift_size,
                                            -self.shift_size),
-                                   dims=(1, 2, 3)).contiguous()
+                                   dims=(1, 2, 3))
         else:
             shifted_x = x
 
@@ -385,7 +385,7 @@ class SwinTransformerBlock(nn.Module):
             x = torch.roll(shifted_x,
                            shifts=(self.shift_size,
                                    self.shift_size,
-                                   self.shift_size), dims=(1, 2, 3)).contiguous()
+                                   self.shift_size), dims=(1, 2, 3))
         else:
             x = shifted_x
         x = x.view(B, Z * H * W, C)
@@ -489,16 +489,16 @@ class PatchExpanding(nn.Module):
         assert L == Z * H * \
             W, f"input feature has wrong size {L} != {Z}, {H}, {W}"
         assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({Z}*{H}*{W}) are not even."
-        x = x.permute(0, 2, 1).contiguous().view(B, C, Z, H, W)
+        x = x.permute(0, 2, 1).view(B, C, Z, H, W)
         x = self.pixel_shuffle_conv_1(x)
         x = self.pixel_shuffle(x)
-        x = x.permute(0, 2, 3, 4, 1).contiguous().view(B, -1, self.dim // 2)
+        x = x.permute(0, 2, 3, 4, 1).view(B, -1, self.dim // 2)
         x = self.norm_layer(x)
         if not self.return_vector:
-            x = x.permute(0, 2, 1).contiguous().view(B, self.dim // 2,
-                                                     Z * self.dim_scale,
-                                                     H * self.dim_scale,
-                                                     W * self.dim_scale)
+            x = x.permute(0, 2, 1).view(B, self.dim // 2,
+                                        Z * self.dim_scale,
+                                        H * self.dim_scale,
+                                        W * self.dim_scale)
         return x
 
 
@@ -528,20 +528,20 @@ class PatchExpandingConcat(nn.Module):
         assert L == Z * H * \
             W, f"input feature has wrong size {L} != {Z}, {H}, {W}"
         assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({Z}*{H}*{W}) are not even."
-        x = x.permute(0, 2, 1).contiguous().view(B, C, Z, H, W)
+        x = x.permute(0, 2, 1).view(B, C, Z, H, W)
         pixel_shuffle = self.pixel_shuffle_conv(x)
         pixel_shuffle = self.pixel_shuffle(pixel_shuffle)
         upsample = self.upsample(x)
         upsample = self.upsample_conv(upsample)
         x = torch.cat([pixel_shuffle, upsample], dim=1)
         x = self.cat_conv(x)
-        x = x.permute(0, 2, 3, 4, 1).contiguous().view(B, -1, self.dim // 2)
+        x = x.permute(0, 2, 3, 4, 1).view(B, -1, self.dim // 2)
         x = self.norm_layer(x)
         if not self.return_vector:
-            x = x.permute(0, 2, 1).contiguous().view(B, self.dim // 2,
-                                                     Z * self.dim_scale,
-                                                     H * self.dim_scale,
-                                                     W * self.dim_scale)
+            x = x.permute(0, 2, 1).view(B, self.dim // 2,
+                                        Z * self.dim_scale,
+                                        H * self.dim_scale,
+                                        W * self.dim_scale)
         return x
 
 
@@ -734,8 +734,7 @@ class PatchEmbed(nn.Module):
         # FIXME look at relaxing size constraints
         assert Z == self.img_size[1] and H == self.img_size[1] and W == self.img_size[2], \
             f"Input simage size ({Z}*{H}*{W}) doesn't match model ({np.prod(self.img_size)})."
-        x = self.proj(x).flatten(2).transpose(
-            1, 2).contiguous()  # B Pz*Ph*Pw C
+        x = self.proj(x).flatten(2).transpose(1, 2)  # B Pz*Ph*Pw C
         if self.norm is not None:
             x = self.norm(x)
         return x
