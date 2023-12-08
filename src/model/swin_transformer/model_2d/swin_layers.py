@@ -167,7 +167,7 @@ class WindowAttention(nn.Module):
 
         # cosine attention
         attn = (F.normalize(q, dim=-1) @
-                F.normalize(k, dim=-1).transpose(-2, -1))
+                F.normalize(k, dim=-1).transpose(-2, -1).contiguous())
         logit_scale = torch.clamp(self.logit_scale,
                                   max=np.log(1. / 0.01)).exp()
         attn = attn * logit_scale
