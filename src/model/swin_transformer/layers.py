@@ -147,7 +147,8 @@ class PixelShuffle3D(nn.Module):
         input_view = input.view(batch_size, nOut, self.scale[0], self.scale[1],
                                 self.scale[2], in_depth, in_height, in_width)
 
-        output = input_view.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+        output = input_view.permute(0, 1, 5, 2, 6, 3, 7, 4)
+        output = output.contiguous()
 
         return output.view(batch_size, nOut, out_depth, out_height, out_width)
 
