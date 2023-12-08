@@ -147,12 +147,12 @@ class ConvBlock1D(nn.Module):
 
     def forward(self, x):
         if self.channel_last:
-            x = x.permute(0, 2, 1)
+            x = x.permute(0, 2, 1).contiguous()
         conv = self.conv(x)
         norm = self.norm_layer(conv)
         act = self.act_layer(norm)
         if self.channel_last:
-            act = act.permute(0, 2, 1)
+            act = act.permute(0, 2, 1).contiguous()
         return act
 
 
