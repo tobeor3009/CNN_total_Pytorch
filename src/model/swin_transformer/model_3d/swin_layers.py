@@ -489,16 +489,16 @@ class PatchExpanding(nn.Module):
         assert L == Z * H * \
             W, f"input feature has wrong size {L} != {Z}, {H}, {W}"
         assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({Z}*{H}*{W}) are not even."
-        x = x.permute(0, 2, 1).view(B, C, Z, H, W).contiguous()
+        x = x.permute(0, 2, 1).contiguous().view(B, C, Z, H, W)
         x = self.pixel_shuffle_conv_1(x)
         x = self.pixel_shuffle(x)
-        x = x.permute(0, 2, 3, 4, 1).view(B, -1, self.dim // 2).contiguous()
+        x = x.permute(0, 2, 3, 4, 1).contiguous().view(B, -1, self.dim // 2)
         x = self.norm_layer(x)
         if not self.return_vector:
-            x = x.permute(0, 2, 1).view(B, self.dim // 2,
-                                        Z * self.dim_scale,
-                                        H * self.dim_scale,
-                                        W * self.dim_scale).contiguous()
+            x = x.permute(0, 2, 1).contiguous().view(B, self.dim // 2,
+                                                     Z * self.dim_scale,
+                                                     H * self.dim_scale,
+                                                     W * self.dim_scale)
         return x
 
 
