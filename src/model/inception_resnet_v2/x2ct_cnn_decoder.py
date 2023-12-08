@@ -129,8 +129,7 @@ class InceptionResNetV2_X2CT(nn.Module):
             decode_upsample = getattr(self, f"decode_upsample_{decode_i}")
             decoded = checkpoint(decode_upsample, decoded,
                                  use_reentrant=USE_REENTRANT)
-        seg_output = checkpoint(self.seg_final_conv, decoded,
-                                use_reentrant=USE_REENTRANT)
+        seg_output = self.seg_final_conv(decoded)
         return seg_output
 
 
