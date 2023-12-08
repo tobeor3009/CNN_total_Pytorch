@@ -120,8 +120,7 @@ class InceptionResNetV2_X2CT(nn.Module):
             skip_connect_tensor = getattr(self.base_model,
                                           f"skip_connect_tensor_{4 - decode_i}")
 
-            skip_connect_tensor = checkpoint(decode_skip_2d_conv,
-                                             skip_connect_tensor)
+            skip_connect_tensor = decode_skip_2d_conv(skip_connect_tensor)
             skip_connect_tensor = decode_skip_2d_3d(skip_connect_tensor)
             decoded = torch.cat([decoded,
                                 skip_connect_tensor], dim=1)
@@ -130,7 +129,7 @@ class InceptionResNetV2_X2CT(nn.Module):
             decode_conv = getattr(self, f"decode_conv_{decode_i}")
             decode_up = getattr(self, f"decode_up_{decode_i}")
             decoded = decode_conv(decoded)
-            decoded = decode_up(decoded)
+            decoded = checkpoint(decode_up, decoded)
         seg_output = self.seg_final_conv(decoded)
         return seg_output
 
