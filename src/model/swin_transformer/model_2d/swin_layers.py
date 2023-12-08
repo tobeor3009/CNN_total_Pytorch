@@ -469,12 +469,12 @@ class PatchExpandingConcat(nn.Module):
         upsample = self.upsample_conv(upsample)
         x = torch.cat([pixel_shuffle, upsample], dim=1)
         x = self.cat_conv(x)
-        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
+        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2).contiguous()
         x = self.norm_layer(x)
         if not self.return_vector:
             x = x.permute(0, 2, 1).view(B, self.dim // 2,
                                         H * self.dim_scale,
-                                        W * self.dim_scale)
+                                        W * self.dim_scale).contiguous()
         return x
 
 
