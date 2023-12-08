@@ -426,15 +426,15 @@ class PatchExpanding(nn.Module):
         B, L, C = x.shape
         assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
-        x = x.permute(0, 2, 1).view(B, C, H, W).contiguous()
+        x = x.permute(0, 2, 1).contiguous().view(B, C, H, W)
         x = self.pixel_shuffle_conv_1(x)
         x = self.pixel_shuffle(x)
-        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2).contiguous()
+        x = x.permute(0, 2, 3, 1).contiguous().view(B, -1, self.dim // 2)
         x = self.norm_layer(x)
         if not self.return_vector:
-            x = x.permute(0, 2, 1).view(B, self.dim // 2,
-                                        H * self.dim_scale,
-                                        W * self.dim_scale).contiguous()
+            x = x.permute(0, 2, 1).contiguous().view(B, self.dim // 2,
+                                                     H * self.dim_scale,
+                                                     W * self.dim_scale)
         return x
 
 
@@ -463,19 +463,19 @@ class PatchExpandingConcat(nn.Module):
         B, L, C = x.shape
         assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
         assert H % 2 == 0 and W % 2 == 0, f"x size (*{H}*{W}) are not even."
-        x = x.permute(0, 2, 1).view(B, C, H, W).contiguous()
+        x = x.permute(0, 2, 1).contiguous().view(B, C, H, W)
         pixel_shuffle = self.pixel_shuffle_conv(x)
         pixel_shuffle = self.pixel_shuffle(pixel_shuffle)
         upsample = self.upsample(x)
         upsample = self.upsample_conv(upsample)
         x = torch.cat([pixel_shuffle, upsample], dim=1)
         x = self.cat_conv(x)
-        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2).contiguous()
+        x = x.permute(0, 2, 3, 1).contiguous().view(B, -1, self.dim // 2)
         x = self.norm_layer(x)
         if not self.return_vector:
-            x = x.permute(0, 2, 1).view(B, self.dim // 2,
-                                        H * self.dim_scale,
-                                        W * self.dim_scale).contiguous()
+            x = x.permute(0, 2, 1).contiguous().view(B, self.dim // 2,
+                                                     H * self.dim_scale,
+                                                     W * self.dim_scale)
         return x
 
 
