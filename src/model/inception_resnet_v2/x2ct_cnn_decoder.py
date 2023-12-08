@@ -81,11 +81,11 @@ class InceptionResNetV2_X2CT(nn.Module):
                                              num_head=num_heads[decode_i],
                                              window_size=window_sizes[decode_i],
                                              mlp_ratio=mlp_ratio, norm_layer=trans_norm)
+            skip_embed = nn.Sequential(skip_2d_conv, skip_2d_3d)
             skip_conv = ConvBlock3D(in_channels=skip_conv_channel,
                                     out_channels=decode_in_channels,
                                     kernel_size=1)
-            setattr(self, f"decode_skip_2d_conv_{decode_i}", skip_2d_conv)
-            setattr(self, f"decode_skip_2d_3d_{decode_i}", skip_2d_3d)
+            setattr(self, f"decode_skip_embed_{decode_i}", skip_embed)
             setattr(self, f"decode_skip_conv_{decode_i}", skip_conv)
 
             decode_conv = ConvBlock3D(in_channels=decode_in_channels,
@@ -111,17 +111,15 @@ class InceptionResNetV2_X2CT(nn.Module):
         decoded = self.decode_init_conv(decoded)
         decoded = self.decode_init_trans(decoded)
         for decode_i in range(0, 5):
-            decode_skip_2d_conv = getattr(self,
-                                          f"decode_skip_2d_conv_{decode_i}")
-            decode_skip_2d_3d = getattr(self,
-                                        f"decode_skip_2d_3d_{decode_i}")
+            decode_skip_embed = getattr(self,
+                                        f"decode_skip_embed_{decode_i}")
             decode_skip_conv = getattr(self,
                                        f"decode_skip_conv_{decode_i}")
             skip_connect_tensor = getattr(self.base_model,
                                           f"skip_connect_tensor_{4 - decode_i}")
 
-            skip_connect_tensor = decode_skip_2d_conv(skip_connect_tensor)
-            skip_connect_tensor = decode_skip_2d_3d(skip_connect_tensor)
+            skip_connect_tensor = checkpoint(decode_skip_embed,
+                                             skip_connect_tensor)
             decoded = torch.cat([decoded,
                                 skip_connect_tensor], dim=1)
             decoded = decode_skip_conv(decoded)
