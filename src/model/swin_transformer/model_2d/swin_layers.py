@@ -303,7 +303,7 @@ class SwinTransformerBlock(nn.Module):
         if self.shift_size > 0:
             shifted_x = torch.roll(x,
                                    shifts=(-self.shift_size, -self.shift_size),
-                                   dims=(1, 2))
+                                   dims=(1, 2)).contiguous()
         else:
             shifted_x = x
 
@@ -328,7 +328,7 @@ class SwinTransformerBlock(nn.Module):
         if self.shift_size > 0:
             x = torch.roll(shifted_x,
                            shifts=(self.shift_size,
-                                   self.shift_size), dims=(1, 2))
+                                   self.shift_size), dims=(1, 2)).contiguous()
         else:
             x = shifted_x
         x = x.view(B, H * W, C)
