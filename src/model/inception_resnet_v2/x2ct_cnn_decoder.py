@@ -218,6 +218,6 @@ class PatchExpanding2D_3D(nn.Module):
     def block_process(self, x, expand_block):
         x = expand_block(x)
         B, N, C = x.shape
-        x = x.view(B, 2, N // 2, C).permute(0, 2, 1, 3)
+        x = x.view(B, 2, N // 2, C).permute(0, 2, 1, 3).contiguous()
         x = x.reshape(B, N // 2, C * 2)
         return x
