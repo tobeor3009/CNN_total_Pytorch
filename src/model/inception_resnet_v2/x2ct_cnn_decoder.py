@@ -9,9 +9,9 @@ from .common_module.transformer_layers import PositionalEncoding
 from .common_module.layers import ConvBlock1D, ConvBlock2D, ConvBlock3D, Output3D
 from .common_module.layers_highway import MultiDecoder3D, HighwayOutput3D
 from ..swin_transformer.model_2d.swin_layers import PatchEmbed as PatchEmbed2D
-from ..swin_transformer.model_2d.swin_layers import PatchExpanding as PatchExpanding2D
+from ..swin_transformer.model_2d.swin_layers import PatchExpandingConcat as PatchExpanding2D
 from ..swin_transformer.model_2d.swin_layers import BasicLayerV2 as BasicLayerV2_2D
-from ..swin_transformer.model_3d.swin_layers import PatchExpanding as PatchExpanding3D
+from ..swin_transformer.model_3d.swin_layers import PatchExpandingConcat as PatchExpanding3D
 from ..swin_transformer.model_3d.swin_layers import BasicLayerV2 as BasicLayerV2_3D
 
 
