@@ -24,7 +24,8 @@ class InceptionResNetV2_X2CT(nn.Module):
                  conv_norm="instance", conv_act="leakyrelu",
                  trans_norm=nn.LayerNorm, trans_act="relu6",
                  cnn_block_size=16, decode_init_channel=None,
-                 patch_size=4, depths=[2, 2, 2, 2, 2], num_heads=[4, 2, 2, 1, 1],
+                 patch_size=4, embed_dim=128,
+                 depths=[2, 2, 2, 2, 2], num_heads=[4, 2, 2, 1, 1],
                  window_sizes=[2, 2, 2, 4, 4], mlp_ratio=4.0,
                  seg_act="sigmoid",
                  ):
@@ -54,10 +55,12 @@ class InceptionResNetV2_X2CT(nn.Module):
                                             out_channels=decode_init_channel,
                                             kernel_size=1, norm=conv_norm, act=conv_act)
         self.decode_init_trans = PatchExpanding2D_3D(feature_hw=feature_hw,
-                                                     embed_dim=decode_init_channel,
+                                                     in_chans=decode_init_channel,
+                                                     embed_dim=embed_dim,
                                                      patch_size=patch_size, depth=depths[0],
                                                      num_head=num_heads[0], window_size=window_sizes[0],
-                                                     mlp_ratio=mlp_ratio, norm_layer=trans_norm)
+                                                     mlp_ratio=mlp_ratio, norm_layer=trans_norm,
+                                                     conv_norm=conv_norm, conv_act=conv_act)
         for decode_i in range(0, 5):
             down_ratio = 2 ** (5 - decode_i)
             channel_down_ratio = 2 ** decode_i
@@ -67,9 +70,6 @@ class InceptionResNetV2_X2CT(nn.Module):
             decode_in_channels = int(decode_init_channel //
                                      channel_down_ratio)
             decode_out_channels = int(decode_in_channels // 2)
-            skip_conv_channel = decode_in_channels
-            if decode_i > 0:
-                skip_conv_channel += decode_in_channels // 2
 
             skip_hw = np.array(feature_hw) * (channel_down_ratio)
             skip_channel = skip_connect_channel_list[4 - decode_i]
@@ -77,13 +77,15 @@ class InceptionResNetV2_X2CT(nn.Module):
                                        out_channels=decode_in_channels,
                                        kernel_size=1, norm=conv_norm, act=conv_act)
             skip_2d_3d = PatchExpanding2D_3D(feature_hw=skip_hw,
-                                             embed_dim=decode_in_channels,
+                                             in_chans=decode_in_channels,
+                                             embed_dim=embed_dim,
                                              patch_size=patch_size, depth=depths[decode_i],
                                              num_head=num_heads[decode_i],
                                              window_size=window_sizes[decode_i],
-                                             mlp_ratio=mlp_ratio, norm_layer=trans_norm)
+                                             mlp_ratio=mlp_ratio, norm_layer=trans_norm,
+                                             conv_norm=conv_norm, conv_act=conv_act)
             skip_embed = nn.Sequential(skip_2d_conv, skip_2d_3d)
-            skip_conv = ConvBlock3D(in_channels=skip_conv_channel,
+            skip_conv = ConvBlock3D(in_channels=decode_in_channels * 2,
                                     out_channels=decode_in_channels,
                                     kernel_size=1)
             setattr(self, f"decode_skip_embed_{decode_i}", skip_embed)
@@ -135,8 +137,9 @@ class InceptionResNetV2_X2CT(nn.Module):
 
 
 class PatchExpanding2D_3D(nn.Module):
-    def __init__(self, feature_hw, embed_dim, patch_size,
-                 depth, num_head, window_size, mlp_ratio, norm_layer):
+    def __init__(self, feature_hw, in_chans, embed_dim, patch_size,
+                 depth, num_head, window_size, mlp_ratio, norm_layer,
+                 conv_norm, conv_act):
         super().__init__()
         power = int(math.log(feature_hw[0] // patch_size, 2))
         power_4 = power // 3
@@ -144,7 +147,7 @@ class PatchExpanding2D_3D(nn.Module):
 
         self.patch_embed_2d = PatchEmbed2D(img_size=feature_hw[0],
                                            patch_size=patch_size,
-                                           in_chans=embed_dim,
+                                           in_chans=in_chans,
                                            embed_dim=embed_dim,
                                            norm_layer=norm_layer)
 
@@ -204,6 +207,9 @@ class PatchExpanding2D_3D(nn.Module):
                                              return_vector=False,
                                              dim_scale=patch_size,
                                              norm_layer=norm_layer)
+        self.final_conv = ConvBlock3D(in_channels=embed_dim // 2,
+                                      out_channels=in_chans, kernel_size=1,
+                                      norm=conv_norm, act=conv_act)
 
     def forward(self, x):
         x = self.patch_embed_2d(x)
@@ -213,6 +219,7 @@ class PatchExpanding2D_3D(nn.Module):
             x = self.block_process(x, expand_3d)
         x = x + self.absolute_pos_embed
         x = self.final_expand(x)
+        x = self.final_conv(x)
         return x
 
     def block_process(self, x, expand_block):
