@@ -241,7 +241,7 @@ class WindowAttention(nn.Module):
 
         attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        x = (attn @ v).transpose(1, 2).contiguous().reshape(B_, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -734,7 +734,8 @@ class PatchEmbed(nn.Module):
         # FIXME look at relaxing size constraints
         assert Z == self.img_size[1] and H == self.img_size[1] and W == self.img_size[2], \
             f"Input simage size ({Z}*{H}*{W}) doesn't match model ({np.prod(self.img_size)})."
-        x = self.proj(x).flatten(2).transpose(1, 2)  # B Pz*Ph*Pw C
+        x = self.proj(x).flatten(2).transpose(
+            1, 2).contiguous()  # B Pz*Ph*Pw C
         if self.norm is not None:
             x = self.norm(x)
         return x
