@@ -206,7 +206,8 @@ class WindowAttention(nn.Module):
             qkv_bias = torch.cat((self.q_bias, torch.zeros_like(
                 self.v_bias, requires_grad=False), self.v_bias))
         qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
-        qkv = qkv.reshape(B_, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
+        qkv = qkv.reshape(B_, N, 3,
+                          self.num_heads, -1).permute(2, 0, 3, 1, 4).contiguous()
         # make torchscript happy (cannot use tensor as tuple)
         q, k, v = qkv[0], qkv[1], qkv[2]
 
@@ -488,16 +489,16 @@ class PatchExpanding(nn.Module):
         assert L == Z * H * \
             W, f"input feature has wrong size {L} != {Z}, {H}, {W}"
         assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({Z}*{H}*{W}) are not even."
-        x = x.permute(0, 2, 1).view(B, C, Z, H, W)
+        x = x.permute(0, 2, 1).view(B, C, Z, H, W).contiguous()
         x = self.pixel_shuffle_conv_1(x)
         x = self.pixel_shuffle(x)
-        x = x.permute(0, 2, 3, 4, 1).view(B, -1, self.dim // 2)
+        x = x.permute(0, 2, 3, 4, 1).view(B, -1, self.dim // 2).contiguous()
         x = self.norm_layer(x)
         if not self.return_vector:
             x = x.permute(0, 2, 1).view(B, self.dim // 2,
                                         Z * self.dim_scale,
                                         H * self.dim_scale,
-                                        W * self.dim_scale)
+                                        W * self.dim_scale).contiguous()
         return x
 
 

@@ -447,7 +447,8 @@ class AttentionPool(nn.Module):
         self.num_heads = num_heads
 
     def forward(self, x):
-        x = x.flatten(start_dim=2).permute(2, 0, 1)  # BC(HW) -> NBC
+        x = x.flatten(start_dim=2).permute(
+            2, 0, 1).contiguous()  # BC(HW) -> NBC
         x = torch.cat([x.mean(dim=0, keepdim=True), x], dim=0)  # (N+1)NC
         x = x + self.positional_embedding[:, None, :].to(x.dtype)  # (N+1)NC
         x, _ = F.multi_head_attention_forward(
