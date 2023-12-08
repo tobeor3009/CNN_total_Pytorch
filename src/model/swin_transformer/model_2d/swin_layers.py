@@ -643,7 +643,7 @@ class BasicLayerV2(nn.Module):
             x = self.upsample(x)
         for blk in self.blocks:
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint(blk, x)
             else:
                 x = blk(x)
         return x
