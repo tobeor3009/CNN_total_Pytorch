@@ -122,9 +122,7 @@ class InceptionResNetV2_X2CT(nn.Module):
             skip_connect_tensor = getattr(self.base_model,
                                           f"skip_connect_tensor_{4 - decode_i}")
 
-            skip_connect_tensor = checkpoint(decode_skip_embed,
-                                             skip_connect_tensor,
-                                             use_reentrant=USE_REENTRANT)
+            skip_connect_tensor = decode_skip_embed(skip_connect_tensor)
             decoded = torch.cat([decoded,
                                 skip_connect_tensor], dim=1)
             decoded = decode_skip_conv(decoded)
@@ -180,7 +178,8 @@ class PatchExpanding2D_3D(nn.Module):
                                         drop_path=dpr[idx_2d * depth:
                                                       (idx_2d + 1) * depth],
                                         norm_layer=norm_layer,
-                                        upsample=PatchExpanding2D)
+                                        upsample=PatchExpanding2D,
+                                        use_checkpoint=True)
             self.expand_2d_list.append(expand_2d)
 
         up_ratio_2d = 2 ** (idx_2d + 1)
@@ -199,7 +198,8 @@ class PatchExpanding2D_3D(nn.Module):
                                         drop_path=dpr[(idx_2d + idx_3d) * depth:
                                                       (idx_2d + idx_3d + 1) * depth],
                                         norm_layer=norm_layer,
-                                        upsample=PatchExpanding3D)
+                                        upsample=PatchExpanding3D,
+                                        use_checkpoint=True)
             self.expand_3d_list.append(expand_3d)
         resolution_3d = [feature_hw[0] // patch_size for _ in range(3)]
         self.final_expand = PatchExpanding3D(input_resolution=resolution_3d,
