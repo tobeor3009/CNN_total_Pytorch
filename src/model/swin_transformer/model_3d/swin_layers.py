@@ -527,7 +527,7 @@ class PatchExpandingConcat(nn.Module):
         assert L == Z * H * \
             W, f"input feature has wrong size {L} != {Z}, {H}, {W}"
         assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({Z}*{H}*{W}) are not even."
-        x = x.permute(0, 2, 1).view(B, C, Z, H, W).continuous()
+        x = x.permute(0, 2, 1).view(B, C, Z, H, W).contiguous()
         pixel_shuffle = self.pixel_shuffle_conv(x)
         pixel_shuffle = self.pixel_shuffle(pixel_shuffle)
         upsample = self.upsample(x)
