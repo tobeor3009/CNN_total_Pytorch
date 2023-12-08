@@ -97,8 +97,8 @@ class InceptionResNetV2_X2CT(nn.Module):
                                        kernel_size=decode_kernel_size,
                                        use_highway=False,
                                        use_pixelshuffle_only=False)
-            setattr(self, f"decode_conv_{decode_i}", decode_conv)
-            setattr(self, f"decode_up_{decode_i}", decode_up)
+            decode_upsample = nn.Sequential(decode_conv, decode_up)
+            setattr(self, f"decode_upsample_{decode_i}", decode_upsample)
         resolution_3d = np.array(resolution_3d) * 2
         decode_out_channels = decode_in_channels // 2
         self.seg_final_conv = HighwayOutput3D(in_channels=decode_out_channels,
@@ -106,7 +106,7 @@ class InceptionResNetV2_X2CT(nn.Module):
                                               act=seg_act, use_highway=False)
 
     def forward(self, input_tensor):
-        encode_feature = self.base_model(input_tensor)
+        encode_feature = checkpoint(self.base_model, input_tensor)
         decoded = encode_feature
         decoded = self.decode_init_conv(decoded)
         decoded = self.decode_init_trans(decoded)
@@ -124,10 +124,8 @@ class InceptionResNetV2_X2CT(nn.Module):
                                 skip_connect_tensor], dim=1)
             decoded = decode_skip_conv(decoded)
 
-            decode_conv = getattr(self, f"decode_conv_{decode_i}")
-            decode_up = getattr(self, f"decode_up_{decode_i}")
-            decoded = decode_conv(decoded)
-            decoded = checkpoint(decode_up, decoded)
+            decode_upsample = getattr(self, f"decode_upsample_{decode_i}")
+            decoded = checkpoint(decode_upsample, decoded)
         seg_output = self.seg_final_conv(decoded)
         return seg_output
 
