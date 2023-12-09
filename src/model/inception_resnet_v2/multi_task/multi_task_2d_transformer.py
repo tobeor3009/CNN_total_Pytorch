@@ -76,7 +76,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                    embed_dim=decode_in_channels,
                                                    norm_layer=trans_norm)
                     skip_conv = ConvBlock1D(in_channels=decode_in_channels * 2,
-                                            out_channel=decode_in_channels,
+                                            out_channels=decode_in_channels,
                                             kernel_size=1, bias=False, channel_last=True)
                     setattr(self,
                             f"decode_skip_embed_{decode_i}", decode_skip_embed)
