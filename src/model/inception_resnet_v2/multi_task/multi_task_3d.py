@@ -341,11 +341,13 @@ class InceptionResNetV2MultiTask3DV2(nn.Module):
                 decoded = decode_up(decoded)
             seg_output = self.seg_output_conv(decoded)
             output.append(seg_output)
-
-        for classfication_head in self.classfication_head_list:
-            class_output = classfication_head(encode_feature)
-            output.append(class_output)
-
+        if self.get_class:
+            class_output_list = []
+            for classfication_head in self.classfication_head_list:
+                class_output = classfication_head(encode_feature)
+                class_output_list.append(class_output)
+            class_output_list = torch.concat(class_output_list, dim=1)
+            output.append(class_output_list)
         if self.get_validity:
             validity_output = self.validity_forward(encode_feature)
             output.append(validity_output)
