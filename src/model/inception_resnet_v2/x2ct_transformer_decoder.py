@@ -16,6 +16,7 @@ from ..swin_transformer.model_3d.swin_layers import BasicLayerV2 as BasicLayerV2
 
 
 USE_INPLACE = True
+USE_CHECKPOINT = Truef
 
 
 class InceptionResNetV2_X2CT(nn.Module):
@@ -94,7 +95,8 @@ class InceptionResNetV2_X2CT(nn.Module):
                                               drop=0.0, attn_drop=0.0,
                                               drop_path=0.,
                                               norm_layer=trans_norm,
-                                              upsample=PatchExpanding3D)
+                                              upsample=PatchExpanding3D,
+                                              use_checkpoint=USE_CHECKPOINT)
             setattr(self, f"decode_up_trans_{decode_i}", decode_up_trans)
         resolution_3d = np.array(resolution_3d) * 2
         decode_out_channels = decode_in_channels // 2
@@ -180,7 +182,8 @@ class PatchExpanding2D_3D(nn.Module):
                                         drop_path=dpr[idx_2d * depth:
                                                       (idx_2d + 1) * depth],
                                         norm_layer=norm_layer,
-                                        upsample=PatchExpanding2D)
+                                        upsample=PatchExpanding2D,
+                                        use_checkpoint=USE_CHECKPOINT)
             self.expand_2d_list.append(expand_2d)
 
         up_ratio_2d = 2 ** (idx_2d + 1)
@@ -199,7 +202,8 @@ class PatchExpanding2D_3D(nn.Module):
                                         drop_path=dpr[(idx_2d + idx_3d) * depth:
                                                       (idx_2d + idx_3d + 1) * depth],
                                         norm_layer=norm_layer,
-                                        upsample=PatchExpanding3D)
+                                        upsample=PatchExpanding3D,
+                                        use_checkpoint=USE_CHECKPOINT)
             self.expand_3d_list.append(expand_3d)
 
     def forward(self, x):
