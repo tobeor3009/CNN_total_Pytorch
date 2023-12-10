@@ -16,7 +16,7 @@ from ..swin_transformer.model_3d.swin_layers import BasicLayerV2 as BasicLayerV2
 
 
 USE_INPLACE = True
-USE_CHECKPOINT = Truef
+USE_CHECKPOINT = True
 
 
 class InceptionResNetV2_X2CT(nn.Module):
