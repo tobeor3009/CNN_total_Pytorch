@@ -343,8 +343,13 @@ class InceptionResNetV2MultiTask3DV2(nn.Module):
             output.append(seg_output)
         if self.get_class:
             class_output_list = []
-            for classfication_head in self.classfication_head_list:
-                class_output = classfication_head(encode_feature)
+            for idx, classfication_head in enumerate(self.classfication_head_list):
+                if idx == 0:
+                    class_feature = getattr(self.base_model,
+                                            f"skip_connect_tensor_1")
+                else:
+                    class_feature = encode_feature
+                class_output = classfication_head(class_feature)
                 class_output_list.append(class_output)
             class_output_list = torch.concat(class_output_list, dim=1)
             output.append(class_output_list)
