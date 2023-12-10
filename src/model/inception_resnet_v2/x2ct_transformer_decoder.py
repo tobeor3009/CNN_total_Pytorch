@@ -106,9 +106,9 @@ class InceptionResNetV2_X2CT(nn.Module):
                                                     dim_scale=patch_size,
                                                     norm_layer=trans_norm
                                                     )
-        self.seg_final_conv = nn.Conv3d(decode_out_channels // 2, seg_channels,
-                                        kernel_size=1, padding=0)
-        self.seg_final_act = get_act(seg_act)
+        self.seg_final_conv = HighwayOutput3D(in_channels=decode_out_channels,
+                                              out_channels=seg_channels,
+                                              act=seg_act, use_highway=False)
 
     def forward(self, input_tensor):
         encode_feature = self.base_model(input_tensor)
@@ -135,7 +135,6 @@ class InceptionResNetV2_X2CT(nn.Module):
             decoded = decode_up_trans(decoded)
         seg_output = self.seg_final_expanding(decoded)
         seg_output = self.seg_final_conv(seg_output)
-        seg_output = self.seg_final_act(seg_output)
         return seg_output
 
 
