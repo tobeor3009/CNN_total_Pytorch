@@ -106,7 +106,7 @@ class InceptionResNetV2_X2CT(nn.Module):
                                                     dim_scale=patch_size,
                                                     norm_layer=trans_norm
                                                     )
-        self.seg_final_conv = HighwayOutput3D(in_channels=decode_out_channels,
+        self.seg_final_conv = HighwayOutput3D(in_channels=decode_out_channels // 2,
                                               out_channels=seg_channels,
                                               act=seg_act, use_highway=False)
 
