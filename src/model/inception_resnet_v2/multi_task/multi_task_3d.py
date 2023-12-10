@@ -259,15 +259,19 @@ class InceptionResNetV2MultiTask3DV2(nn.Module):
                                                        out_channels=seg_channels,
                                                        act=seg_act, use_highway=False)
         self.classfication_head_list = nn.ModuleList([])
-        for class_channel in class_channel_list:
+        for idx, class_channel in enumerate(class_channel_list):
+            if idx == 0:
+                class_input_channel = skip_connect_channel_list[1]
+            else:
+                class_input_channel = feature_channel_num
             if use_class_head_simple:
-                classfication_head = ClassificationHeadSimple(feature_channel_num,
+                classfication_head = ClassificationHeadSimple(class_input_channel,
                                                               class_channel,
                                                               dropout_proba, class_act,
                                                               mode="3d")
             else:
                 classfication_head = ClassificationHead((feature_z, feature_h, feature_w),
-                                                        feature_channel_num,
+                                                        class_input_channel,
                                                         class_channel,
                                                         dropout_proba, class_act)
             self.classfication_head_list.append(classfication_head)
