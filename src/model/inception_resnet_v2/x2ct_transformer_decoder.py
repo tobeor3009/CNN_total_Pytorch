@@ -31,8 +31,7 @@ class InceptionResNetV2_X2CT(nn.Module):
                  ):
         super().__init__()
 
-        if decode_init_channel is None:
-            decode_init_channel = decode_channel_list[0]
+        decode_init_channel = decode_channel_list[0]
         skip_connect_channel_list = get_skip_connect_channel_list(
             cnn_block_size)
         input_shape = np.array(input_shape)
@@ -78,7 +77,13 @@ class InceptionResNetV2_X2CT(nn.Module):
                                              num_head=num_heads[decode_i],
                                              window_size=window_sizes[decode_i],
                                              mlp_ratio=mlp_ratio, norm_layer=trans_norm)
-            skip_conv = ConvBlock1D(in_channels=decode_in_channels * 2,
+            if decode_i == 0:
+                skip_conv_channel = decode_channel_list[0] * 2
+            else:
+                skip_conv_channel = (decode_channel_list[decode_i] +
+                                     decode_channel_list[decode_i - 1])
+
+            skip_conv = ConvBlock1D(in_channels=skip_conv_channel,
                                     out_channels=decode_in_channels,
                                     kernel_size=1, act=conv_act, norm=conv_norm,
                                     channel_last=True)
