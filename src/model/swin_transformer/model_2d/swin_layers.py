@@ -545,9 +545,17 @@ class BasicLayerV1(nn.Module):
             else:
                 x = blk(x)
         if self.downsample is not None:
-            x = self.downsample(x)
+            if self.use_checkpoint:
+                x = checkpoint(self.downsample, x,
+                               use_reentrant=False)
+            else:
+                x = self.downsample(x)
         if self.upsample is not None:
-            x = self.upsample(x)
+            if self.use_checkpoint:
+                x = checkpoint(self.upsample, x,
+                               use_reentrant=False)
+            else:
+                x = self.upsample(x)
         return x
 
     def extra_repr(self) -> str:
@@ -639,9 +647,17 @@ class BasicLayerV2(nn.Module):
 
     def forward(self, x):
         if self.downsample is not None:
-            x = self.downsample(x)
+            if self.use_checkpoint:
+                x = checkpoint(self.downsample, x,
+                               use_reentrant=False)
+            else:
+                x = self.downsample(x)
         if self.upsample is not None:
-            x = self.upsample(x)
+            if self.use_checkpoint:
+                x = checkpoint(self.upsample, x,
+                               use_reentrant=False)
+            else:
+                x = self.upsample(x)
         for blk in self.blocks:
             if self.use_checkpoint:
                 x = checkpoint(blk, x,

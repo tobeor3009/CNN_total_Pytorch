@@ -23,13 +23,10 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                  window_sizes=[2, 2, 2, 4, 4], mlp_ratio=4.0,
                  class_act="softmax", seg_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_validity=False,
-                 decoder_simple=True, use_class_head_simple=True
+                 cnn_decoder=False, use_class_head_simple=True
                  ):
         super().__init__()
-        if decoder_simple:
-            expand_block = PatchExpanding
-        else:
-            expand_block = PatchExpandingConcat
+        expand_block = PatchExpandingConcat
         self.get_seg = get_seg
         self.get_class = get_class
         self.get_validity = get_validity

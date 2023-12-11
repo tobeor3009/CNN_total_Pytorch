@@ -13,6 +13,7 @@ from ..swin_transformer.model_2d.swin_layers import PatchExpanding as PatchExpan
 from ..swin_transformer.model_2d.swin_layers import BasicLayerV2 as BasicLayerV2_2D
 from ..swin_transformer.model_3d.swin_layers import PatchExpandingConcat as PatchExpanding3D
 from ..swin_transformer.model_3d.swin_layers import BasicLayerV2 as BasicLayerV2_3D
+from torch.utils.checkpoint import checkpoint
 
 
 USE_INPLACE = True
@@ -98,12 +99,12 @@ class InceptionResNetV2_X2CT(nn.Module):
                                               upsample=PatchExpanding3D,
                                               use_checkpoint=USE_CHECKPOINT)
             setattr(self, f"decode_up_trans_{decode_i}", decode_up_trans)
-            
+
             if decode_i < 4:
                 decode_up_conv = ConvBlock1D(in_channels=decode_in_channels // 2,
-                                            out_channels=decode_in_channels,
-                                            kernel_size=1, act=conv_act, norm=conv_norm,
-                                            channel_last=True)
+                                             out_channels=decode_in_channels,
+                                             kernel_size=1, act=conv_act, norm=conv_norm,
+                                             channel_last=True)
                 setattr(self, f"decode_up_conv_{decode_i}", decode_up_conv)
         resolution_3d = np.array(resolution_3d) * 2
         decode_out_channels = decode_in_channels // 2
@@ -136,14 +137,16 @@ class InceptionResNetV2_X2CT(nn.Module):
             skip_connect_tensor = decode_skip_2d_3d(skip_connect_tensor)
             decoded = torch.cat([decoded,
                                 skip_connect_tensor], dim=-1)
-            decoded = decode_skip_conv(decoded)
+            decoded = checkpoint(decode_skip_conv, decoded,
+                                 use_reentrant=False)
 
             decode_up_trans = getattr(self, f"decode_up_trans_{decode_i}")
             decoded = decode_up_trans(decoded)
             if decode_i < 4:
                 decode_up_conv = getattr(self, f"decode_up_conv_{decode_i}")
                 decoded = decode_up_conv(decoded)
-        seg_output = self.seg_final_expanding(decoded)
+        seg_output = checkpoint(self.seg_final_expanding, decoded,
+                                use_reentrant=False)
         seg_output = self.seg_final_conv(seg_output)
         return seg_output
 
