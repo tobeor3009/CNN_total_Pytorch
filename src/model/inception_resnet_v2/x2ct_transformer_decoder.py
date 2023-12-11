@@ -24,7 +24,7 @@ class InceptionResNetV2_X2CT(nn.Module):
     def __init__(self, input_shape, seg_channels=1,
                  conv_norm="instance", conv_act="leakyrelu",
                  trans_norm=nn.LayerNorm, trans_act="relu6",
-                 cnn_block_size=16, decode_init_channel=None,
+                 cnn_block_size=16, decode_channel_list=[128, 1024, 512, 128, 64],
                  patch_size=4, depths=[2, 2, 2, 2, 2], num_heads=[4, 2, 2, 1, 1],
                  window_sizes=[2, 2, 2, 4, 4], mlp_ratio=4.0,
                  seg_act="sigmoid",
@@ -32,7 +32,7 @@ class InceptionResNetV2_X2CT(nn.Module):
         super().__init__()
 
         if decode_init_channel is None:
-            decode_init_channel = cnn_block_size * 32
+            decode_init_channel = decode_channel_list[0]
         skip_connect_channel_list = get_skip_connect_channel_list(
             cnn_block_size)
         input_shape = np.array(input_shape)
@@ -65,7 +65,7 @@ class InceptionResNetV2_X2CT(nn.Module):
             resolution_3d = (init_h // down_ratio // patch_size,
                              init_h // down_ratio // patch_size,
                              init_w // down_ratio // patch_size)
-            decode_in_channels = int(decode_init_channel)
+            decode_in_channels = decode_channel_list[decode_i]
             skip_hw = np.array(feature_hw) * (channel_down_ratio)
 
             skip_channel = skip_connect_channel_list[4 - decode_i]
