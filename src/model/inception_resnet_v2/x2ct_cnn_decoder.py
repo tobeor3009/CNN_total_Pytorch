@@ -23,12 +23,11 @@ class InceptionResNetV2_X2CT(nn.Module):
     def __init__(self, input_shape, seg_channels=1,
                  conv_norm="instance", conv_act="leakyrelu",
                  trans_norm=nn.LayerNorm, trans_act="relu6",
-                 cnn_block_size=16, decode_channel_list=[256, 768, 768, 192, 96],
-                 patch_size=4, embed_dim_list=[64, 192, 192, 96, 64],
-                 depths=[2, 2, 2, 2, 2], num_heads=[2, 3, 3, 3, 2],
-                 window_sizes=[2, 2, 2, 4, 4], mlp_ratio=4.0,
-                 seg_act="sigmoid",
-                 ):
+                 cnn_block_size=8, decode_channel_list=[128, 384, 384, 128, 64],
+                 patch_size=4, embed_dim_list=[64, 128, 128, 48, 32],
+                 depths=[2, 2, 2, 2, 2], num_heads=[2, 4, 4, 2, 2],
+                 window_sizes=[2, 2, 2, 2, 2], mlp_ratio=4.0,
+                 seg_act="sigmoid"):
         super().__init__()
 
         decode_init_channel = decode_channel_list[0]
