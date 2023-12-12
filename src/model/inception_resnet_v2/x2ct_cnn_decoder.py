@@ -23,16 +23,15 @@ class InceptionResNetV2_X2CT(nn.Module):
     def __init__(self, input_shape, seg_channels=1,
                  conv_norm="instance", conv_act="leakyrelu",
                  trans_norm=nn.LayerNorm, trans_act="relu6",
-                 cnn_block_size=16, decode_init_channel=None,
-                 patch_size=4, embed_dim=128,
-                 depths=[2, 2, 2, 2, 2], num_heads=[4, 2, 2, 1, 1],
+                 cnn_block_size=16, decode_channel_list=[256, 768, 768, 192, 96],
+                 patch_size=4, embed_dim_list=[64, 192, 192, 96, 64],
+                 depths=[2, 2, 2, 2, 2], num_heads=[2, 3, 3, 3, 2],
                  window_sizes=[2, 2, 2, 4, 4], mlp_ratio=4.0,
                  seg_act="sigmoid",
                  ):
         super().__init__()
 
-        if decode_init_channel is None:
-            decode_init_channel = cnn_block_size * 48
+        decode_init_channel = decode_channel_list[0]
         skip_connect_channel_list = get_skip_connect_channel_list(
             cnn_block_size)
         input_shape = np.array(input_shape)
@@ -56,7 +55,7 @@ class InceptionResNetV2_X2CT(nn.Module):
                                             kernel_size=1, norm=conv_norm, act=conv_act)
         self.decode_init_trans = PatchExpanding2D_3D(feature_hw=feature_hw,
                                                      in_chans=decode_init_channel,
-                                                     embed_dim=embed_dim,
+                                                     embed_dim=embed_dim_list[0],
                                                      patch_size=patch_size, depth=depths[0],
                                                      num_head=num_heads[0], window_size=window_sizes[0],
                                                      mlp_ratio=mlp_ratio, norm_layer=trans_norm,
@@ -67,10 +66,11 @@ class InceptionResNetV2_X2CT(nn.Module):
             resolution_3d = (init_h // down_ratio,
                              init_h // down_ratio,
                              init_w // down_ratio)
-            decode_in_channels = int(decode_init_channel //
-                                     channel_down_ratio)
-            decode_out_channels = int(decode_in_channels // 2)
-
+            decode_in_channels = decode_channel_list[decode_i]
+            if decode_i == 4:
+                decode_out_channels = int(decode_in_channels // 2)
+            else:
+                decode_out_channels = decode_channel_list[decode_i + 1]
             skip_hw = np.array(feature_hw) * (channel_down_ratio)
             skip_channel = skip_connect_channel_list[4 - decode_i]
             skip_2d_conv = ConvBlock2D(in_channels=skip_channel,
@@ -78,7 +78,7 @@ class InceptionResNetV2_X2CT(nn.Module):
                                        kernel_size=1, norm=conv_norm, act=conv_act)
             skip_2d_3d = PatchExpanding2D_3D(feature_hw=skip_hw,
                                              in_chans=decode_in_channels,
-                                             embed_dim=embed_dim,
+                                             embed_dim=embed_dim_list[decode_i],
                                              patch_size=patch_size, depth=depths[decode_i],
                                              num_head=num_heads[decode_i],
                                              window_size=window_sizes[decode_i],
