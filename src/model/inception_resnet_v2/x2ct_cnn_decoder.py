@@ -108,7 +108,8 @@ class InceptionResNetV2_X2CT(nn.Module):
                                               act=seg_act, use_highway=False)
 
     def forward(self, input_tensor):
-        encode_feature = self.base_model(input_tensor)
+        encode_feature = checkpoint(self.base_model, input_tensor,
+                                    use_reentrant=USE_REENTRANT)
         decoded = encode_feature
         decoded = self.decode_init_conv(decoded)
         decoded = self.decode_init_trans(decoded)
