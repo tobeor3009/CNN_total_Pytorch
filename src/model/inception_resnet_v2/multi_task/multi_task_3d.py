@@ -260,10 +260,7 @@ class InceptionResNetV2MultiTask3DV2(nn.Module):
                                                        act=seg_act, use_highway=False)
         self.classfication_head_list = nn.ModuleList([])
         for idx, class_channel in enumerate(class_channel_list):
-            if idx == 0:
-                class_input_channel = skip_connect_channel_list[0]
-            else:
-                class_input_channel = feature_channel_num
+            class_input_channel = feature_channel_num
             if use_class_head_simple:
                 classfication_head = ClassificationHeadSimple(class_input_channel,
                                                               class_channel,
@@ -348,11 +345,7 @@ class InceptionResNetV2MultiTask3DV2(nn.Module):
         if self.get_class:
             class_output_list = []
             for idx, classfication_head in enumerate(self.classfication_head_list):
-                if idx == 0:
-                    class_feature = getattr(self.base_model,
-                                            f"skip_connect_tensor_0")
-                else:
-                    class_feature = encode_feature
+                class_feature = encode_feature
                 class_output = classfication_head(class_feature)
                 class_output_list.append(class_output)
             class_output_list = torch.concat(class_output_list, dim=1)
