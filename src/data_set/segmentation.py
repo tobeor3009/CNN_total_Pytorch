@@ -66,7 +66,7 @@ class SegDataset(BaseDataset):
                                  policy=self.imread_policy["image"],
                                  channel=self.image_channel)
             mask_array = imread(mask_path,
-                                policy=self.imread_policy["mask"],,
+                                policy=self.imread_policy["mask"],
                                 channel=self.mask_channel)
 
             image_array = get_resized_array(image_array,
