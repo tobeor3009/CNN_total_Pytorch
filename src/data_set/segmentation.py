@@ -15,6 +15,7 @@ class SegDataset(BaseDataset):
     def __init__(self,
                  image_path_list=None,
                  mask_path_list=None,
+                 imread_policy={"image": None, "mask": None},
                  on_memory=False,
                  augmentation_proba=False,
                  augmentation_policy_dict=base_augmentation_policy_dict,
@@ -28,6 +29,7 @@ class SegDataset(BaseDataset):
         self.image_path_list = [image_path for image_path in image_path_list]
         self.mask_path_list = [mask_path for mask_path in mask_path_list]
 
+        self.imread_policy = imread_policy
         self.on_memory = on_memory
         self.is_data_ready = False if on_memory else True
         self.augmentation_proba = augmentation_proba
@@ -60,8 +62,12 @@ class SegDataset(BaseDataset):
             image_path = self.image_path_list[current_index]
             mask_path = self.mask_path_list[current_index]
 
-            image_array = imread(image_path, channel=self.image_channel)
-            mask_array = imread(mask_path, channel=self.mask_channel)
+            image_array = imread(image_path,
+                                 policy=self.imread_policy["image"],
+                                 channel=self.image_channel)
+            mask_array = imread(mask_path,
+                                policy=self.imread_policy["mask"],,
+                                channel=self.mask_channel)
 
             image_array = get_resized_array(image_array,
                                             self.target_size,

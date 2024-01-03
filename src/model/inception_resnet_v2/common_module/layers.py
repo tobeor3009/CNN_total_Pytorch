@@ -11,6 +11,15 @@ INPLACE = False
 DEFAULT_ACT = "relu6"
 
 
+class SwishBeta(nn.Module):
+    def __init__(self):
+        super(SwishBeta, self).__init__()
+        self.beta = nn.Parameter(torch.as_tensor(1))
+
+    def forward(self, x):
+        return x * torch.sigmoid(self.beta * x)
+
+
 def get_act(act):
     if isinstance(act, nn.Module) or callable(act):
         act = act
@@ -19,11 +28,15 @@ def get_act(act):
     elif act == 'relu':
         act = nn.ReLU(inplace=INPLACE)
     elif act == "leakyrelu":
-        act = nn.LeakyReLU(0.1)
+        act = nn.LeakyReLU(0.1, inplace=INPLACE)
     elif act == "gelu":
         act = nn.GELU()
     elif act == "mish":
-        act = nn.Mish()
+        act = nn.Mish(inplace=INPLACE)
+    elif act == "silu":
+        act = nn.SiLU(inplace=INPLACE)
+    elif act == "silu-beta":
+        act = SwishBeta()
     elif act == "sigmoid":
         act = torch.sigmoid
     elif act == "tanh":
@@ -153,27 +166,6 @@ class ConvBlock1D(nn.Module):
         act = self.act_layer(norm)
         if self.channel_last:
             act = act.permute(0, 2, 1)
-        return act
-
-
-class ConvBlock2D(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size,
-                 stride=1, padding='same',
-                 norm="batch", groups=1, act=DEFAULT_ACT, bias=False, name=None):
-        super().__init__()
-        self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
-                              kernel_size=kernel_size, stride=stride, padding=padding,
-                              groups=groups,  bias=bias)
-        if not bias:
-            self.norm_layer = get_norm(norm, out_channels, mode="2d")
-        else:
-            self.norm_layer = nn.Identity()
-        self.act_layer = get_act(act)
-
-    def forward(self, x):
-        conv = self.conv(x)
-        norm = self.norm_layer(conv)
-        act = self.act_layer(norm)
         return act
 
 
