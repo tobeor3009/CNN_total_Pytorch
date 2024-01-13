@@ -119,8 +119,15 @@ def get_loss_fn(loss_select):
         region_loss = get_tversky_bce_loss
     elif loss_select == "propotional_bce":
         region_loss = get_propotional_bce_loss
+
+    def final_loss_fn(y_pred, y_true):
+        C = y_true.shape[1]
+        if C > 1:
+            y_pred = y_pred[:, 1:]
+            y_true = y_true[:, 1:]
+        return region_loss(y_pred, y_true)
 #     pointwise_loss = get_bce_loss(y_pred, y_true, per_image=True)
-    return region_loss
+    return final_loss_fn
 
 
 def get_dice_score(y_pred, y_true, mask_threshold=0.5):
