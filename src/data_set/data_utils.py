@@ -70,8 +70,6 @@ def get_resized_array(image_array, target_size, interpolation):
                                          dsize=target_size,
                                          interpolation=INTER_DICT[interpolation]
                                          )
-    if len(image_resized_array.shape) == 2:
-        image_resized_array = np.expand_dims(image_resized_array, axis=-1)
     return image_resized_array
 
 
