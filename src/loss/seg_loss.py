@@ -96,24 +96,24 @@ def get_propotional_loss(y_pred, y_true, axis=AXIS, log=False, per_image=False, 
 
 
 def get_dice_bce_loss(y_pred, y_true, axis=AXIS):
-    return get_bce_loss(y_pred, y_true, axis=axis) + get_dice_loss(y_pred, y_true, axis=axis)
+    return get_bce_loss(y_pred, y_true) + get_dice_loss(y_pred, y_true, axis=axis)
 
 def get_tversky_bce_loss(y_pred, y_true, axis=AXIS):
-    return get_bce_loss(y_pred, y_true, axis=axis) + get_tversky_loss(y_pred, y_true, axis=axis)
+    return get_bce_loss(y_pred, y_true) + get_tversky_loss(y_pred, y_true, axis=axis)
 
 
 def get_propotional_bce_loss(y_pred, y_true, axis=AXIS):
-    return get_bce_loss(y_pred, y_true, axis=axis) + get_propotional_loss(y_pred, y_true, axis=axis)
+    return get_bce_loss(y_pred, y_true) + get_propotional_loss(y_pred, y_true, axis=axis)
 
 def get_dice_focal_loss(y_pred, y_true, axis=AXIS):
-    return get_focal_loss(y_pred, y_true, axis=axis) + get_dice_loss(y_pred, y_true, axis=axis)
+    return get_focal_loss(y_pred, y_true) + get_dice_loss(y_pred, y_true, axis=axis)
 
 def get_tversky_focal_loss(y_pred, y_true, axis=AXIS):
-    return get_focal_loss(y_pred, y_true, axis=axis) + get_tversky_loss(y_pred, y_true, axis=axis)
+    return get_focal_loss(y_pred, y_true) + get_tversky_loss(y_pred, y_true, axis=axis)
 
 
 def get_propotional_focal_loss(y_pred, y_true, axis=AXIS):
-    return get_focal_loss(y_pred, y_true, axis=axis) + get_propotional_loss(y_pred, y_true, axis=axis)
+    return get_focal_loss(y_pred, y_true) + get_propotional_loss(y_pred, y_true, axis=axis)
 
 
 def get_loss_fn(loss_select, axis=AXIS):
