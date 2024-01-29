@@ -14,7 +14,7 @@ DEFAULT_ACT = "relu6"
 class SwishBeta(nn.Module):
     def __init__(self):
         super(SwishBeta, self).__init__()
-        self.beta = nn.Parameter(torch.as_tensor(1))
+        self.beta = nn.Parameter(torch.as_tensor(1.0))
 
     def forward(self, x):
         return x * torch.sigmoid(self.beta * x)
