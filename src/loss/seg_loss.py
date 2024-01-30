@@ -1,7 +1,6 @@
 import torch
 import torch.optim.lr_scheduler as lr_scheduler
 from functools import partial
-AXIS = [2, 3]
 SMOOTH = 1e-7
 
 def get_clip(y_pred, y_true, smooth):
