@@ -81,7 +81,7 @@ def get_tversky_loss(y_pred, y_true, beta=0.7, log=False, per_image=False, smoot
 def get_propotional_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH, beta=0.3):
     
     axis = get_seg_dim(y_true)
-    y_pred, y_true, y_true_rev, y_pred_rev = get_clip(y_pred, y_true, smooth)
+    y_true_rev, y_pred_rev = 1 - y_true, 1 - y_pred 
     alpha = 1 - beta
     prevalence = torch.mean(y_true, dim=axis)
 
