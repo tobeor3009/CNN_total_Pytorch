@@ -78,7 +78,7 @@ def get_tversky_loss(y_pred, y_true, beta=0.7, log=False, per_image=False, smoot
         return torch.mean(dice_score_per_image)
 
 
-def get_propotional_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH, beta=0.3):
+def get_propotional_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH, beta=0.75):
     
     y_pred, y_true, y_true_rev, y_pred_rev = get_clip(y_pred, y_true, smooth)
     
