@@ -2,7 +2,6 @@
 from glob import glob
 from typing import Any
 # external module
-import torch
 import numpy as np
 import random
 
