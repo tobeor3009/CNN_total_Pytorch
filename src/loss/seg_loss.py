@@ -80,20 +80,27 @@ def get_tversky_loss(y_pred, y_true, beta=0.7, log=False, per_image=False, smoot
 
 def get_propotional_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH, beta=0.3):
     
-    axis = get_seg_dim(y_true)
     y_pred, y_true, y_true_rev, y_pred_rev = get_clip(y_pred, y_true, smooth)
+    
+    num_dims = len(y_true.shape)
+    axis = tuple(range(2, num_dims))
+    
     alpha = 1 - beta
     prevalence = torch.mean(y_true, dim=axis)
+    prevalence = 2 * torch.sigmoid(100 * prevalence) - 1
+    negative_ratio = 1 - prevalence
+    positive_ratio = prevalence
 
     tp = torch.sum(y_true * y_pred, dim=axis)
     tn = torch.sum(y_true_rev * y_pred_rev, dim=axis)
     fp = torch.sum(y_pred, dim=axis) - tp
     fn = torch.sum(y_true, dim=axis) - tp
-    negative_score = (tn + smooth) \
-        / (tn + beta * fn + alpha * fp + smooth) * (smooth + 1 - prevalence)
-    positive_score = (tp + smooth) \
-        / (tp + alpha * fn + beta * fp + smooth) * (smooth + prevalence)
-    score_per_image = negative_score + positive_score
+    
+    negative_score = (tn + smooth) / (tn + beta * fn + alpha * fp + smooth)
+    positive_score = (tp + smooth) / (tp + alpha * fn + beta * fp + smooth)
+    negative_score_propo = negative_score * negative_ratio
+    positive_score_propo = positive_score * positive_ratio
+    score_per_image = negative_score_propo + positive_score_propo
 
     if log:
         score_per_image = -1 * torch.log(score_per_image)
@@ -104,6 +111,7 @@ def get_propotional_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOO
         return score_per_image
     else:
         return torch.mean(score_per_image)
+
 
 
 def get_dice_bce_loss(y_pred, y_true):
