@@ -10,6 +10,12 @@ def get_clip(y_pred, y_true, smooth):
     y_pred_rev = torch.clamp(1 - y_pred, min=smooth)
     return y_pred, y_true, y_true_rev, y_pred_rev
 
+def get_rev(y_pred, y_true):
+    y_pred_rev = 1 - y_pred
+    y_true_rev = 1 - y_true
+    return y_pred_rev, y_true_rev
+
+
 def get_seg_dim(tensor):
     num_dims = len(tensor.shape)
     axis = tuple(range(2, num_dims))
@@ -41,8 +47,6 @@ def get_focal_loss(y_pred, y_true, per_image=False, gamma=2.0, smooth=SMOOTH):
 
 def get_dice_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH):
     axis = get_seg_dim(y_true)
-    y_true = torch.clamp(y_true, min=smooth)
-    y_pred = torch.clamp(y_pred, min=smooth)    
     tp = torch.sum(y_true * y_pred, axis=axis)
     fp = torch.sum(y_pred, axis=axis) - tp
     fn = torch.sum(y_true, axis=axis) - tp
@@ -60,8 +64,6 @@ def get_dice_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH):
 
 def get_tversky_loss(y_pred, y_true, beta=0.7, log=False, per_image=False, smooth=SMOOTH):
     axis = get_seg_dim(y_true)
-    y_true = torch.clamp(y_true, min=smooth)
-    y_pred = torch.clamp(y_pred, min=smooth)
     alpha = 1 - beta
     tp = torch.sum(y_true * y_pred, axis=axis)
     fp = torch.sum(y_pred, axis=axis) - tp
@@ -80,8 +82,7 @@ def get_tversky_loss(y_pred, y_true, beta=0.7, log=False, per_image=False, smoot
 
 def get_propotional_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH, beta=0.75):
     
-    y_pred, y_true, y_true_rev, y_pred_rev = get_clip(y_pred, y_true, smooth)
-    
+    y_true_rev, y_pred_rev = get_rev(y_pred, y_true)
     num_dims = len(y_true.shape)
     axis = tuple(range(2, num_dims))
     
