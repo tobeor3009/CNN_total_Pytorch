@@ -88,7 +88,7 @@ def get_propotional_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOO
     
     alpha = 1 - beta
     prevalence = torch.mean(y_true, dim=axis)
-    prevalence = 2 * torch.sigmoid(100 * prevalence) - 1
+    prevalence = 2 * torch.sigmoid(prevalence) - 1
     negative_ratio = 1 - prevalence
     positive_ratio = prevalence
 
@@ -112,8 +112,6 @@ def get_propotional_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOO
         return score_per_image
     else:
         return torch.mean(score_per_image)
-
-
 
 def get_dice_bce_loss(y_pred, y_true):
     return get_bce_loss(y_pred, y_true) + get_dice_loss(y_pred, y_true)
@@ -172,3 +170,14 @@ def get_dice_score(y_pred, y_true, mask_threshold=0.5):
     dice_loss = get_dice_loss(y_pred, y_true, log=False, per_image=False)
     dice_score = 1 - dice_loss
     return dice_score
+
+def accuracy_metric(preds, gt):
+    # 예측된 클래스 얻기 (가장 높은 확률을 가진 클래스)
+    predicted_classes = torch.argmax(preds, dim=1)
+    # Ground truth 클래스 얻기
+    true_classes = torch.argmax(gt, dim=1)
+    # 정확하게 분류된 샘플 수 계산
+    corrects = (predicted_classes == true_classes).sum()
+    # 정확도 계산
+    accuracy = corrects / len(gt)
+    return accuracy
