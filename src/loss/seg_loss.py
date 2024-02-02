@@ -62,7 +62,7 @@ def get_dice_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH):
         return torch.mean(dice_score_per_image)
 
 
-def get_tversky_loss(y_pred, y_true, beta=0.7, log=False, per_image=False, smooth=SMOOTH):
+def get_tversky_loss(y_pred, y_true, beta=0.3, log=False, per_image=False, smooth=SMOOTH):
     axis = get_seg_dim(y_true)
     alpha = 1 - beta
     tp = torch.sum(y_true * y_pred, axis=axis)
@@ -129,10 +129,17 @@ def get_dice_focal_loss(y_pred, y_true):
 def get_tversky_focal_loss(y_pred, y_true):
     return get_focal_loss(y_pred, y_true) + get_tversky_loss(y_pred, y_true)
 
-
 def get_propotional_focal_loss(y_pred, y_true):
     return get_focal_loss(y_pred, y_true) + get_propotional_loss(y_pred, y_true)
 
+def get_dice_bce_focal_loss(y_pred, y_true):
+    return get_bce_loss(y_pred, y_true) + get_focal_loss(y_pred, y_true) + get_dice_loss(y_pred, y_true)
+
+def get_tversky_bce_focal_loss(y_pred, y_true):
+    return get_bce_loss(y_pred, y_true) + get_focal_loss(y_pred, y_true) + get_tversky_loss(y_pred, y_true)
+
+def get_propotional_bce_focal_loss(y_pred, y_true):
+    return get_bce_loss(y_pred, y_true) + get_focal_loss(y_pred, y_true) + get_propotional_loss(y_pred, y_true)
 
 def get_loss_fn(loss_select):
     if loss_select == "dice":
@@ -154,11 +161,11 @@ def get_loss_fn(loss_select):
     elif loss_select == "propotional_focal":
         region_loss = partial(get_propotional_focal_loss)
     elif loss_select == "dice_bce_focal":
-        region_loss = partial(get_dice_focal_loss)
+        region_loss = partial(get_dice_bce_focal_loss)
     elif loss_select == "tversky_bce_focal":
-        region_loss = partial(get_tversky_focal_loss)
+        region_loss = partial(get_tversky_bce_focal_loss)
     elif loss_select == "propotional_bce_focal":
-        region_loss = partial(get_propotional_focal_loss)
+        region_loss = partial(get_propotional_bce_focal_loss)
 
     def final_loss_fn(y_pred, y_true):
         C = y_true.shape[1]
