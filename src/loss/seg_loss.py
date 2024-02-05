@@ -21,6 +21,17 @@ def get_seg_dim(tensor):
     axis = tuple(range(2, num_dims))
     return axis
 
+def get_bce_loss_class(y_pred, y_true, per_image=False, smooth=SMOOTH):
+    axis = 1
+    y_pred, y_true, y_true_rev, y_pred_rev = get_clip(y_pred, y_true, smooth)
+    gt_negative_term = -(y_true_rev) * torch.log(y_pred_rev)
+    gt_positive_term = -y_true * torch.log(y_pred)
+    per_image_loss = torch.mean(gt_positive_term + gt_negative_term, dim=axis)
+    if per_image:
+        return per_image_loss
+    else:
+        return torch.mean(per_image_loss)
+    
 def get_bce_loss(y_pred, y_true, per_image=False, smooth=SMOOTH):
     axis = get_seg_dim(y_true)
     y_pred, y_true, y_true_rev, y_pred_rev = get_clip(y_pred, y_true, smooth)
@@ -32,6 +43,17 @@ def get_bce_loss(y_pred, y_true, per_image=False, smooth=SMOOTH):
     else:
         return torch.mean(per_image_loss)
 
+
+def get_focal_loss_class(y_pred, y_true, per_image=False, gamma=2.0, smooth=SMOOTH):
+    axis = 1
+    y_pred, y_true, y_true_rev, y_pred_rev = get_clip(y_pred, y_true, smooth)
+    gt_negative_term = -(y_pred ** gamma) * (y_true_rev) * torch.log(y_pred_rev)
+    gt_positive_term = -(y_pred_rev ** gamma) * y_true * torch.log(y_pred)
+    per_image_loss = torch.mean(gt_positive_term + gt_negative_term, dim=axis)
+    if per_image:
+        return per_image_loss
+    else:
+        return torch.mean(per_image_loss)
 
 def get_focal_loss(y_pred, y_true, per_image=False, gamma=2.0, smooth=SMOOTH):
     axis = get_seg_dim(y_true)
