@@ -1,5 +1,4 @@
 import torch
-import torch.optim.lr_scheduler as lr_scheduler
 from functools import partial
 SMOOTH = 1e-7
 
