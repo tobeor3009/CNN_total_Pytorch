@@ -36,7 +36,7 @@ elastic_tranform = A.ElasticTransform(always_apply=False, p=0.5,
                                       alpha_affine=2.009999990463257, interpolation=1, border_mode=1,
                                       value=(0, 0, 0), mask_value=None, approximate=False)
 
-brightness_value = 0.05
+brightness_value = 0.2
 brightness_contrast_transform = A.OneOf([
     A.RandomBrightnessContrast(
         brightness_limit=(-brightness_value, brightness_value),
