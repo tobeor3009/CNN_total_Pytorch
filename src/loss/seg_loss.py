@@ -83,7 +83,8 @@ def get_dice_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH):
         return torch.mean(dice_score_per_image)
 
 
-def get_tversky_loss(y_pred, y_true, beta=0.7, log=False, per_image=False, smooth=SMOOTH):
+def get_tversky_loss(y_pred, y_true, beta=0.3, 
+                     log=False, per_image=False, smooth=SMOOTH):
     axis = get_seg_dim(y_true)
     alpha = 1 - beta
     tp = torch.sum(y_true * y_pred, axis=axis)
@@ -101,7 +102,8 @@ def get_tversky_loss(y_pred, y_true, beta=0.7, log=False, per_image=False, smoot
         return torch.mean(dice_score_per_image)
 
 
-def get_propotional_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH, beta=0.7):
+def get_propotional_loss(y_pred, y_true, beta=0.3,
+                         log=False, per_image=False, smooth=SMOOTH):
     
     y_true_rev, y_pred_rev = get_rev(y_pred, y_true)
     num_dims = len(y_true.shape)
