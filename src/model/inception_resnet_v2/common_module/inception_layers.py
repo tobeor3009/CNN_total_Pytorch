@@ -87,6 +87,7 @@ class Inception_Resnet_Block3D(nn.Module):
     def __init__(self, in_channels, scale, block_type, block_size=16,
                  norm="batch", act=DEFAULT_ACT, include_context=False, context_head_nums=8):
         super().__init__()
+        self.scale = scale
         if block_type == 'block35':
             branch_0 = ConvBlock3D(in_channels, block_size * 2, 1,
                                    norm=norm, act=act)
@@ -141,15 +142,12 @@ class Inception_Resnet_Block3D(nn.Module):
         # TBD: Name?
         self.up = ConvBlock3D(mixed_channel, in_channels, 1,
                               bias=True, norm=norm, act=None)
-        # TBD: implement of include_context
-        self.residual_add = LambdaLayer(
-            lambda inputs: inputs[0] + inputs[1] * scale)
         self.act = get_act(act)
 
     def forward(self, x):
         mixed = self.mixed(x)
         up = self.up(mixed)
-        residual_add = self.residual_add([x, up])
+        residual_add = x + up * self.scale
         act = self.act(residual_add)
 
         return act
