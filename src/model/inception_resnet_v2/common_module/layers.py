@@ -233,8 +233,8 @@ class ConcatBlock(nn.Module):
         self.layer_list = nn.ModuleList(layer_list)
         self.dim = dim
 
-    def forward(self, x):
-        tensor_list = [layer(x) for layer in self.layer_list]
+    def forward(self, *args, **kwargs):
+        tensor_list = [layer(*args, **kwargs) for layer in self.layer_list]
         return torch.cat(tensor_list, self.dim)
 
 
