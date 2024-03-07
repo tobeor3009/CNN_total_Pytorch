@@ -57,7 +57,7 @@ class LinearAttention(nn.Module):
 class Attention(nn.Module):
     def __init__(self, dim, num_heads=4, dim_head=None):
         super().__init__()
-        self.heads = num_heads
+        self.num_heads = num_heads
         if dim_head is None:
             dim_head = dim
         self.dim_head = dim_head
