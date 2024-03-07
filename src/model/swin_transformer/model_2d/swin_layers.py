@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
+from timm.models.layers import trunc_normal_
 from timm.models.layers import DropPath, to_2tuple
 import numpy as np
 from ..layers import get_act
