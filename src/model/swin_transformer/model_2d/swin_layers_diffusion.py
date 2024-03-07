@@ -24,10 +24,10 @@ def extract(target_list, t, x_shape):
     return out.reshape(batch_size, *((1,) * (len(x_shape) - 1)))
 
 class LinearAttention(nn.Module):
-    def __init__(self, dim, heads=4, dim_head=None):
+    def __init__(self, dim, num_heads=4, dim_head=None):
         super().__init__()
 
-        self.heads = heads
+        self.num_heads = num_heads
         if dim_head is None:
             dim_head = dim
         self.dim_head = dim_head
@@ -42,7 +42,7 @@ class LinearAttention(nn.Module):
     def forward(self, x):
         b, n, c = x.shape
         qkv = self.to_qkv(x)
-        qkv = qkv.reshape(b, n, 3, self.heads, self.dim_head // self.heads).permute(2, 0, 3, 1, 4)
+        qkv = qkv.reshape(b, n, 3, self.num_heads, self.dim_head // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]  
         
         k = k.softmax(dim=-2)
@@ -229,7 +229,7 @@ class SwinTransformerBlock(nn.Module):
 class AttnBlock(nn.Module):
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=DEFAULT_ACT, norm_layer=nn.LayerNorm, pretrained_window_size=0):
+                 act_layer=DEFAULT_ACT, norm_layer=nn.LayerNorm, pretrained_window_size=0, full_attn=False):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -237,7 +237,8 @@ class AttnBlock(nn.Module):
         self.mlp_ratio = mlp_ratio
 
         self.norm1 = norm_layer(dim)
-        self.attn = Attention(dim, num_heads=num_heads)
+        attn_layer = Attention if full_attn else LinearAttention 
+        self.attn = attn_layer(dim, num_heads=num_heads)
 
         self.drop_path = DropPath(
             drop_path) if drop_path > 0. else nn.Identity()
@@ -534,7 +535,7 @@ class AttnLayer(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
-                 use_checkpoint=False, pretrained_window_size=0, time_emb_dim=None):
+                 use_checkpoint=False, pretrained_window_size=0, time_emb_dim=None, full_attn=False):
 
         super().__init__()
         self.dim = dim
@@ -581,7 +582,8 @@ class AttnLayer(nn.Module):
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
                                  norm_layer=norm_layer,
-                                 pretrained_window_size=pretrained_window_size)
+                                 pretrained_window_size=pretrained_window_size,
+                                 full_attn=full_attn)
             for i in range(depth)])
         
     def forward(self, x, time_emb=None):
