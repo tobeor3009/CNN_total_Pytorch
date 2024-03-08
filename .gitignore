@@ -13,6 +13,6 @@ ckpts/
 *.cu
 *.db
 .vscode
-temp.py
+temp*.py
 __pycache__
 .ipynb_checkpoints
