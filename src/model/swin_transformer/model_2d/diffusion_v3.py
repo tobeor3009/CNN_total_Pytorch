@@ -82,6 +82,11 @@ class SwinDiffusion(nn.Module):
             in_chans = in_chans * 2
 
         time_emb_dim = embed_dim * 8
+        if exists(num_class_embeds):
+            class_emb_dim = embed_dim * 8
+        else:
+            class_emb_dim = None
+
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmb(time_emb_dim // 2),
             nn.Linear(time_emb_dim // 2, time_emb_dim),
@@ -132,7 +137,7 @@ class SwinDiffusion(nn.Module):
                                             use_checkpoint=use_checkpoint,
                                             pretrained_window_size=pretrained_window_sizes[0],
                                             time_emb_dim=time_emb_dim,
-                                            class_emb_dim=time_emb_dim,
+                                            class_emb_dim=class_emb_dim,
                                             use_residual=False)
         self.cond_init_conv = SkipConv1D(embed_dim, embed_dim * 2)
         # build layers
@@ -162,7 +167,7 @@ class SwinDiffusion(nn.Module):
                                 use_checkpoint=use_checkpoint,
                                 pretrained_window_size=pretrained_window_sizes[i_layer],
                                 time_emb_dim=time_emb_dim,
-                                class_emb_dim=time_emb_dim)
+                                class_emb_dim=class_emb_dim)
             layer_2 = deepcopy(layer_1)
             layer_3 = CondLayer(dim=layer_dim,
                                 input_resolution=feature_resolution,
@@ -179,7 +184,7 @@ class SwinDiffusion(nn.Module):
                                 use_checkpoint=use_checkpoint,
                                 pretrained_window_size=pretrained_window_sizes[i_layer],
                                 time_emb_dim=time_emb_dim,
-                                class_emb_dim=time_emb_dim)
+                                class_emb_dim=class_emb_dim)
 
             cond_layer_1 = BasicLayerV2(dim=cond_layer_dim,
                                         input_resolution=feature_resolution,
@@ -196,7 +201,7 @@ class SwinDiffusion(nn.Module):
                                         use_checkpoint=use_checkpoint,
                                         pretrained_window_size=pretrained_window_sizes[i_layer],
                                         time_emb_dim=time_emb_dim,
-                                        class_emb_dim=time_emb_dim,
+                                        class_emb_dim=class_emb_dim,
                                         use_residual=False)
             cond_layer_2 = deepcopy(cond_layer_1)
             cond_layer_3 = BasicLayerV2(dim=cond_layer_dim,
@@ -214,7 +219,7 @@ class SwinDiffusion(nn.Module):
                                         use_checkpoint=use_checkpoint,
                                         pretrained_window_size=pretrained_window_sizes[i_layer],
                                         time_emb_dim=time_emb_dim,
-                                        class_emb_dim=time_emb_dim,
+                                        class_emb_dim=class_emb_dim,
                                         use_residual=False)
             self.encode_layers_1.append(layer_1)
             self.encode_layers_2.append(layer_2)
@@ -240,7 +245,7 @@ class SwinDiffusion(nn.Module):
                                     use_checkpoint=use_checkpoint,
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
-                                    class_emb_dim=time_emb_dim,
+                                    class_emb_dim=class_emb_dim,
                                     use_residual=True)
         
         self.skip_conv_layers_1 = nn.ModuleList() 
@@ -270,7 +275,7 @@ class SwinDiffusion(nn.Module):
                                     use_checkpoint=use_checkpoint,
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
-                                    class_emb_dim=time_emb_dim)
+                                    class_emb_dim=class_emb_dim)
             layer_2 = deepcopy(layer_1)
             layer_3 = BasicLayerV2(dim=layer_dim,
                                     input_resolution=feature_resolution,
@@ -288,7 +293,7 @@ class SwinDiffusion(nn.Module):
                                     use_checkpoint=use_checkpoint,
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
-                                    class_emb_dim=time_emb_dim,
+                                    class_emb_dim=class_emb_dim,
                                     use_residual=True)
             self.skip_conv_layers_1.append(skip_conv_layer_1)
             self.skip_conv_layers_2.append(skip_conv_layer_2)  
