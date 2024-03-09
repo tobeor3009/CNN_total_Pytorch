@@ -157,7 +157,7 @@ class SwinTransformerBlock(nn.Module):
 
         self.register_buffer("attn_mask", attn_mask)
 
-    def forward(self, x, scale_shift=None):
+    def forward(self, x, scale_shift_list=None):
         H, W = self.input_resolution
         B, L, C = x.shape
         assert L == H * W, f"input feature has wrong size, {L} != {H}, {W}"
@@ -203,9 +203,10 @@ class SwinTransformerBlock(nn.Module):
         # FFN
         x = x + self.drop_path(self.norm2(self.mlp(x)))
 
-        if exists(scale_shift):
-            scale, shift = scale_shift
-            x = x * (scale + 1) + shift
+        if exists(scale_shift_list):
+            for scale_shift in scale_shift_list:
+                scale, shift = scale_shift
+                x = x * (scale + 1) + shift
         if self.use_residual:
             return shortcut + x
         else:
@@ -288,7 +289,7 @@ class CondBlock(nn.Module):
 
         self.register_buffer("attn_mask", attn_mask)
 
-    def forward(self, x, scale_shift=None, cond_scale_shift=None):
+    def forward(self, x, scale_shift_list=None):
         H, W = self.input_resolution
         B, L, C = x.shape
         assert L == H * W, f"input feature has wrong size, {L} != {H}, {W}"
@@ -333,13 +334,10 @@ class CondBlock(nn.Module):
 
         # FFN
         x = x + self.drop_path(self.norm2(self.mlp(x)))
-
-        if exists(scale_shift):
-            scale, shift = scale_shift
-            x = x * (scale + 1) + shift
-        if exists(cond_scale_shift):
-            cond_scale, cond_shift = cond_scale_shift
-            x = x * (cond_scale + 1) + cond_shift
+        if exists(scale_shift_list):
+            for scale_shift in scale_shift_list:
+                scale, shift = scale_shift
+                x = x * (scale + 1) + shift
         return shortcut + x
 
     def extra_repr(self) -> str:
@@ -382,7 +380,7 @@ class AttnBlock(nn.Module):
                        act_layer=act_layer, drop=drop)
 
 
-    def forward(self, x, scale_shift=None):
+    def forward(self, x, scale_shift_list=None):
         H, W = self.input_resolution
         B, L, C = x.shape
         assert L == H * W, f"input feature has wrong size, {L} != {H}, {W}"
@@ -394,9 +392,10 @@ class AttnBlock(nn.Module):
         # FFN
         x = x + self.drop_path(self.norm2(self.mlp(x)))
 
-        if exists(scale_shift):
-            scale, shift = scale_shift
-            x = x * (scale + 1) + shift
+        if exists(scale_shift_list):
+            for scale_shift in scale_shift_list:
+                scale, shift = scale_shift
+                x = x * (scale + 1) + shift
             
         return shortcut + x
 
@@ -423,7 +422,7 @@ class BasicLayerV1(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
-                 use_checkpoint=False, pretrained_window_size=0, time_emb_dim=None):
+                 use_checkpoint=False, pretrained_window_size=0, time_emb_dim=None, class_emb_dim=None):
 
         super().__init__()
         self.dim = dim
@@ -432,11 +431,14 @@ class BasicLayerV1(nn.Module):
         self.depth = depth
         self.use_checkpoint = use_checkpoint
 
-        self.mlp = nn.Sequential(
+        self.time_mlp = nn.Sequential(
             nn.SiLU(),
             nn.Linear(time_emb_dim, dim * 2)
         ) if exists(time_emb_dim) else None
-
+        self.class_mlp = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(class_emb_dim, dim * 2)
+        ) if exists(class_emb_dim) else None
         # build blocks
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
@@ -474,15 +476,20 @@ class BasicLayerV1(nn.Module):
         else:
             self.upsample = None
         
-    def forward(self, x, time_emb=None):
-        scale_shift = None
-        if exists(self.mlp) and exists(time_emb):
-            time_emb = self.mlp(time_emb)
+    def forward(self, x, time_emb=None, class_emb=None):
+        scale_shift_list = None
+        if exists(self.time_mlp) and exists(time_emb):
+            time_emb = self.time_mlp(time_emb)
             time_emb = rearrange(time_emb, 'b c -> b 1 c')
-            scale_shift = time_emb.chunk(2, dim = 2)
+            time_scale_shift = time_emb.chunk(2, dim = 2)
+        if exists(self.class_mlp) and exists(class_emb):
+            class_emb = self.class_mlp(class_emb)
+            class_emb = rearrange(class_emb, 'b c -> b 1 c')
+            class_scale_shift = class_emb.chunk(2, dim = 2)
+        scale_shift_list = [time_scale_shift, class_scale_shift]
         for idx, blk in enumerate(self.blocks):
             if idx == 0:
-                blk_scale_shift = scale_shift
+                blk_scale_shift = scale_shift_list
             else:
                 blk_scale_shift = None
             if self.use_checkpoint:
@@ -527,7 +534,8 @@ class BasicLayerV2(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
-                 use_checkpoint=False, pretrained_window_size=0, time_emb_dim=None, use_residual=True):
+                 use_checkpoint=False, pretrained_window_size=0, 
+                 time_emb_dim=None, class_emb_dim=None, use_residual=True):
 
         super().__init__()
         self.dim = dim
@@ -557,10 +565,14 @@ class BasicLayerV2(nn.Module):
         else:
             self.upsample = None
 
-        self.mlp = nn.Sequential(
+        self.time_mlp = nn.Sequential(
             nn.SiLU(),
             nn.Linear(time_emb_dim, dim * 2)
         ) if exists(time_emb_dim) else None
+        self.class_mlp = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(class_emb_dim, dim * 2)
+        ) if exists(class_emb_dim) else None
 
         # build blocks
         self.blocks = nn.ModuleList([
@@ -578,12 +590,17 @@ class BasicLayerV2(nn.Module):
                                  use_residual=use_residual)
             for i in range(depth)])
         
-    def forward(self, x, time_emb=None):
-        scale_shift = None
-        if exists(self.mlp) and exists(time_emb):
-            time_emb = self.mlp(time_emb)
+    def forward(self, x, time_emb=None, class_emb=None):
+        scale_shift_list = None
+        if exists(self.time_mlp) and exists(time_emb):
+            time_emb = self.time_mlp(time_emb)
             time_emb = rearrange(time_emb, 'b c -> b 1 c')
-            scale_shift = time_emb.chunk(2, dim = 2)
+            time_scale_shift = time_emb.chunk(2, dim = 2)
+        if exists(self.class_mlp) and exists(class_emb):
+            class_emb = self.class_mlp(class_emb)
+            class_emb = rearrange(class_emb, 'b c -> b 1 c')
+            class_scale_shift = class_emb.chunk(2, dim = 2)
+        scale_shift_list = [time_scale_shift, class_scale_shift]
 
         if self.downsample is not None:
             if self.use_checkpoint:
@@ -599,7 +616,7 @@ class BasicLayerV2(nn.Module):
                 x = self.upsample(x)
         for idx, blk in enumerate(self.blocks):
             if idx == 0:
-                blk_scale_shift = scale_shift
+                blk_scale_shift = scale_shift_list
             else:
                 blk_scale_shift = None
             if self.use_checkpoint:
@@ -632,7 +649,7 @@ class CondLayer(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
-                 use_checkpoint=False, pretrained_window_size=0, time_emb_dim=None):
+                 use_checkpoint=False, pretrained_window_size=0, time_emb_dim=None, class_emb_dim=None):
 
         super().__init__()
         self.dim = dim
@@ -662,10 +679,14 @@ class CondLayer(nn.Module):
         else:
             self.upsample = None
 
-        self.mlp = nn.Sequential(
+        self.time_mlp = nn.Sequential(
             nn.SiLU(),
             nn.Linear(time_emb_dim, dim * 2)
         ) if exists(time_emb_dim) else None
+        self.class_mlp = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(class_emb_dim, dim * 2)
+        ) if exists(class_emb_dim) else None
 
         # build blocks
         self.blocks = nn.ModuleList([
@@ -682,15 +703,19 @@ class CondLayer(nn.Module):
                         pretrained_window_size=pretrained_window_size)
             for i in range(depth)])
         
-    def forward(self, x, time_emb=None, cond_emb=None):
-        scale_shift = None
-        if exists(time_emb):
-            time_emb = self.mlp(time_emb)
+    def forward(self, x, time_emb=None, cond_emb=None, class_emb=None):
+        scale_shift_list = None
+        if exists(self.time_mlp) and exists(time_emb):
+            time_emb = self.time_mlp(time_emb)
             time_emb = rearrange(time_emb, 'b c -> b 1 c')
             scale_shift = time_emb.chunk(2, dim = 2)
         if exists(cond_emb):
             cond_scale_shift = cond_emb.chunk(2, dim = 2)
-
+        if exists(self.class_mlp) and exists(class_emb):
+            class_emb = self.class_mlp(class_emb)
+            class_emb = rearrange(class_emb, 'b c -> b 1 c')
+            class_scale_shift = class_emb.chunk(2, dim = 2)
+        scale_shift_list = [scale_shift, cond_scale_shift, class_scale_shift]
         if self.downsample is not None:
             if self.use_checkpoint:
                 x = checkpoint(self.downsample, x,
@@ -705,15 +730,14 @@ class CondLayer(nn.Module):
                 x = self.upsample(x)
         for idx, blk in enumerate(self.blocks):
             if idx == 0:
-                blk_scale_shift = scale_shift
+                blk_scale_shift = scale_shift_list
             else:
                 blk_scale_shift = None
             if self.use_checkpoint:
-                x = checkpoint(blk, x, 
-                               blk_scale_shift, cond_scale_shift,
+                x = checkpoint(blk, x, blk_scale_shift,
                                use_reentrant=False)
             else:
-                x = blk(x, blk_scale_shift, cond_scale_shift)
+                x = blk(x, blk_scale_shift)
         return x
 
     def extra_repr(self) -> str:
@@ -768,7 +792,7 @@ class AttnLayer(nn.Module):
         else:
             self.upsample = None
 
-        self.mlp = nn.Sequential(
+        self.time_mlp = nn.Sequential(
             nn.SiLU(),
             nn.Linear(time_emb_dim, dim * 2)
         ) if exists(time_emb_dim) else None
@@ -791,8 +815,8 @@ class AttnLayer(nn.Module):
         
     def forward(self, x, time_emb=None):
         scale_shift = None
-        if exists(self.mlp) and exists(time_emb):
-            time_emb = self.mlp(time_emb)
+        if exists(self.time_mlp) and exists(time_emb):
+            time_emb = self.time_mlp(time_emb)
             time_emb = rearrange(time_emb, 'b c -> b 1 c')
             scale_shift = time_emb.chunk(2, dim = 2)
 
