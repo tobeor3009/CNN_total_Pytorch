@@ -67,8 +67,9 @@ class SwinDiffusion(nn.Module):
         self.image_size = img_size
         self.input_img_channels = cond_chans
         self.mask_channels = in_chans
-        ##################################
         self.use_class_embed = use_class_embed
+
+        ##################################
         self.num_layers = len(depths)
         self.embed_dim = embed_dim
         self.ape = ape
