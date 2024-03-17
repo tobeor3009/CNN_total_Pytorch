@@ -52,7 +52,7 @@ class SkipConv1D(nn.Module):
     
 class SwinDiffusion(nn.Module):
     def __init__(self, img_size=512, patch_size=4, in_chans=1, cond_chans=3, out_chans=1, out_act=None, 
-                num_class_embeds=None, use_class_embed=False,
+                num_class_embeds=None,
                 embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
                 window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True,
                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
@@ -67,7 +67,6 @@ class SwinDiffusion(nn.Module):
         self.image_size = img_size
         self.input_img_channels = cond_chans
         self.mask_channels = in_chans
-        self.use_class_embed = use_class_embed
 
         ##################################
         self.num_layers = len(depths)
@@ -97,14 +96,7 @@ class SwinDiffusion(nn.Module):
         # class embedding
         self.num_class_embeds = num_class_embeds
         if num_class_embeds is not None:
-            if use_class_embed:
-                self.class_mlp = nn.Embedding(num_class_embeds, time_emb_dim)
-            else:
-                self.class_mlp = nn.Sequential(
-                    nn.Linear(num_class_embeds, time_emb_dim // 2),
-                    nn.GELU(),
-                    nn.Linear(time_emb_dim // 2, time_emb_dim)
-                )
+            self.class_mlp = nn.Embedding(num_class_embeds, time_emb_dim)
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate,
                                                 sum(depths))]  # stochastic depth decay rule
@@ -353,11 +345,10 @@ class SwinDiffusion(nn.Module):
         if self.num_class_embeds is not None:
             if class_labels is None:
                 raise ValueError("class_labels should be provided when num_class_embeds > 0")
-            if self.use_class_embed:
-                class_emb = self.class_mlp(class_labels).to(dtype=x.dtype)
-            else:
-                class_emb = self.class_mlp(class_labels)
-        
+            class_emb = self.class_mlp(class_labels)
+            if class_emb.ndim == 3:
+                class_emb = class_emb.mean(1)
+            class_emb.to(dtype=x.dtype)        
         x = self.patch_embed(x)
         cond = self.cond_patch_embed(cond)
         if self.ape:
