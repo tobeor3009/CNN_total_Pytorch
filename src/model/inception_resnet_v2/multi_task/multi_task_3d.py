@@ -179,6 +179,8 @@ class InceptionResNetV2MultiTask3D(nn.Module):
             output.append(validity_output)
         if len(output) == 1:
             output = output[0]
+        if len(output) == 0:
+            output = encode_feature
         return output
 
 
