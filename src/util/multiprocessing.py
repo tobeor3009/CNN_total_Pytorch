@@ -19,7 +19,7 @@ def threaded_process_fn(items_chunk, single_core_fn, use_tqdm, index_term):
 
 
 def do_multi_processing(item_list, single_core_fn, n_process, use_tqdm=False, index_term=1000):
-    if use_tqdm:
+    if use_tqdm:-
         index_term = None
     
     item_list = [(idx, item) for idx, item in enumerate(item_list)]

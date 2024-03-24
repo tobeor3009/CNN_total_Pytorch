@@ -31,13 +31,12 @@ class LinearAttention(nn.Module):
         if dim_head is None:
             dim_head = dim
         self.dim_head = dim_head
+        self.scale = (dim_head / num_heads) ** -0.5
         self.to_qkv = nn.Linear(dim, dim_head * 3, bias=False)
         self.to_out = nn.Sequential(
             nn.Linear(dim_head, dim),
             nn.LayerNorm(dim)
         )
-        
-        self.scale = dim_head ** -0.5
 
     def forward(self, x):
         b, n, c = x.shape

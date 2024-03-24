@@ -348,7 +348,7 @@ class SwinDiffusion(nn.Module):
             class_emb = self.class_mlp(class_labels)
             if class_emb.ndim == 3:
                 class_emb = class_emb.mean(1)
-            class_emb.to(dtype=x.dtype)        
+            class_emb.to(dtype=x.dtype)
         x = self.patch_embed(x)
         cond = self.cond_patch_embed(cond)
         if self.ape:
