@@ -1,13 +1,13 @@
 import torch
-from torch import nn
+from torch import nn, einsum
 from torch.nn.utils import spectral_norm
 from torch.utils.checkpoint import checkpoint
-from einops import rearrange, einsum
+from einops import rearrange
 from ..common_module.cbam import CBAM
 from ..common_module.layers import get_act, get_norm, DEFAULT_ACT
 from ..common_module.layers import ConcatBlock
 import math
-
+import numpy as np
 def exists(x):
     return x is not None
 
@@ -47,8 +47,6 @@ class LinearAttention(nn.Module):
         b, c, h, w = x.shape
 
         x = self.prenorm(x)
-
-        print(x.shape, self.dim_head)
         qkv = self.to_qkv(x)
         qkv = qkv.chunk(3, dim = 1)          
         q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), qkv)
@@ -86,9 +84,7 @@ class Attention(nn.Module):
         qkv = self.to_qkv(x)
         qkv = qkv.chunk(3, dim = 1)
         q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), qkv)
-
         q = q * self.scale
-
         sim = einsum('b h d i, b h d j -> b h i j', q, k)
         attn = sim.softmax(dim = -1)
         out = einsum('b h i j, b h d j -> b h i d', attn, v)
@@ -118,7 +114,7 @@ class BaseBlock2D(nn.Module):
 
         self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
-                              groups=groups,  bias=bias)
+                              groups=groups, bias=bias)
         if norm == "spectral":
             self.conv = spectral_norm(self.conv)
         if not bias or norm != "spectral":
@@ -142,10 +138,10 @@ class ConvBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
                  norm="batch", groups=1, act=DEFAULT_ACT, bias=False,
-                 emb_dim=None, attn_info=None, use_checkpoint=False):
+                 emb_dim_list=None, attn_info=None, use_checkpoint=False):
         super().__init__()
 
-        assert emb_dim is not None, f"You need to set emb dim. current emb_dim: {emb_dim}"
+        assert emb_dim_list is not None, f"You need to set emb_dim_list. current emb_dim_list: {emb_dim_list}"
         self.attn_info = attn_info
         self.use_checkpoint = use_checkpoint
         # you always have time embedding
@@ -153,15 +149,15 @@ class ConvBlock2D(nn.Module):
         if exists(attn_info):
             emb_type_list += attn_info["emb_type_list"]
         emb_block_list = []
-        for emb_type in emb_type_list:
+        for emb_dim, emb_type in zip(emb_dim_list, emb_type_list):
             if emb_type == "seq":
                 emb_block = nn.Sequential(
                                             nn.SiLU(),
                                             nn.Linear(emb_dim, out_channels * 2)
                                         )
             elif emb_type == "2d":
-                emb_block = BaseBlock2D(out_channels, out_channels * 2, kernel_size,
-                                        stride, padding, norm, groups, act, bias)
+                emb_block = BaseBlock2D(emb_dim, out_channels * 2, kernel_size,
+                                        1, padding, norm, groups, act, bias)
             else:
                 raise Exception("emb_type must be seq or 2d")
             emb_block_list.append(emb_block)
@@ -209,59 +205,60 @@ class ConvBlock2D(nn.Module):
 class Inception_Resnet_Block2D(nn.Module):
     def __init__(self, in_channels, scale, block_type, block_size=16,
                  include_cbam=True, norm="batch", act=DEFAULT_ACT, 
-                 emb_dim=None, attn_info=None, use_checkpoint=False):
+                 emb_dim_list=None, attn_info=None, use_checkpoint=False):
         super().__init__()
-        assert emb_dim is not None, f"You need to set emb dim. current emb_dim: {emb_dim}"
+        assert emb_dim_list is not None, f"You need to set emb_dim_list. current emb_dim_list: {emb_dim_list}"
         self.include_cbam = include_cbam
         self.scale = scale
         if block_type == 'block35':
             branch_0 = ConvBlock2D(in_channels, block_size * 2, 1,
-                                   norm=norm, act=act, 
-                                   emb_dim=emb_dim, attn_info=attn_info,
+                                   norm=norm, act=act,
+                                   emb_dim_list=emb_dim_list, attn_info=attn_info,
                                    use_checkpoint=use_checkpoint)
-            branch_1 = nn.Sequential(
+            branch_1 = MultiInputSequential(
                 ConvBlock2D(in_channels, block_size * 2, 1,
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info, 
+                            emb_dim_list=emb_dim_list, attn_info=attn_info, 
                             use_checkpoint=use_checkpoint),
                 ConvBlock2D(block_size * 2, block_size * 2, 3,
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info,
+                            emb_dim_list=emb_dim_list, attn_info=attn_info,
                             use_checkpoint=use_checkpoint)
             )
-            branch_2 = nn.Sequential(
+            branch_2 = MultiInputSequential(
                 ConvBlock2D(in_channels, block_size * 2, 1,
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info,
+                            emb_dim_list=emb_dim_list, attn_info=attn_info,
                             use_checkpoint=use_checkpoint),
                 ConvBlock2D(block_size * 2, block_size * 3, 3,
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info,
+                            emb_dim_list=emb_dim_list, attn_info=attn_info,
                             use_checkpoint=use_checkpoint),
                 ConvBlock2D(block_size * 3, block_size * 4, 3,
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info,
+                            emb_dim_list=emb_dim_list, attn_info=attn_info,
                             use_checkpoint=use_checkpoint)
             )
             mixed_channel = block_size * 8
+            # block_size * (2 + 2 + 4) => block_size * 10
             branches = [branch_0, branch_1, branch_2]
         elif block_type == 'block17':
             branch_0 = ConvBlock2D(in_channels, block_size * 12, 1,
                                    norm=norm, act=act, 
-                                   emb_dim=emb_dim, attn_info=attn_info,
+                                   emb_dim_list=emb_dim_list, attn_info=attn_info,
                                    use_checkpoint=use_checkpoint)
-            branch_1 = nn.Sequential(
+            branch_1 = MultiInputSequential(
                 ConvBlock2D(in_channels, block_size * 8, 1,
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info,
+                            emb_dim_list=emb_dim_list, attn_info=attn_info,
                             use_checkpoint=use_checkpoint),
                 ConvBlock2D(block_size * 8, block_size * 10, [1, 7],
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info,
+                            emb_dim_list=emb_dim_list, attn_info=attn_info,
                             use_checkpoint=use_checkpoint),
                 ConvBlock2D(block_size * 10, block_size * 12, [7, 1],
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info,
+                            emb_dim_list=emb_dim_list, attn_info=attn_info,
                             use_checkpoint=use_checkpoint)
             )
             mixed_channel = block_size * 24
@@ -269,20 +266,20 @@ class Inception_Resnet_Block2D(nn.Module):
         elif block_type == 'block8':
             branch_0 = ConvBlock2D(in_channels, block_size * 12, 1,
                                    norm=norm, act=act, 
-                                   emb_dim=emb_dim, attn_info=attn_info,
+                                   emb_dim_list=emb_dim_list, attn_info=attn_info,
                                    use_checkpoint=use_checkpoint)
-            branch_1 = nn.Sequential(
+            branch_1 = MultiInputSequential(
                 ConvBlock2D(in_channels, block_size * 12, 1,
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info,
+                            emb_dim_list=emb_dim_list, attn_info=attn_info,
                             use_checkpoint=use_checkpoint),
                 ConvBlock2D(block_size * 12, block_size * 14, [1, 3],
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info,
+                            emb_dim_list=emb_dim_list, attn_info=attn_info,
                             use_checkpoint=use_checkpoint),
                 ConvBlock2D(block_size * 14, block_size * 16, [3, 1],
                             norm=norm, act=act, 
-                            emb_dim=emb_dim, attn_info=attn_info,
+                            emb_dim_list=emb_dim_list, attn_info=attn_info,
                             use_checkpoint=use_checkpoint)
             )
             mixed_channel = block_size * 28
@@ -295,7 +292,7 @@ class Inception_Resnet_Block2D(nn.Module):
         # TBD: Name?
         self.up = ConvBlock2D(mixed_channel, in_channels, 1,
                               bias=True, norm=norm, act=None, 
-                              emb_dim=emb_dim, attn_info=attn_info,
+                              emb_dim_list=emb_dim_list, attn_info=attn_info,
                               use_checkpoint=use_checkpoint)
         if self.include_cbam:
             self.cbam = CBAM(gate_channels=in_channels,
@@ -311,9 +308,66 @@ class Inception_Resnet_Block2D(nn.Module):
         act = self.act(residual_add)
         return act
 
+class MultiDecoder2D(nn.Module):
+    def __init__(self, in_channels, out_channels,
+                 norm="layer", act=DEFAULT_ACT, kernel_size=2,
+                 emb_dim_list=None, attn_info=None, use_checkpoint=False):
+        super().__init__()
+
+        self.use_checkpoint = use_checkpoint
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size)
+        conv_before_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
+                                              out_channels=in_channels *
+                                              np.prod(kernel_size),
+                                              kernel_size=1)
+        pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=(kernel_size
+                                                              if isinstance(kernel_size, int)
+                                                              else kernel_size[0]))
+        conv_after_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
+                                             out_channels=out_channels,
+                                             kernel_size=1)
+        self.pixel_shuffle = nn.Sequential(
+            conv_before_pixel_shuffle,
+            pixel_shuffle_layer,
+            conv_after_pixel_shuffle
+        )
+        upsample_layer = nn.Upsample(scale_factor=kernel_size,
+                                        mode='bilinear')
+        conv_after_upsample = nn.Conv2d(in_channels=in_channels,
+                                        out_channels=out_channels,
+                                        kernel_size=1)
+        self.upsample = nn.Sequential(
+            upsample_layer,
+            conv_after_upsample
+        )
+        self.concat_conv = ConvBlock2D(in_channels=out_channels * 2,
+                                       out_channels=out_channels, kernel_size=3,
+                                       stride=1, padding=1, norm=norm, act=act,
+                                       emb_dim_list=emb_dim_list, attn_info=attn_info,
+                                       use_checkpoint=use_checkpoint)
+
+    def forward(self, x, *args):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x, *args,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x, *args)
+        
+    def _forward_impl(self, x, *args):
+        pixel_shuffle = self.pixel_shuffle(x)
+        upsample = self.upsample(x)
+        out = torch.cat([pixel_shuffle, upsample], dim=1)
+        out = self.concat_conv(out, *args)
+        return out
 class MaxPool2d(nn.MaxPool2d):
     def forward(self, x, *args):
         return super().forward(x)
 class AvgPool2d(nn.AvgPool2d):
     def forward(self, x, *args):
         return super().forward(x)
+class MultiInputSequential(nn.Sequential):
+    def forward(self, x, *args):
+        for module in self:
+            x = module(x, *args)
+        return x
