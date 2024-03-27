@@ -244,7 +244,7 @@ class Inception_Resnet_Block2D(nn.Module):
             branches = [branch_0, branch_1, branch_2]
         elif block_type == 'block17':
             branch_0 = ConvBlock2D(in_channels, block_size * 12, 1,
-                                   norm=norm, act=act, 
+                                   norm=norm, act=act,
                                    emb_dim_list=emb_dim_list, attn_info=attn_info,
                                    use_checkpoint=use_checkpoint)
             branch_1 = MultiInputSequential(
@@ -291,7 +291,7 @@ class Inception_Resnet_Block2D(nn.Module):
         self.mixed = ConcatBlock(branches)
         # TBD: Name?
         self.up = ConvBlock2D(mixed_channel, in_channels, 1,
-                              bias=True, norm=norm, act=None, 
+                              bias=True, norm=norm, act=None,
                               emb_dim_list=emb_dim_list, attn_info=attn_info,
                               use_checkpoint=use_checkpoint)
         if self.include_cbam:

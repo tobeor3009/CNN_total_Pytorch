@@ -202,6 +202,10 @@ def get_loss_fn(loss_select):
 def get_dice_score(y_pred, y_true, mask_threshold=0.5):
     y_pred = (y_pred >= mask_threshold).float()
     y_true = (y_true >= mask_threshold).float()
+    C = y_true.shape[1]
+    if C > 1:
+        y_pred = y_pred[:, 1:]
+        y_true = y_true[:, 1:]
     dice_loss = get_dice_loss(y_pred, y_true, log=False, per_image=False)
     dice_score = 1 - dice_loss
     return dice_score

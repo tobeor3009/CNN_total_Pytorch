@@ -53,8 +53,6 @@ class InceptionResNetV2_UNet(nn.Module):
         emb_type_list = ["seq", "2d"]
         cond_emb_type_list = ["seq"]
 
-        block_17_emb_dim_list = emb_dim_list + [block_size * 68]
-        block_8_emb_dim_list = emb_dim_list + [block_size * 130]
         final_conv_emb_dim_list = emb_dim_list + [block_size * 96 * last_channel_ratio]
         ##################################
         self.padding_3x3 = 1
@@ -93,38 +91,23 @@ class InceptionResNetV2_UNet(nn.Module):
         self.cond_mixed_6a = self.get_encode_mixed_6a(emb_dim_list, cond_emb_type_list, False)
         self.mixed_6a = self.get_encode_mixed_6a(emb_dim_list, emb_type_list, True)
         # 20x block17 (Inception-ResNet-B block)
-        self.cond_block_17 = MultiInputSequential(*[
-            Inception_Resnet_Block2D(in_channels=block_size * 68, scale=0.1,
-                                     block_type="block17", norm=norm, act=act, include_cbam=False,
-                                     emb_dim_list=emb_dim_list, attn_info=self.get_attn_info(cond_emb_type_list, attn_info_list[3]),
-                                     use_checkpoint=use_checkpoint)
-            for _ in range(block_depth_list[1])
-        ])
-        self.block_17 = MultiInputSequential(*[
-            Inception_Resnet_Block2D(in_channels=block_size * 68, scale=0.1,
-                                     block_type="block17", norm=norm, act=act, include_cbam=False,
-                                     emb_dim_list=block_17_emb_dim_list, attn_info=self.get_attn_info(emb_type_list, attn_info_list[3]),
-                                     use_checkpoint=use_checkpoint)
-            for _ in range(block_depth_list[1])
-        ])
+        self.cond_block_17_mixed, self.cond_block_17_up = self.get_inception_block(emb_dim_list, emb_type_list, False,
+                                                                                   block_depth_list[1],
+                                                                                   self.get_inception_block_17)
+        self.block_17_mixed, self.block_17_up = self.get_inception_block(emb_dim_list, emb_type_list, True,
+                                                                         block_depth_list[1],
+                                                                         self.get_inception_block_17)
         # Mixed 7a (Reduction-B block)
         self.cond_mixed_7a = self.get_encode_mixed_7a(emb_dim_list, cond_emb_type_list, False)
         self.mixed_7a = self.get_encode_mixed_7a(emb_dim_list, emb_type_list, True)
         # 10x block8 (Inception-ResNet-C block)
-        self.cond_block_8 = MultiInputSequential(*[
-            Inception_Resnet_Block2D(in_channels=block_size * 130, scale=0.2,
-                                     block_type="block8", norm=norm, act=act, include_cbam=False,
-                                     emb_dim_list=emb_dim_list, attn_info=self.get_attn_info(cond_emb_type_list, attn_info_list[4]),
-                                     use_checkpoint=use_checkpoint)
-            for _ in range(block_depth_list[2])
-        ])
-        self.block_8 = MultiInputSequential(*[
-            Inception_Resnet_Block2D(in_channels=block_size * 130, scale=0.2,
-                                     block_type="block8", norm=norm, act=act, include_cbam=False,
-                                     emb_dim_list=block_8_emb_dim_list, attn_info=self.get_attn_info(cond_emb_type_list, attn_info_list[4]),
-                                     use_checkpoint=use_checkpoint)
-            for _ in range(block_depth_list[2])
-        ])
+        self.cond_block_8_mixed, self.cond_block_8_up = self.get_inception_block(emb_dim_list, emb_type_list, False,
+                                                                                   block_depth_list[2],
+                                                                                   self.get_inception_block_8)
+        self.block_8_mixed, self.block_8_up = self.get_inception_block(emb_dim_list, emb_type_list, True,
+                                                                         block_depth_list[2],
+                                                                         self.get_inception_block_8)
+
         # Final convolution block
         self.cond_final_conv = ConvBlock2D(block_size * 130, block_size * 96 * last_channel_ratio, 3,
                                            norm=norm, act=act,
@@ -213,45 +196,28 @@ class InceptionResNetV2_UNet(nn.Module):
         cond_mixed_5b, mixed_5b = self.process_encode_block(self.cond_mixed_5b, self.mixed_5b, 
                                                             cond_stem, stem, time_emb, class_emb)
         # block_35
-        cond_block_35 = cond_mixed_5b
-        block_35 = mixed_5b
-        for cond_mixed, cond_up_layer, mixed, up_layer in zip(self.cond_block_35_mixed, self.cond_block_35_up, 
-                                                              self.block_35_mixed, self.block_35_up):
-            cond_block_35_temp = []
-            block_35_temp = []
-            for (_, cond_layer_list), (_, layer_list) in zip(cond_mixed.items(), mixed.items()):
-                cond_block_35_part = cond_block_35
-                block_35_part = block_35
-                for cond_layer, layer in zip(cond_layer_list, layer_list):
-                    cond_block_35_part = cond_layer(cond_block_35_part, time_emb, class_emb)
-                    block_35_part = layer(block_35_part, time_emb, class_emb, cond_block_35_part)
-                cond_block_35_temp.append(cond_block_35_part)
-                block_35_temp.append(block_35_part)
-            cond_block_35_temp = torch.cat(cond_block_35_temp, dim=1)
-            block_35_temp = torch.cat(block_35_temp, dim=1)
-
-            cond_block_35_temp = cond_up_layer(cond_block_35_temp, time_emb, class_emb)
-            block_35_temp = up_layer(block_35_temp, time_emb, class_emb, cond_block_35_temp)
-
-            cond_block_35 = cond_block_35 + cond_block_35_temp * self.block_scale_list[0]
-            cond_block_35 = self.act_layer(cond_block_35)
-            block_35 = block_35 + block_35_temp * self.block_scale_list[0]
-            block_35 = self.act_layer(block_35)
-
+        cond_block_35, block_35 = self.process_inception_block(self.cond_block_35_mixed, self.cond_block_35_up,
+                                                               self.block_35_mixed, self.block_35_up,
+                                                               cond_mixed_5b, mixed_5b, time_emb, class_emb,
+                                                               self.block_scale_list[0])
         # mixed_6a: skip connect target
-        cond_mixed_6a, mixed_6a = self.process_encode_block(self.cond_mixed_6a, self.mixed_6a, 
+        cond_mixed_6a, mixed_6a = self.process_encode_block(self.cond_mixed_6a, self.mixed_6a,
                                                             cond_block_35, block_35, time_emb, class_emb)
         skip_connect_list.append([cond_mixed_6a, mixed_6a])
         # block_17
-        cond_block_17 = self.cond_block_17(cond_mixed_6a, time_emb, class_emb)
-        block_17 = self.block_17(mixed_6a, time_emb, class_emb, cond_block_17)
+        cond_block_17, block_17 = self.process_inception_block(self.cond_block_17_mixed, self.cond_block_17_up,
+                                                               self.block_17_mixed, self.block_17_up,
+                                                               cond_mixed_6a, mixed_6a, time_emb, class_emb,
+                                                               self.block_scale_list[1])
         # mixed_7a: skip connect target
-        cond_mixed_7a, mixed_7a = self.process_encode_block(self.cond_mixed_7a, self.mixed_7a, 
+        cond_mixed_7a, mixed_7a = self.process_encode_block(self.cond_mixed_7a, self.mixed_7a,
                                                             cond_block_17, block_17, time_emb, class_emb)
         skip_connect_list.append([cond_mixed_7a, mixed_7a])
         # block_8
-        cond_block_8 = self.cond_block_8(cond_mixed_7a, time_emb, class_emb)
-        block_8 = self.block_8(mixed_7a, time_emb, class_emb, cond_block_8)
+        cond_block_8, block_8 = self.process_inception_block(self.cond_block_8_mixed, self.cond_block_8_up,
+                                                               self.block_8_mixed, self.block_8_up,
+                                                               cond_mixed_7a, mixed_7a, time_emb, class_emb,
+                                                               self.block_scale_list[2])
         # final_output
         cond_output = self.cond_final_conv(cond_block_8, time_emb, class_emb)
         output = self.final_conv(block_8, time_emb, class_emb, cond_output)
@@ -274,28 +240,18 @@ class InceptionResNetV2_UNet(nn.Module):
         return cond_output, output
 
     def process_inception_block(self, cond_block_mixed, cond_block_up, block_mixed, block_up,
-                                cond_x, x, time_emb, class_emb):
+                                cond_x, x, time_emb, class_emb, scale):
         for cond_mixed, cond_up_layer, mixed, up_layer in zip(cond_block_mixed, cond_block_up,
                                                               block_mixed, block_up):
-            cond_x_temp = []
-            x_temp = []
-            for (_, cond_layer_list), (_, layer_list) in zip(cond_mixed.items(), mixed.items()):
-                cond_x_part = cond_x
-                x_part = x
-                for cond_layer, layer in zip(cond_layer_list, layer_list):
-                    cond_x_part = cond_layer(cond_x_part, time_emb, class_emb)
-                    x_part = layer(x_part, time_emb, class_emb, cond_x_part)
-                cond_x_temp.append(cond_x_part)
-                x_temp.append(x_part)
-            cond_x_temp = torch.cat(cond_x_temp, dim=1)
-            x_temp = torch.cat(x_temp, dim=1)
-
+            
+            cond_x_temp, x_temp = self.process_encode_block(cond_mixed, mixed,
+                                                            cond_x, x, time_emb, class_emb)
             cond_x_temp = cond_up_layer(cond_x_temp, time_emb, class_emb)
             x_temp = up_layer(x_temp, time_emb, class_emb, cond_x_temp)
 
-            cond_x = cond_x + cond_x_temp * self.block_scale_list[0]
+            cond_x = cond_x + cond_x_temp * scale
             cond_x = self.act_layer(cond_x)
-            x = x + x_temp * self.block_scale_list[0]
+            x = x + x_temp * scale
             x = self.act_layer(x)
         return cond_x, x
         
@@ -577,4 +533,98 @@ class InceptionResNetV2_UNet(nn.Module):
                                          branch_2_1,
                                          branch_2_2])
         })
-        return [mixed, up]
+        return mixed, up
+
+    def get_inception_block_17(self, emb_dim_list, emb_type_list, has_cond):
+        block_size = self.block_size
+        norm = self.norm
+        act = self.act
+        use_checkpoint = self.use_checkpoint
+        attn_info = self.get_attn_info(emb_type_list, self.attn_info_list[3])
+
+        in_channels = block_size * 68
+        mixed_channel = block_size * 24
+        if has_cond:
+            emb_dim_list_set = [emb_dim_list + [block_size * 12],
+                                emb_dim_list + [block_size * 8],
+                                emb_dim_list + [block_size * 10],
+                                emb_dim_list + [block_size * 12],
+                                emb_dim_list + [in_channels]]
+        else: 
+            emb_dim_list_set = [emb_dim_list for _ in range(5)]
+
+        branch_0_0 = ConvBlock2D(in_channels, block_size * 12, 1,
+                                norm=norm, act=act,
+                                emb_dim_list=emb_dim_list_set[0], attn_info=attn_info,
+                                use_checkpoint=use_checkpoint)
+        branch_1_0 = ConvBlock2D(in_channels, block_size * 8, 1,
+                                norm=norm, act=act,
+                                emb_dim_list=emb_dim_list_set[1], attn_info=attn_info, 
+                                use_checkpoint=use_checkpoint)
+        branch_1_1 = ConvBlock2D(block_size * 8, block_size * 10, [1, 7],
+                                norm=norm, act=act,
+                                emb_dim_list=emb_dim_list_set[2], attn_info=attn_info,
+                                use_checkpoint=use_checkpoint)
+        branch_1_2 = ConvBlock2D(block_size * 10, block_size * 12, [7, 1],
+                                norm=norm, act=act,
+                                emb_dim_list=emb_dim_list_set[3], attn_info=attn_info,
+                                use_checkpoint=use_checkpoint)
+        up = ConvBlock2D(mixed_channel, in_channels, 1,
+                        bias=True, norm=norm, act=None,
+                        emb_dim_list=emb_dim_list_set[4], attn_info=attn_info,
+                        use_checkpoint=use_checkpoint)
+        
+        mixed = nn.ModuleDict({
+            "branch_0": nn.ModuleList([branch_0_0]),
+            "branch_1": nn.ModuleList([branch_1_0,
+                                       branch_1_1,
+                                       branch_1_2]),
+        })
+        return mixed, up
+
+    def get_inception_block_8(self, emb_dim_list, emb_type_list, has_cond):
+        block_size = self.block_size
+        norm = self.norm
+        act = self.act
+        use_checkpoint = self.use_checkpoint
+        attn_info = self.get_attn_info(emb_type_list, self.attn_info_list[4])
+
+        in_channels = block_size * 130
+        mixed_channel = block_size * 28
+        if has_cond:
+            emb_dim_list_set = [emb_dim_list + [block_size * 12],
+                                emb_dim_list + [block_size * 12],
+                                emb_dim_list + [block_size * 14],
+                                emb_dim_list + [block_size * 16],
+                                emb_dim_list + [in_channels]]
+        else: 
+            emb_dim_list_set = [emb_dim_list for _ in range(5)]
+
+        branch_0_0 = ConvBlock2D(in_channels, block_size * 12, 1,
+                                norm=norm, act=act,
+                                emb_dim_list=emb_dim_list_set[0], attn_info=attn_info,
+                                use_checkpoint=use_checkpoint)
+        branch_1_0 = ConvBlock2D(in_channels, block_size * 12, 1,
+                                norm=norm, act=act,
+                                emb_dim_list=emb_dim_list_set[1], attn_info=attn_info, 
+                                use_checkpoint=use_checkpoint)
+        branch_1_1 = ConvBlock2D(block_size * 12, block_size * 14, [1, 3],
+                                norm=norm, act=act,
+                                emb_dim_list=emb_dim_list_set[2], attn_info=attn_info,
+                                use_checkpoint=use_checkpoint)
+        branch_1_2 = ConvBlock2D(block_size * 14, block_size * 16, [3, 1],
+                                norm=norm, act=act,
+                                emb_dim_list=emb_dim_list_set[3], attn_info=attn_info,
+                                use_checkpoint=use_checkpoint)
+        up = ConvBlock2D(mixed_channel, in_channels, 1,
+                        bias=True, norm=norm, act=None,
+                        emb_dim_list=emb_dim_list_set[4], attn_info=attn_info,
+                        use_checkpoint=use_checkpoint)
+        
+        mixed = nn.ModuleDict({
+            "branch_0": nn.ModuleList([branch_0_0]),
+            "branch_1": nn.ModuleList([branch_1_0,
+                                       branch_1_1,
+                                       branch_1_2]),
+        })
+        return mixed, up
