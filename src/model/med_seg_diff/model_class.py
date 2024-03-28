@@ -358,11 +358,4 @@ class MedSegDiff(nn.Module):
         return time
     
     def get_timepool(self):
-        if not hasattr(self, "timepool_iter_num"):
-            self.timepool_iter_num = 0
-        self.timepool_iter_num += 1
-        if self.timepool_iter_num <= 5:
-            return list(range(0, self.num_timesteps))
-#             return list(range(0, self.num_timesteps - 1))
-        else:
-            return list(range(0, self.num_timesteps))
+        return list(range(0, self.num_timesteps))
