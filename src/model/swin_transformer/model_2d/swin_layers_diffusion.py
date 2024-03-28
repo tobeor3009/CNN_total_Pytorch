@@ -23,6 +23,19 @@ def extract(target_list, t, x_shape):
     out = target_list[t - 1]
     return out.reshape(batch_size, *((1,) * (len(x_shape) - 1)))
 
+class SkipConv1D(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.skip_conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1)
+        self.norm = nn.LayerNorm(out_channels)
+    def forward(self, *args):
+        # expected shape: [B, N, C]
+        x = torch.cat(args, dim=2)
+        x = self.skip_conv(x.permute(0, 2, 1))
+        x = x.permute(0, 2, 1)
+        x = self.norm(x) 
+        return x
+    
 class LinearAttention(nn.Module):
     def __init__(self, dim, num_heads=4, dim_head=None):
         super().__init__()
@@ -686,7 +699,7 @@ class CondLayer(nn.Module):
             nn.SiLU(),
             nn.Linear(class_emb_dim, dim * 2)
         ) if exists(class_emb_dim) else None
-
+        self.cond_conv = SkipConv1D(in_channels=dim, out_channels=dim * 2)
         # build blocks
         self.blocks = nn.ModuleList([
             CondBlock(dim=dim, input_resolution=input_resolution,
@@ -709,6 +722,7 @@ class CondLayer(nn.Module):
             time_emb = rearrange(time_emb, 'b c -> b 1 c')
             scale_shift = time_emb.chunk(2, dim = 2)
         if exists(cond_emb):
+            cond_emb = self.cond_conv(cond_emb)
             cond_scale_shift = cond_emb.chunk(2, dim = 2)
         if exists(self.class_mlp) and exists(class_emb):
             class_emb = self.class_mlp(class_emb)
@@ -860,3 +874,26 @@ class AttnLayer(nn.Module):
             nn.init.constant_(blk.norm1.weight, 0)
             nn.init.constant_(blk.norm2.bias, 0)
             nn.init.constant_(blk.norm2.weight, 0)
+
+class Output2D(nn.Module):
+    def __init__(self, in_channels, out_channels, act=None):
+        super().__init__()
+        conv_out_channels = in_channels // 2
+        self.conv_5x5 = nn.Conv2d(in_channels=in_channels,
+                                  out_channels=conv_out_channels,
+                                  kernel_size=5, padding=2)
+        self.conv_3x3 = nn.Conv2d(in_channels=in_channels,
+                                  out_channels=conv_out_channels,
+                                  kernel_size=3, padding=1)
+        self.concat_conv = nn.Conv2d(in_channels=conv_out_channels * 2,
+                                        out_channels=out_channels,
+                                        kernel_size=3, padding=1)
+        self.act = get_act(act)
+
+    def forward(self, x):
+        conv_5x5 = self.conv_5x5(x)
+        conv_3x3 = self.conv_3x3(x)
+        output = torch.cat([conv_5x5, conv_3x3], dim=1)
+        output = self.concat_conv(output)
+        output = self.act(output)
+        return output
