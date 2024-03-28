@@ -38,7 +38,7 @@ class SinusoidalPosEmb(nn.Module):
         return emb
     
 class SwinDiffusion(nn.Module):
-    def __init__(self, img_size=512, patch_size=4, in_chans=1, cond_chans=3, out_chans=1, out_act=None, 
+    def __init__(self, img_size=512, patch_size=4, in_chans=1, cond_chans=3, out_chans=1, out_act=None,
                 num_class_embeds=None,
                 embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
                 window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True,
@@ -48,7 +48,7 @@ class SwinDiffusion(nn.Module):
                 self_condition=False
                 ):
         super().__init__()
-
+        cond_residuial = True
         patch_size = int(patch_size)
         # for compability with Medsegdiff 
         self.image_size = img_size
@@ -121,7 +121,7 @@ class SwinDiffusion(nn.Module):
                                             pretrained_window_size=pretrained_window_sizes[0],
                                             time_emb_dim=time_emb_dim,
                                             class_emb_dim=class_emb_dim,
-                                            use_residual=False)
+                                            use_residual=cond_residuial)
         # build layers
         self.encode_layers_1 = nn.ModuleList()
         self.encode_layers_2 = nn.ModuleList()
@@ -183,7 +183,7 @@ class SwinDiffusion(nn.Module):
                                         pretrained_window_size=pretrained_window_sizes[i_layer],
                                         time_emb_dim=time_emb_dim,
                                         class_emb_dim=class_emb_dim,
-                                        use_residual=False)
+                                        use_residual=cond_residuial)
             cond_layer_2 = deepcopy(cond_layer_1)
             cond_layer_3 = BasicLayerV2(dim=layer_dim,
                                         input_resolution=feature_resolution,
@@ -201,7 +201,7 @@ class SwinDiffusion(nn.Module):
                                         pretrained_window_size=pretrained_window_sizes[i_layer],
                                         time_emb_dim=time_emb_dim,
                                         class_emb_dim=class_emb_dim,
-                                        use_residual=False)
+                                        use_residual=cond_residuial)
             self.encode_layers_1.append(layer_1)
             self.encode_layers_2.append(layer_2)
             self.encode_layers_3.append(layer_3)
@@ -228,7 +228,7 @@ class SwinDiffusion(nn.Module):
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
                                     class_emb_dim=class_emb_dim,
-                                    use_residual=False)
+                                    use_residual=cond_residuial)
         self.mid_layer = CondLayer(dim=layer_dim,
                                     input_resolution=feature_hw,
                                     depth=depths[i_layer],
@@ -314,7 +314,7 @@ class SwinDiffusion(nn.Module):
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
                                     class_emb_dim=class_emb_dim,
-                                    use_residual=False)
+                                    use_residual=cond_residuial)
             cond_layer_2 = deepcopy(cond_layer_1)
             cond_layer_3 = BasicLayerV2(dim=layer_dim,
                                     input_resolution=feature_resolution,
@@ -333,7 +333,7 @@ class SwinDiffusion(nn.Module):
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
                                     class_emb_dim=class_emb_dim,
-                                    use_residual=False)
+                                    use_residual=cond_residuial)
             self.skip_conv_layers_1.append(skip_conv_layer_1)
             self.skip_conv_layers_2.append(skip_conv_layer_2)
             self.cond_skip_conv_layers_1.append(cond_skip_conv_layer_1)
