@@ -42,6 +42,8 @@ class InceptionResNetV2_UNet(nn.Module):
             block_depth_list = block_depth_info
         assert isinstance(num_class_embeds, int) and num_class_embeds > 0, "you need to assign positive int to num_class_embeds"
         
+        if self_condition:
+            in_channel *= 2
         # for compability with Medsegdiff
         self.image_size = img_size
         self.input_img_channels = cond_channel
@@ -186,7 +188,6 @@ class InceptionResNetV2_UNet(nn.Module):
         skip_connect_list = []
         cond_stem = cond
         stem = x
-
         for idx, ((_, cond_layer), (_, layer)) in enumerate(zip(self.cond_stem.items(), self.stem.items())):
             cond_stem = cond_layer(cond_stem, time_emb, class_emb)
             stem = layer(stem, time_emb, class_emb, cond_stem)
@@ -285,7 +286,10 @@ class InceptionResNetV2_UNet(nn.Module):
         
     def get_encode_stem(self, emb_dim_list, emb_type_list, has_cond):
         padding_3x3 = self.padding_3x3
-        in_channel = self.in_channel
+        if has_cond:
+            in_channel = self.in_channel
+        else:
+            in_channel = self.input_img_channels
         block_size = self.block_size
         norm = self.norm
         act = self.act
