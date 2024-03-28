@@ -417,7 +417,7 @@ class SwinDiffusion(nn.Module):
             if idx < len(self.encode_layers_1):
                 skip_connect_list_1.insert(0, [x, cond])
 
-            cond = cond_encode_layer_2(cond, time_emb=time_emb, class_emb=class_emb)       
+            cond = cond_encode_layer_2(cond, time_emb=time_emb, class_emb=class_emb)
             x = encode_layer_2(x, time_emb=time_emb, cond_emb=cond, class_emb=class_emb)
             if idx < len(self.encode_layers_1):
                 skip_connect_list_2.insert(0, [x, cond])
@@ -427,7 +427,7 @@ class SwinDiffusion(nn.Module):
         cond = self.cond_mid_layer(x, time_emb=time_emb, class_emb=class_emb)
         x = self.mid_layer(x, time_emb=time_emb, cond_emb=cond, class_emb=class_emb)
 
-        for idx, (skip_conv_layer_1, skip_conv_layer_2, cond_skip_conv_layer_1, cond_skip_conv_layer_2, 
+        for idx, (skip_conv_layer_1, skip_conv_layer_2, cond_skip_conv_layer_1, cond_skip_conv_layer_2,
                   layer_1, layer_2, layer_3, cond_layer_1, cond_layer_2, cond_layer_3) in enumerate(zip(self.skip_conv_layers_1,
                                                                                                         self.skip_conv_layers_2,
                                                                                                         self.cond_skip_conv_layers_2,
@@ -456,17 +456,6 @@ class SwinDiffusion(nn.Module):
         x = self.seg_final_expanding(x)
         x = self.seg_final_conv(x)
         return x
-
-    def flops(self):
-        flops = 0
-        flops += self.patch_embed.flops()
-        for i, layer in enumerate(self.layers):
-            flops += layer.flops()
-        flops += self.num_features * \
-            self.patches_resolution[0] * \
-            self.patches_resolution[1] // (2 ** self.num_layers)
-        flops += self.num_features * self.num_classes
-        return flops
 
     def print_tensor_info(self, tensor):
         print(tensor.min(), tensor.max(), torch.isnan(tensor).any())
