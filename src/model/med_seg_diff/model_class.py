@@ -59,7 +59,8 @@ class MedSegDiff(nn.Module):
         sampling_timesteps = None,
         objective = 'pred_noise',
         beta_schedule = 'cosine',
-        ddim_sampling_eta = 1.
+        ddim_sampling_eta = 1.,
+        loss_fn=F.mse_loss,
     ):
         super().__init__()
 
@@ -71,7 +72,7 @@ class MedSegDiff(nn.Module):
         self.self_condition = self.model.self_condition
         self.image_size = self.model.image_size
         self.objective = objective
-
+        self.loss_fn = loss_fn
         assert objective in {'pred_noise', 'pred_x0', 'pred_v'}, 'objective must be either pred_noise (predict noise) or pred_x0 (predict image start) or pred_v (predict v [v-parameterization as defined in appendix D of progressive distillation paper, used in imagen-video successfully])'
 
         if beta_schedule == 'linear':
@@ -227,8 +228,9 @@ class MedSegDiff(nn.Module):
         return img
 
     @torch.no_grad()
-    def ddim_sample(self, shape, cond_img, clip_denoised=True):
-        batch, device, total_timesteps, sampling_timesteps, eta, objective = shape[0], self.betas.device, self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
+    def ddim_sample(self, shape, cond_img, class_label, clip_denoised=True):
+        batch, device, total_timesteps = shape[0], self.betas.device, self.num_timesteps
+        sampling_timesteps, eta, objective = self.sampling_timesteps, self.ddim_sampling_eta, self.objective
 
         times = torch.linspace(-1, total_timesteps - 1, steps=sampling_timesteps + 1)   # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
@@ -241,7 +243,8 @@ class MedSegDiff(nn.Module):
         for time, time_next in tqdm(time_pairs, desc = 'sampling loop time step'):
             time_cond = torch.full((batch,), time, device=device, dtype=torch.long)
             self_cond = x_start if self.self_condition else None
-            pred_noise, x_start, *_ = self.model_predictions(img, time_cond, cond_img, self_cond, clip_x_start = clip_denoised)
+            pred_noise, x_start, *_ = self.model_predictions(img, time_cond, cond_img, self_cond, class_label,
+                                                             clip_x_start=clip_denoised)
 
             if time_next < 0:
                 img = x_start
@@ -314,7 +317,7 @@ class MedSegDiff(nn.Module):
         else:
             raise ValueError(f'unknown objective {self.objective}')
 
-        return F.mse_loss(model_out, target, reduction='none').mean(dim=[1, 2, 3]), t
+        return self.loss_fn(model_out, target, reduction='none').mean(dim=[1, 2, 3]), t
 
     def forward(self, img, cond_img, class_label, *args, **kwargs):
         if img.ndim == 3:

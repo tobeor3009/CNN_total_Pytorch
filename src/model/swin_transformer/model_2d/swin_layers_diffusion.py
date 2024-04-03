@@ -603,16 +603,17 @@ class BasicLayerV2(nn.Module):
             for i in range(depth)])
         
     def forward(self, x, time_emb=None, class_emb=None):
-        scale_shift_list = None
+        scale_shift_list = []
         if exists(self.time_mlp) and exists(time_emb):
             time_emb = self.time_mlp(time_emb)
             time_emb = rearrange(time_emb, 'b c -> b 1 c')
             time_scale_shift = time_emb.chunk(2, dim = 2)
+            scale_shift_list.append(time_scale_shift)
         if exists(self.class_mlp) and exists(class_emb):
             class_emb = self.class_mlp(class_emb)
             class_emb = rearrange(class_emb, 'b c -> b 1 c')
             class_scale_shift = class_emb.chunk(2, dim = 2)
-        scale_shift_list = [time_scale_shift, class_scale_shift]
+            scale_shift_list.append(class_scale_shift)
 
         if self.downsample is not None:
             if self.use_checkpoint:
@@ -716,19 +717,22 @@ class CondLayer(nn.Module):
             for i in range(depth)])
         
     def forward(self, x, time_emb=None, cond_emb=None, class_emb=None):
-        scale_shift_list = None
+        scale_shift_list = []
         if exists(self.time_mlp) and exists(time_emb):
             time_emb = self.time_mlp(time_emb)
             time_emb = rearrange(time_emb, 'b c -> b 1 c')
             scale_shift = time_emb.chunk(2, dim = 2)
+            scale_shift_list.append(scale_shift)
         if exists(cond_emb):
             cond_emb = self.cond_conv(cond_emb)
             cond_scale_shift = cond_emb.chunk(2, dim = 2)
+            scale_shift_list.append(cond_scale_shift)
         if exists(self.class_mlp) and exists(class_emb):
             class_emb = self.class_mlp(class_emb)
             class_emb = rearrange(class_emb, 'b c -> b 1 c')
             class_scale_shift = class_emb.chunk(2, dim = 2)
-        scale_shift_list = [scale_shift, cond_scale_shift, class_scale_shift]
+            scale_shift_list.append(class_scale_shift)
+
         if self.downsample is not None:
             if self.use_checkpoint:
                 x = checkpoint(self.downsample, x,
@@ -874,26 +878,3 @@ class AttnLayer(nn.Module):
             nn.init.constant_(blk.norm1.weight, 0)
             nn.init.constant_(blk.norm2.bias, 0)
             nn.init.constant_(blk.norm2.weight, 0)
-
-class Output2D(nn.Module):
-    def __init__(self, in_channels, out_channels, act=None):
-        super().__init__()
-        conv_out_channels = in_channels // 2
-        self.conv_5x5 = nn.Conv2d(in_channels=in_channels,
-                                  out_channels=conv_out_channels,
-                                  kernel_size=5, padding=2)
-        self.conv_3x3 = nn.Conv2d(in_channels=in_channels,
-                                  out_channels=conv_out_channels,
-                                  kernel_size=3, padding=1)
-        self.concat_conv = nn.Conv2d(in_channels=conv_out_channels * 2,
-                                        out_channels=out_channels,
-                                        kernel_size=3, padding=1)
-        self.act = get_act(act)
-
-    def forward(self, x):
-        conv_5x5 = self.conv_5x5(x)
-        conv_3x3 = self.conv_3x3(x)
-        output = torch.cat([conv_5x5, conv_3x3], dim=1)
-        output = self.concat_conv(output)
-        output = self.act(output)
-        return output

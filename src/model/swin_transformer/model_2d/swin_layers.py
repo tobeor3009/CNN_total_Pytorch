@@ -781,3 +781,26 @@ class PatchEmbedding(nn.Module):
             self.pos_embed(pos).unsqueeze(0).repeat(B, 1, 1)
 
         return embed
+
+class Output2D(nn.Module):
+    def __init__(self, in_channels, out_channels, act=None):
+        super().__init__()
+        conv_out_channels = in_channels // 2
+        self.conv_5x5 = nn.Conv2d(in_channels=in_channels,
+                                  out_channels=conv_out_channels,
+                                  kernel_size=5, padding=2)
+        self.conv_3x3 = nn.Conv2d(in_channels=in_channels,
+                                  out_channels=conv_out_channels,
+                                  kernel_size=3, padding=1)
+        self.concat_conv = nn.Conv2d(in_channels=conv_out_channels * 2,
+                                        out_channels=out_channels,
+                                        kernel_size=3, padding=1)
+        self.act = get_act(act)
+
+    def forward(self, x):
+        conv_5x5 = self.conv_5x5(x)
+        conv_3x3 = self.conv_3x3(x)
+        output = torch.cat([conv_5x5, conv_3x3], dim=1)
+        output = self.concat_conv(output)
+        output = self.act(output)
+        return output

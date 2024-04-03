@@ -44,7 +44,6 @@ class SwinDiffusion(nn.Module):
                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                 norm_layer=nn.LayerNorm, patch_norm=True, skip_connect=True,
                 use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0],
-                self_condition=False
                 ):
         super().__init__()
         cond_residuial = True
@@ -62,11 +61,6 @@ class SwinDiffusion(nn.Module):
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.mlp_ratio = mlp_ratio
         self.skip_connect = skip_connect
-        self.self_condition = self_condition
-
-        if self.self_condition:
-            in_chans = in_chans * 2
-
         time_emb_dim = embed_dim * 8
         if exists(num_class_embeds):
             class_emb_dim = embed_dim * 8
@@ -278,7 +272,7 @@ class SwinDiffusion(nn.Module):
                                     use_checkpoint=use_checkpoint,
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
-                                    class_emb_dim=class_emb_dim)
+                                    class_emb_dim=None)
             layer_2 = deepcopy(layer_1)
             layer_3 = CondLayer(dim=layer_dim,
                                     input_resolution=feature_resolution,
@@ -296,7 +290,7 @@ class SwinDiffusion(nn.Module):
                                     use_checkpoint=use_checkpoint,
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
-                                    class_emb_dim=class_emb_dim)
+                                    class_emb_dim=None)
             cond_layer_1 = BasicLayerV2(dim=layer_dim,
                                     input_resolution=feature_resolution,
                                     depth=depths[i_layer],
@@ -312,7 +306,7 @@ class SwinDiffusion(nn.Module):
                                     use_checkpoint=use_checkpoint,
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
-                                    class_emb_dim=class_emb_dim,
+                                    class_emb_dim=None,
                                     use_residual=cond_residuial)
             cond_layer_2 = deepcopy(cond_layer_1)
             cond_layer_3 = BasicLayerV2(dim=layer_dim,
@@ -331,7 +325,7 @@ class SwinDiffusion(nn.Module):
                                     use_checkpoint=use_checkpoint,
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
-                                    class_emb_dim=class_emb_dim,
+                                    class_emb_dim=None,
                                     use_residual=cond_residuial)
             self.skip_conv_layers_1.append(skip_conv_layer_1)
             self.skip_conv_layers_2.append(skip_conv_layer_2)
@@ -379,12 +373,11 @@ class SwinDiffusion(nn.Module):
     def no_weight_decay_keywords(self):
         return {"cpb_mlp", "logit_scale", 'relative_position_bias_table'}
 
-    def forward(self, x, time, cond=None, x_self_cond=None, class_labels=None):
-
+    def forward(self, x, timesteps, context=None, class_labels=None):
+        
+        time = timesteps
+        cond = context 
         time_emb = self.time_mlp(time)
-        if self.self_condition:
-            x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
-            x = torch.cat((x_self_cond, x), dim = 1)
 
         if self.num_class_embeds is not None:
             if class_labels is None:
@@ -440,17 +433,17 @@ class SwinDiffusion(nn.Module):
             skip_x, skip_cond = skip_connect_list_1[idx]
             x = skip_conv_layer_1(x, skip_x)
             cond = cond_skip_conv_layer_1(x, skip_cond)
-            cond = cond_layer_1(x, time_emb=time_emb, class_emb=class_emb)
-            x = layer_1(x, time_emb=time_emb, cond_emb=cond, class_emb=class_emb)
+            cond = cond_layer_1(x, time_emb=time_emb, class_emb=None)
+            x = layer_1(x, time_emb=time_emb, cond_emb=cond, class_emb=None)
 
             skip_x, skip_cond = skip_connect_list_2[idx]
             x = skip_conv_layer_2(x, skip_x)
             cond = cond_skip_conv_layer_2(x, skip_cond)
-            cond = cond_layer_2(x, time_emb=time_emb, class_emb=class_emb)
-            x = layer_2(x, time_emb=time_emb, cond_emb=cond, class_emb=class_emb)
+            cond = cond_layer_2(x, time_emb=time_emb, class_emb=None)
+            x = layer_2(x, time_emb=time_emb, cond_emb=cond, class_emb=None)
 
-            cond = cond_layer_3(x, time_emb=time_emb, class_emb=class_emb)
-            x = layer_3(x, time_emb=time_emb, cond_emb=cond, class_emb=class_emb)
+            cond = cond_layer_3(x, time_emb=time_emb, class_emb=None)
+            x = layer_3(x, time_emb=time_emb, cond_emb=cond, class_emb=None)
 
         x = self.seg_final_expanding(x)
         x = self.seg_final_conv(x)
