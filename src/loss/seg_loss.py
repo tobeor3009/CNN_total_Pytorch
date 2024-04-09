@@ -165,29 +165,29 @@ def get_propotional_bce_focal_loss(y_pred, y_true):
 
 def get_loss_fn(loss_select):
     if loss_select == "dice":
-        region_loss = partial(get_dice_loss)
+        region_loss = get_dice_loss
     elif loss_select == "tversky":
-        region_loss = partial(get_tversky_loss)
+        region_loss = get_tversky_loss
     elif loss_select == "propotional":
-        region_loss = partial(get_propotional_loss)
+        region_loss = get_propotional_loss
     elif loss_select == "dice_bce":
-        region_loss = partial(get_dice_bce_loss)
+        region_loss = get_dice_bce_loss
     elif loss_select == "tversky_bce":
-        region_loss = partial(get_tversky_bce_loss)
+        region_loss = get_tversky_bce_loss
     elif loss_select == "propotional_bce":
-        region_loss = partial(get_propotional_bce_loss)
+        region_loss = get_propotional_bce_loss
     elif loss_select == "dice_focal":
-        region_loss = partial(get_dice_focal_loss)
+        region_loss = get_dice_focal_loss
     elif loss_select == "tversky_focal":
-        region_loss = partial(get_tversky_focal_loss)
+        region_loss = get_tversky_focal_loss
     elif loss_select == "propotional_focal":
-        region_loss = partial(get_propotional_focal_loss)
+        region_loss = get_propotional_focal_loss
     elif loss_select == "dice_bce_focal":
-        region_loss = partial(get_dice_bce_focal_loss)
+        region_loss = get_dice_bce_focal_loss
     elif loss_select == "tversky_bce_focal":
-        region_loss = partial(get_tversky_bce_focal_loss)
+        region_loss = get_tversky_bce_focal_loss
     elif loss_select == "propotional_bce_focal":
-        region_loss = partial(get_propotional_bce_focal_loss)
+        region_loss = get_propotional_bce_focal_loss
 
     def final_loss_fn(y_pred, y_true):
         C = y_true.shape[1]
