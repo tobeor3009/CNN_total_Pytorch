@@ -1,5 +1,4 @@
 import torch
-from functools import partial
 SMOOTH = 1e-7
 
 def get_clip(y_pred, y_true, smooth):
