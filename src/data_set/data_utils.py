@@ -36,7 +36,7 @@ elastic_tranform = A.ElasticTransform(always_apply=False, p=0.5,
                                       alpha_affine=2.009999990463257, interpolation=1, border_mode=1,
                                       value=(0, 0, 0), mask_value=None, approximate=False)
 
-brightness_value = 0.2
+brightness_value = 0.1
 brightness_contrast_transform = A.OneOf([
     A.RandomBrightnessContrast(
         brightness_limit=(-brightness_value, brightness_value),
@@ -75,6 +75,8 @@ def get_resized_array(image_array, target_size, interpolation):
 
 def get_augumented_array(image_array, augmentation_proba, augmentation_policy_dict):
     final_transform_list = []
+    if augmentation_policy_dict["positional"] is True:
+        final_transform_list.append("positional_transform")
     if augmentation_policy_dict["noise"] is True:
         final_transform_list.append(noise_transform)
     if augmentation_policy_dict["elastic"] is True:
@@ -86,10 +88,7 @@ def get_augumented_array(image_array, augmentation_proba, augmentation_policy_di
     if augmentation_policy_dict["to_jpeg"] is True:
         final_transform_list.append(to_jpeg_transform)
 
-    transform_1 = positional_transform
-    transform_2 = A.OneOf(final_transform_list, p=1)
-    final_transform = A.Compose([transform_1, transform_2],
-                                p=augmentation_proba)
+    final_transform = A.Compose(final_transform_list, p=augmentation_proba)
 
     if augmentation_proba == 0:
         return image_array
@@ -100,6 +99,8 @@ def get_augumented_array(image_array, augmentation_proba, augmentation_policy_di
 def get_seg_augumented_array(image_array, mask_array,
                              augmentation_proba, augmentation_policy_dict):
     final_transform_list = []
+    if augmentation_policy_dict["positional"] is True:
+        final_transform_list.append("positional_transform")
     if augmentation_policy_dict["noise"] is True:
         final_transform_list.append(noise_transform)
     if augmentation_policy_dict["elastic"] is True:
@@ -111,10 +112,8 @@ def get_seg_augumented_array(image_array, mask_array,
     if augmentation_policy_dict["to_jpeg"] is True:
         final_transform_list.append(to_jpeg_transform)
 
-    transform_1 = positional_transform
-    transform_2 = A.OneOf(final_transform_list, p=1)
-    final_transform = A.Compose([transform_1, transform_2],
-                                p=augmentation_proba)
+    final_transform = A.Compose(final_transform_list, p=augmentation_proba)
+
 
     if augmentation_proba == 0:
         return image_array, mask_array

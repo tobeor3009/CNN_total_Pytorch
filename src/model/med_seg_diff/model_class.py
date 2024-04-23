@@ -269,7 +269,11 @@ class MedSegDiff(nn.Module):
     def sample(self, cond_img, class_label):
         batch_size, device, dtype = cond_img.shape[0], self.device, self.dtype
         cond_img = cond_img.to(device=device, dtype=dtype)
-        class_label = class_label.to(device=device, dtype=torch.long)
+        if isinstance(class_label, (list, tuple)):
+            class_label = [item.to(device=device, dtype=torch.long)
+                           for item in class_label]
+        else:
+            class_label = class_label.to(device=device, dtype=torch.long)
         image_size, mask_channels = self.image_size, self.mask_channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
         return sample_fn((batch_size, mask_channels, image_size, image_size), cond_img, class_label).float()
@@ -329,7 +333,12 @@ class MedSegDiff(nn.Module):
         device, dtype = self.device, self.dtype
         img = img.to(device=device, dtype=dtype)
         cond_img = cond_img.to(device)
-        class_label = class_label.to(device=device, dtype=torch.long)
+        
+        if isinstance(class_label, (list, tuple)):
+            class_label = [item.to(device=device, dtype=torch.long)
+                           for item in class_label]
+        else:
+            class_label = class_label.to(device=device, dtype=torch.long)
 
         b, c, h, w, device, img_size, img_channels, mask_channels = *img.shape, img.device, self.image_size, self.input_img_channels, self.mask_channels
 

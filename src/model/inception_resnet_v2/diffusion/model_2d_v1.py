@@ -42,7 +42,7 @@ class InceptionResNetV2_UNet(nn.Module):
             block_depth_list = block_depth_info
         assert isinstance(num_class_embeds, int) and num_class_embeds > 0, "you need to assign positive int to num_class_embeds"
         
-        # for compability with Medsegdiff 
+        # for compability with Medsegdiff
         self.image_size = img_size
         self.input_img_channels = cond_channel
         self.mask_channels = in_channel

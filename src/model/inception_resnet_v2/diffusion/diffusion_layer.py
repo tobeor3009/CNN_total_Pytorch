@@ -37,7 +37,10 @@ class LinearAttention(nn.Module):
         self.dim_head = dim_head
         self.scale = (dim_head / num_heads) ** -0.5
         self.prenorm = LayerNorm(dim)
-        self.to_qkv = nn.Conv2d(dim, dim_head * 3, 1, bias=False)
+        # self.to_qkv = nn.Conv2d(dim, dim_head * 3, 1, bias=False, groups=num_heads)
+        self.to_q = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        self.to_k = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        self.to_v = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
         self.to_out = nn.Sequential(
             nn.Conv2d(dim_head, dim, 1),
             LayerNorm(dim)
@@ -47,9 +50,10 @@ class LinearAttention(nn.Module):
         b, c, h, w = x.shape
 
         x = self.prenorm(x)
-        qkv = self.to_qkv(x)
-        qkv = qkv.chunk(3, dim = 1)          
-        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), qkv)
+        q = self.to_q(x)
+        k = self.to_k(x)
+        v = self.to_v(x)
+        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), (q, k, v))
 
         q = q.softmax(dim = -2)
         k = k.softmax(dim = -1)
@@ -73,7 +77,10 @@ class Attention(nn.Module):
         self.scale = (dim_head / num_heads) ** -0.5
 
         self.prenorm = LayerNorm(dim)
-        self.to_qkv = nn.Conv2d(dim, dim_head * 3, 1, bias = False)
+        # self.to_qkv = nn.Conv2d(dim, dim_head * 3, 1, bias=False, groups=num_heads)
+        self.to_q = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        self.to_k = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        self.to_v = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
         self.to_out = nn.Conv2d(dim_head, dim, 1)
 
     def forward(self, x):
@@ -81,9 +88,10 @@ class Attention(nn.Module):
 
         x = self.prenorm(x)
 
-        qkv = self.to_qkv(x)
-        qkv = qkv.chunk(3, dim = 1)
-        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), qkv)
+        q = self.to_q(x)
+        k = self.to_k(x)
+        v = self.to_v(x)
+        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), (q, k, v))
         q = q * self.scale
         sim = einsum('b h d i, b h d j -> b h i j', q, k)
         attn = sim.softmax(dim = -1)
@@ -133,21 +141,23 @@ class BaseBlock2D(nn.Module):
         act = self.act_layer(norm)
         return act
 
-# attn_info.keys = ["emb_type_list", "num_heads", "full_attn"]
-class ConvBlock2D(nn.Module):
+#attn_info.keys = ["emb_type_list", "num_heads", "full_attn"]
+class ResNetBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
                  norm="batch", groups=1, act=DEFAULT_ACT, bias=False,
-                 emb_dim_list=None, attn_info=None, use_checkpoint=False):
+                 emb_dim_list=[], attn_info=None, use_checkpoint=False):
         super().__init__()
 
-        assert emb_dim_list is not None, f"You need to set emb_dim_list. current emb_dim_list: {emb_dim_list}"
         self.attn_info = attn_info
         self.use_checkpoint = use_checkpoint
         # you always have time embedding
-        emb_type_list = ["seq"]
+        emb_type_list = []
+        if emb_dim_list is None:
+            emb_dim_list = []
         if exists(attn_info):
-            emb_type_list += attn_info["emb_type_list"]
+            if exists(attn_info["emb_type_list"]):
+                emb_type_list += attn_info["emb_type_list"]
         emb_block_list = []
         for emb_dim, emb_type in zip(emb_dim_list, emb_type_list):
             if emb_type == "seq":
@@ -201,7 +211,67 @@ class ConvBlock2D(nn.Module):
         x = x + self.residiual_conv(skip_x)
         x = self.attn(x)
         return x
-    
+
+class ConvBlock2D(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, padding='same',
+                 norm="batch", groups=1, act=DEFAULT_ACT, bias=False,
+                 emb_dim_list=[], attn_info=None, use_checkpoint=False):
+        super().__init__()
+
+        self.attn_info = attn_info
+        self.use_checkpoint = use_checkpoint
+        # you always have time embedding
+        emb_type_list = []
+        if emb_dim_list is None:
+            emb_dim_list = []
+        if exists(attn_info):
+            if exists(attn_info["emb_type_list"]):
+                emb_type_list += attn_info["emb_type_list"]
+        emb_block_list = []
+        for emb_dim, emb_type in zip(emb_dim_list, emb_type_list):
+            if emb_type == "seq":
+                emb_block = nn.Sequential(
+                                            nn.SiLU(),
+                                            nn.Linear(emb_dim, out_channels * 2)
+                                        )
+            elif emb_type == "2d":
+                emb_block = BaseBlock2D(emb_dim, out_channels * 2, kernel_size,
+                                        1, padding, norm, groups, act, bias)
+            else:
+                raise Exception("emb_type must be seq or 2d")
+            emb_block_list.append(emb_block)
+        self.emb_block_list = nn.ModuleList(emb_block_list) 
+
+        self.block_1 = BaseBlock2D(in_channels, out_channels, kernel_size,
+                                    stride, padding, norm, groups, act, bias)
+        if attn_info is None:
+            self.attn = nn.Identity()
+        elif attn_info["full_attn"]:
+            self.attn = Attention(out_channels, attn_info["num_heads"])
+        else:
+            self.attn = LinearAttention(out_channels, attn_info["num_heads"])
+
+    def forward(self, x, *args):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x, *args,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x, *args)
+
+    def _forward_impl(self, x, *args):
+        scale_shift_list = []
+        for emb_block, emb in zip(self.emb_block_list, args):
+            emb = emb_block(emb)
+            if emb.ndim == 2:
+                emb = rearrange(emb, 'b c -> b c 1 1')
+            scale_shift = emb.chunk(2, dim=1)
+            scale_shift_list.append(scale_shift)
+        x = self.block_1(x, scale_shift_list)
+        x = self.attn(x)
+        return x
+
+
 class Inception_Resnet_Block2D(nn.Module):
     def __init__(self, in_channels, scale, block_type, block_size=16,
                  include_cbam=True, norm="batch", act=DEFAULT_ACT, 

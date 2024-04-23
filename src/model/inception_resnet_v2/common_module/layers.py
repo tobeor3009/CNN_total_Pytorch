@@ -78,7 +78,7 @@ def get_norm(norm, shape, mode="2d"):
             norm_layer = nn.BatchNorm1d(num_features=shape[0],
                                         affine=False)
     elif norm == "group":
-        norm_layer = nn.GroupNorm(num_groups=8, num_channels=shape[0])
+        norm_layer = nn.GroupNorm(num_groups=4, num_channels=shape[0])
     elif norm is None:
         norm_layer = nn.Identity()
     else:
