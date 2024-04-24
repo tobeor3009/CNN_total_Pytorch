@@ -76,7 +76,7 @@ def get_resized_array(image_array, target_size, interpolation):
 def get_augumented_array(image_array, augmentation_proba, augmentation_policy_dict):
     final_transform_list = []
     if augmentation_policy_dict["positional"] is True:
-        final_transform_list.append("positional_transform")
+        final_transform_list.append(positional_transform)
     if augmentation_policy_dict["noise"] is True:
         final_transform_list.append(noise_transform)
     if augmentation_policy_dict["elastic"] is True:
@@ -100,7 +100,7 @@ def get_seg_augumented_array(image_array, mask_array,
                              augmentation_proba, augmentation_policy_dict):
     final_transform_list = []
     if augmentation_policy_dict["positional"] is True:
-        final_transform_list.append("positional_transform")
+        final_transform_list.append(positional_transform)
     if augmentation_policy_dict["noise"] is True:
         final_transform_list.append(noise_transform)
     if augmentation_policy_dict["elastic"] is True:
@@ -113,7 +113,6 @@ def get_seg_augumented_array(image_array, mask_array,
         final_transform_list.append(to_jpeg_transform)
 
     final_transform = A.Compose(final_transform_list, p=augmentation_proba)
-
 
     if augmentation_proba == 0:
         return image_array, mask_array
