@@ -17,7 +17,12 @@ class BaseDataset(data.Dataset):
             self.data_len = len(self.image_path_list)
 
         return self.data_len
-
+    
+    def check_class_list_cached(self):
+        for value in self.class_list:
+            if value is None:
+                return False
+        return True
 
 class DatasetCache(data.Dataset):
     def __init__(self, dataset, preloading=True):
