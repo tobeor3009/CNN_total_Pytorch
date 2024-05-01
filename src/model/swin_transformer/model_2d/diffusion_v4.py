@@ -7,7 +7,7 @@ import numpy as np
 from torch import nn
 from copy import deepcopy
 from .swin_layers import PatchEmbed, PatchMerging, PatchExpanding, Output2D
-from .swin_layers_diffusion import BasicLayerV2, CondLayer, SkipConv1D
+from .swin_layers_diffusion_2d import BasicLayerV2, CondLayer, SkipConv1D
 
 def exists(x):
     return x is not None

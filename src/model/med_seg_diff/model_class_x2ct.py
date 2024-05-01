@@ -2,14 +2,16 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
+from collections import namedtuple
 import random
+import math
 from tqdm import tqdm
 from functools import partial
-
 from .util import normalize_to_neg_one_to_one, unnormalize_to_zero_to_one
 from .util import linear_beta_schedule, cosine_beta_schedule, sigmoid_beta_schedule
 from .util import exists, default, identity, identity, extract
 from .util import ModelPrediction
+
 class MedSegDiff(nn.Module):
     def __init__(
         self,
@@ -131,7 +133,8 @@ class MedSegDiff(nn.Module):
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def model_predictions(self, x, t, c, x_self_cond = None, class_label=None, clip_x_start = False):
+    def model_predictions(self, x, t, c, 
+                          x_self_cond = None, class_label=None, clip_x_start = False):
         model_output = self.model(x, t, c, x_self_cond, class_label)
         maybe_clip = partial(torch.clamp, min = -1., max = 1.) if clip_x_start else identity
 
@@ -153,7 +156,7 @@ class MedSegDiff(nn.Module):
 
         return ModelPrediction(pred_noise, x_start)
 
-    def p_mean_variance(self, x, t, c, x_self_cond=None, class_label=None, clip_denoised=True):
+    def p_mean_variance(self, x, t, c, x_self_cond=None, class_label=None, clip_denoised=False):
         preds = self.model_predictions(x, t, c, x_self_cond, class_label)
         x_start = preds.pred_x_start
 
@@ -164,7 +167,7 @@ class MedSegDiff(nn.Module):
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
     @torch.no_grad()
-    def p_sample(self, x, t, c, x_self_cond=None, class_label=None, clip_denoised=True):
+    def p_sample(self, x, t, c, x_self_cond=None, class_label=None, clip_denoised=False):
         b, *_, device = *x.shape, x.device
         batched_times = torch.full((x.shape[0],), t, device = x.device, dtype = torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(x=x, t=batched_times, c=c, 
@@ -190,7 +193,7 @@ class MedSegDiff(nn.Module):
         return img
 
     @torch.no_grad()
-    def ddim_sample(self, shape, cond_img, class_label, clip_denoised=True):
+    def ddim_sample(self, shape, cond_img, class_label, clip_denoised=False):
         batch, device, total_timesteps = shape[0], self.betas.device, self.num_timesteps
         sampling_timesteps, eta, objective = self.sampling_timesteps, self.ddim_sampling_eta, self.objective
 
@@ -231,14 +234,15 @@ class MedSegDiff(nn.Module):
     def sample(self, cond_img, class_label):
         batch_size, device, dtype = cond_img.shape[0], self.device, self.dtype
         cond_img = cond_img.to(device=device, dtype=dtype)
-        if isinstance(class_label, (list, tuple)):
-            class_label = [item.to(device=device, dtype=torch.long)
-                           for item in class_label]
-        else:
-            class_label = class_label.to(device=device, dtype=torch.long)
+        if exists(class_label):
+            if isinstance(class_label, (list, tuple)):
+                class_label = [item.to(device=device, dtype=torch.long)
+                            for item in class_label]
+            else:
+                class_label = class_label.to(device=device, dtype=torch.long)
         image_size, mask_channels = self.image_size, self.mask_channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn((batch_size, mask_channels, image_size, image_size), cond_img, class_label).float()
+        return sample_fn((batch_size, mask_channels, image_size, image_size, image_size), cond_img, class_label).float()
 
     def q_sample(self, x_start, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
@@ -249,7 +253,6 @@ class MedSegDiff(nn.Module):
         )
 
     def p_losses(self, x_start, t, cond, class_label, noise = None):
-        b, c, h, w = x_start.shape
         noise = default(noise, lambda: torch.randn_like(x_start))
 
         # noise sample
@@ -283,37 +286,33 @@ class MedSegDiff(nn.Module):
         else:
             raise ValueError(f'unknown objective {self.objective}')
 
-        return self.loss_fn(model_out, target, reduction='none').mean(dim=[1, 2, 3]), t
+        return self.loss_fn(model_out, target, reduction='none').mean(dim=[1, 2, 3, 4]), t
 
     def forward(self, img, cond_img, class_label, *args, **kwargs):
-        if img.ndim == 3:
-            img = rearrange(img, 'b h w -> b 1 h w')
+        b = img.size(0)
 
-        if cond_img.ndim == 3:
+        if img.ndim == 3:
+            img = rearrange(img, 'b h w z -> b 1 h w z')
+
+        if cond_img.ndim == 2:
             cond_img = rearrange(cond_img, 'b h w -> b 1 h w')
 
         device, dtype = self.device, self.dtype
         img = img.to(device=device, dtype=dtype)
         cond_img = cond_img.to(device)
         
-        if isinstance(class_label, (list, tuple)):
-            class_label = [item.to(device=device, dtype=torch.long)
-                           for item in class_label]
-        else:
-            class_label = class_label.to(device=device, dtype=torch.long)
-
-        b, c, h, w, device, img_size, img_channels, mask_channels = *img.shape, img.device, self.image_size, self.input_img_channels, self.mask_channels
-
-        assert h == img_size and w == img_size, f'height and width of image must be {img_size}'
-        assert cond_img.shape[1] == img_channels, f'your input medical must have {img_channels} channels'
-        assert img.shape[1] == mask_channels, f'the segmented image must have {mask_channels} channels'
-
+        if exists(class_label):
+            if isinstance(class_label, (list, tuple)):
+                class_label = [item.to(device=device, dtype=torch.long)
+                            for item in class_label]
+            else:
+                class_label = class_label.to(device=device, dtype=torch.long)
         times = self.get_time(b).to(device=device, dtype=torch.long)
         img = normalize_to_neg_one_to_one(img)
         return self.p_losses(img, times, cond_img, class_label, *args, **kwargs)
     
     def get_time(self, batch_size):
-        left_time_num = len(self.timepool)                  
+        left_time_num = len(self.timepool)
         if left_time_num == 0:
             self.timepool = self.get_timepool()
         if left_time_num >= batch_size:

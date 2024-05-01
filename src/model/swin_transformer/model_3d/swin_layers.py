@@ -347,7 +347,7 @@ class SwinTransformerBlock(nn.Module):
     def forward(self, x):
         Z, H, W = self.input_resolution
         B, L, C = x.shape
-        assert L == Z * H * W, f"input feature has wrong size {L} != {H}, {W}"
+        assert L == Z * H * W, f"input feature has wrong size {L} != {Z}, {H}, {W}"
 
         shortcut = x
         x = x.view(B, Z, H, W, C)
@@ -751,7 +751,7 @@ class PatchEmbed(nn.Module):
     def forward(self, x):
         B, C, Z, H, W = x.shape
         # FIXME look at relaxing size constraints
-        assert Z == self.img_size[1] and H == self.img_size[1] and W == self.img_size[2], \
+        assert Z == self.img_size[0] and H == self.img_size[1] and W == self.img_size[2], \
             f"Input simage size ({Z}*{H}*{W}) doesn't match model ({np.prod(self.img_size)})."
         x = self.proj(x).flatten(2).transpose(1, 2)  # B Pz*Ph*Pw C
         if self.norm is not None:

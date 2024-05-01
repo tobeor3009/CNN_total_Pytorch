@@ -7,9 +7,9 @@ from functools import partial
 from torch import nn
 from copy import deepcopy
 from .swin_layers import Output2D
-from .swin_layers_diffusion import BasicLayerV2, CondLayer, SkipConv1D, AttentionPool1d
-from .swin_layers_diffusion import exists, default, extract, SinusoidalPosEmb
-from .swin_layers_diffusion import PatchEmbed, PatchMerging, PatchExpanding
+from .swin_layers_diffusion_2d import BasicLayerV2, CondLayer, SkipConv1D, AttentionPool1d
+from .swin_layers_diffusion_2d import exists, default, extract, SinusoidalPosEmb
+from .swin_layers_diffusion_2d import PatchEmbed, PatchMerging, PatchExpanding
 
 
 class GroupNormChannelFirst(nn.GroupNorm):

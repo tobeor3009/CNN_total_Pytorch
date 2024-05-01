@@ -2,14 +2,54 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
+from collections import namedtuple
 import random
+import math
 from tqdm import tqdm
 from functools import partial
+ModelPrediction = namedtuple('ModelPrediction', ['pred_noise', 'pred_x_start'])
 
-from .util import normalize_to_neg_one_to_one, unnormalize_to_zero_to_one
-from .util import linear_beta_schedule, cosine_beta_schedule, sigmoid_beta_schedule
-from .util import exists, default, identity, identity, extract
-from .util import ModelPrediction
+# helpers functions
+def normalize_to_neg_one_to_one(img):
+    return img * 2 - 1
+
+def unnormalize_to_zero_to_one(t):
+    return (t + 1) * 0.5
+
+def exists(x):
+    return x is not None
+
+def default(val, d):
+    if exists(val):
+        return val
+    return d() if callable(d) else d
+
+def identity(t, *args, **kwargs):
+    return t
+
+def extract(a, t, x_shape):
+    b, *_ = t.shape
+    out = a.gather(-1, t)
+    return out.reshape(b, *((1,) * (len(x_shape) - 1)))
+
+def linear_beta_schedule(timesteps):
+    scale = 1000 / timesteps
+    beta_start = scale * 0.0001
+    beta_end = scale * 0.02
+    return torch.linspace(beta_start, beta_end, timesteps, dtype = torch.float64)
+
+def cosine_beta_schedule(timesteps, s = 0.008):
+    """
+    cosine schedule
+    as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
+    """
+    steps = timesteps + 1
+    x = torch.linspace(0, timesteps, steps, dtype = torch.float64)
+    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    return torch.clip(betas, 0, 0.999)
+
 class MedSegDiff(nn.Module):
     def __init__(
         self,
@@ -39,8 +79,6 @@ class MedSegDiff(nn.Module):
             betas = linear_beta_schedule(timesteps)
         elif beta_schedule == 'cosine':
             betas = cosine_beta_schedule(timesteps)
-        elif beta_schedule == 'sigmoid':
-            betas = sigmoid_beta_schedule(timesteps)
         else:
             raise ValueError(f'unknown beta schedule {beta_schedule}')
 
@@ -231,14 +269,15 @@ class MedSegDiff(nn.Module):
     def sample(self, cond_img, class_label):
         batch_size, device, dtype = cond_img.shape[0], self.device, self.dtype
         cond_img = cond_img.to(device=device, dtype=dtype)
-        if isinstance(class_label, (list, tuple)):
-            class_label = [item.to(device=device, dtype=torch.long)
-                           for item in class_label]
-        else:
-            class_label = class_label.to(device=device, dtype=torch.long)
+        if exists(class_label):
+            if isinstance(class_label, (list, tuple)):
+                class_label = [item.to(device=device, dtype=torch.long)
+                            for item in class_label]
+            else:
+                class_label = class_label.to(device=device, dtype=torch.long)
         image_size, mask_channels = self.image_size, self.mask_channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn((batch_size, mask_channels, image_size, image_size), cond_img, class_label).float()
+        return sample_fn((batch_size, mask_channels, image_size, image_size, image_size), cond_img, class_label).float()
 
     def q_sample(self, x_start, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
@@ -249,7 +288,6 @@ class MedSegDiff(nn.Module):
         )
 
     def p_losses(self, x_start, t, cond, class_label, noise = None):
-        b, c, h, w = x_start.shape
         noise = default(noise, lambda: torch.randn_like(x_start))
 
         # noise sample
@@ -283,31 +321,27 @@ class MedSegDiff(nn.Module):
         else:
             raise ValueError(f'unknown objective {self.objective}')
 
-        return self.loss_fn(model_out, target, reduction='none').mean(dim=[1, 2, 3]), t
+        return self.loss_fn(model_out, target, reduction='none').mean(dim=[1, 2, 3, 4]), t
 
     def forward(self, img, cond_img, class_label, *args, **kwargs):
+        b = img.size(0)
+
         if img.ndim == 3:
-            img = rearrange(img, 'b h w -> b 1 h w')
+            img = rearrange(img, 'b h w z -> b 1 h w z')
 
         if cond_img.ndim == 3:
-            cond_img = rearrange(cond_img, 'b h w -> b 1 h w')
+            cond_img = rearrange(cond_img, 'b h w z -> b 1 h w z')
 
         device, dtype = self.device, self.dtype
         img = img.to(device=device, dtype=dtype)
         cond_img = cond_img.to(device)
         
-        if isinstance(class_label, (list, tuple)):
-            class_label = [item.to(device=device, dtype=torch.long)
-                           for item in class_label]
-        else:
-            class_label = class_label.to(device=device, dtype=torch.long)
-
-        b, c, h, w, device, img_size, img_channels, mask_channels = *img.shape, img.device, self.image_size, self.input_img_channels, self.mask_channels
-
-        assert h == img_size and w == img_size, f'height and width of image must be {img_size}'
-        assert cond_img.shape[1] == img_channels, f'your input medical must have {img_channels} channels'
-        assert img.shape[1] == mask_channels, f'the segmented image must have {mask_channels} channels'
-
+        if exists(class_label):
+            if isinstance(class_label, (list, tuple)):
+                class_label = [item.to(device=device, dtype=torch.long)
+                            for item in class_label]
+            else:
+                class_label = class_label.to(device=device, dtype=torch.long)
         times = self.get_time(b).to(device=device, dtype=torch.long)
         img = normalize_to_neg_one_to_one(img)
         return self.p_losses(img, times, cond_img, class_label, *args, **kwargs)
@@ -317,15 +351,15 @@ class MedSegDiff(nn.Module):
         if left_time_num == 0:
             self.timepool = self.get_timepool()
         if left_time_num >= batch_size:
-            time = [self.timepool.pop(random.randrange(len(self.timepool)))
+            time = [self.timepool.pop(random.randrange(len(self.timepool))) 
                     for _ in range(batch_size)]
         else:
             batch_size_1 = left_time_num
             batch_size_2 = batch_size - batch_size_1
-            time_1 = [self.timepool.pop(random.randrange(len(self.timepool)))
+            time_1 = [self.timepool.pop(random.randrange(len(self.timepool))) 
                     for _ in range(batch_size_1)]
             self.timepool = self.get_timepool()
-            time_2 = [self.timepool.pop(random.randrange(len(self.timepool)))
+            time_2 = [self.timepool.pop(random.randrange(len(self.timepool))) 
                     for _ in range(batch_size_2)]
             time = time_1 + time_2
         time = torch.tensor(time)

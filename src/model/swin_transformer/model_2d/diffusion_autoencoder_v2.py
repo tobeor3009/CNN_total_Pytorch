@@ -26,11 +26,12 @@ class SwinDiffusionUnet(nn.Module):
                 window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True,
                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.0,
                 norm_layer=default_norm, patch_norm=True, skip_connect=True,
-                use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0]
+                use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0],
+                self_condition=False
                 ):
         super().__init__()
         patch_size = int(patch_size)
-        # for compability with Medsegdiff 
+        # for compability with Medsegdiff
         self.image_size = img_size
         self.input_img_channels = cond_chans
         self.mask_channels = in_chans
@@ -43,7 +44,9 @@ class SwinDiffusionUnet(nn.Module):
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.mlp_ratio = mlp_ratio
         self.skip_connect = skip_connect
-
+        self.self_condition = self_condition
+        if self.self_condition:
+            in_chans = in_chans * 2
 
         time_emb_dim = embed_dim * 4
         self.time_mlp = nn.Sequential(
@@ -60,12 +63,15 @@ class SwinDiffusionUnet(nn.Module):
                                                 norm_layer=norm_layer, patch_norm=patch_norm,
                                                 use_checkpoint=use_checkpoint, pretrained_window_sizes=pretrained_window_sizes)
 
-        latent_dim = emb_chans + time_emb_dim * 3
 
         # class embedding
         self.num_class_embeds = num_class_embeds
         if num_class_embeds is not None:
             self.class_mlp = nn.Embedding(num_class_embeds, time_emb_dim)
+            latent_dim = emb_chans + time_emb_dim
+        else:
+            latent_dim = emb_chans
+
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate,
                                                 sum(depths))]  # stochastic depth decay rule
@@ -85,32 +91,12 @@ class SwinDiffusionUnet(nn.Module):
         self.pos_drop = nn.Dropout(p=drop_rate)
 
         # build layers
-        self.encode_layers_1 = nn.ModuleList()
-        self.encode_layers_2 = nn.ModuleList()
-        self.encode_layers_3 = nn.ModuleList()
+        self.encode_layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
             layer_dim = int(embed_dim * 2 ** i_layer)
             feature_resolution = np.array((patches_resolution[0] // (2 ** i_layer),
                                             patches_resolution[1] // (2 ** i_layer)))
-            layer_1 = BasicLayerV2(dim=layer_dim,
-                                    input_resolution=feature_resolution,
-                                    depth=depths[i_layer],
-                                    num_heads=num_heads[i_layer],
-                                    window_size=window_sizes[i_layer],
-                                    mlp_ratio=self.mlp_ratio,
-                                    qkv_bias=qkv_bias,
-                                    drop=drop_rate, attn_drop=attn_drop_rate,
-                                    drop_path=dpr[sum(depths[:i_layer]):sum(
-                                        depths[:i_layer + 1])],
-                                    norm_layer=norm_layer,
-                                    downsample=None,
-                                    use_checkpoint=use_checkpoint,
-                                    pretrained_window_size=pretrained_window_sizes[i_layer],
-                                    time_emb_dim=time_emb_dim,
-                                    class_emb_dim=latent_dim,
-                                    use_residual=True)
-            layer_2 = deepcopy(layer_1)
-            layer_3 = BasicLayerV2(dim=layer_dim,
+            encode_layer = BasicLayerV2(dim=layer_dim,
                                     input_resolution=feature_resolution,
                                     depth=depths[i_layer],
                                     num_heads=num_heads[i_layer],
@@ -126,10 +112,8 @@ class SwinDiffusionUnet(nn.Module):
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
                                     class_emb_dim=latent_dim,
-                                    use_residual=True)
-            self.encode_layers_1.append(layer_1)
-            self.encode_layers_2.append(layer_2)
-            self.encode_layers_3.append(layer_3)
+                                    use_residual=False)
+            self.encode_layers.append(encode_layer)
         depth_level = self.num_layers - 1
         feature_hw = (patches_resolution[0] // (2 ** depth_level),
                     patches_resolution[1] // (2 ** depth_level))
@@ -150,36 +134,15 @@ class SwinDiffusionUnet(nn.Module):
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
                                     class_emb_dim=latent_dim)
-        self.skip_conv_layers_1 = nn.ModuleList()
-        self.skip_conv_layers_2 = nn.ModuleList()
-        self.decode_layers_1 = nn.ModuleList()
-        self.decode_layers_2 = nn.ModuleList()
-        self.decode_layers_3 = nn.ModuleList()
+        self.skip_conv_layers = nn.ModuleList()
+        self.decode_layers = nn.ModuleList()
         for i_layer in range(self.num_layers - 1, -1, -1):
             layer_dim = int(embed_dim * 2 ** i_layer)
             feature_resolution = np.array((patches_resolution[0] // (2 ** i_layer),
                                             patches_resolution[1] // (2 ** i_layer)))
-            skip_conv_layer_1 = SkipConv1D(layer_dim * 2, layer_dim)
-            skip_conv_layer_2 = deepcopy(skip_conv_layer_1)
+            skip_conv_layer = SkipConv1D(layer_dim * 2, layer_dim)
 
-            layer_1 = BasicLayerV2(dim=layer_dim,
-                                    input_resolution=feature_resolution,
-                                    depth=depths[i_layer],
-                                    num_heads=num_heads[i_layer],
-                                    window_size=window_sizes[i_layer],
-                                    mlp_ratio=self.mlp_ratio,
-                                    qkv_bias=qkv_bias,
-                                    drop=drop_rate, attn_drop=attn_drop_rate,
-                                    drop_path=dpr[sum(depths[:i_layer]):sum(
-                                        depths[:i_layer + 1])],
-                                    norm_layer=norm_layer,
-                                    upsample=None,
-                                    use_checkpoint=use_checkpoint,
-                                    pretrained_window_size=pretrained_window_sizes[i_layer],
-                                    time_emb_dim=time_emb_dim,
-                                    class_emb_dim=latent_dim)
-            layer_2 = deepcopy(layer_1)
-            layer_3 = BasicLayerV2(dim=layer_dim,
+            decode_layer = BasicLayerV2(dim=layer_dim,
                                     input_resolution=feature_resolution,
                                     depth=depths[i_layer],
                                     num_heads=num_heads[i_layer],
@@ -196,11 +159,8 @@ class SwinDiffusionUnet(nn.Module):
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=time_emb_dim,
                                     class_emb_dim=latent_dim)
-            self.skip_conv_layers_1.append(skip_conv_layer_1)
-            self.skip_conv_layers_2.append(skip_conv_layer_2)
-            self.decode_layers_1.append(layer_1)
-            self.decode_layers_2.append(layer_2)
-            self.decode_layers_3.append(layer_3)
+            self.skip_conv_layers.append(skip_conv_layer)
+            self.decode_layers.append(decode_layer)
         self.seg_final_expanding = PatchExpanding(input_resolution=(patches_resolution[0] // (2 ** i_layer),
                                                                     patches_resolution[1] // (2 ** i_layer)),
                                                     dim=layer_dim,
@@ -211,10 +171,10 @@ class SwinDiffusionUnet(nn.Module):
         self.seg_final_conv = Output2D(layer_dim // 2, out_chans, act=out_act)
         self.apply(self._init_weights)
 
-        for bly in (self.encode_layers_1 + self.encode_layers_2 + self.encode_layers_3):
+        for bly in self.encode_layers:
             bly._init_respostnorm()
         self.mid_layer._init_respostnorm()
-        for bly in (self.decode_layers_1 + self.decode_layers_2 + self.decode_layers_3):
+        for bly in self.decode_layers:
             bly._init_respostnorm()
 
     def _init_weights(self, m):
@@ -234,57 +194,38 @@ class SwinDiffusionUnet(nn.Module):
     def no_weight_decay_keywords(self):
         return {"cpb_mlp", "logit_scale", 'relative_position_bias_table'}
 
-    def forward(self, x, timesteps, context=None, class_labels=None):
+    def forward(self, x, time, cond=None, x_self_cond=None, class_labels=None):
 
-        time = timesteps
-        cond = context
+        if self.self_condition:
+            x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
+            x = torch.cat((x_self_cond, x), dim = 1)
+
         time_emb = self.time_mlp(time)
         latent = self.latent_encoder(cond)
         if self.num_class_embeds is not None:
             if class_labels is None:
                 raise ValueError("class_labels should be provided when num_class_embeds > 0")
             class_emb = self.class_mlp(class_labels).to(dtype=x.dtype)
-            if class_emb.ndim == 3:
-                class_emb = class_emb.flatten(1)
             latent = torch.cat([latent, class_emb], dim=1)
-
 
         x = self.patch_embed(x)
         if self.ape:
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
 
-        skip_connect_list_1 = []
-        skip_connect_list_2 = []
-        for idx, (encode_layer_1, encode_layer_2, encode_layer_3) in enumerate(zip(self.encode_layers_1,
-                                                                                    self.encode_layers_2,
-                                                                                    self.encode_layers_3)):
-            x = encode_layer_1(x, time_emb=time_emb, class_emb=latent)
-            if idx < len(self.encode_layers_1):
-                skip_connect_list_1.insert(0, x)
-
-            x = encode_layer_2(x, time_emb=time_emb, class_emb=latent)
-            if idx < len(self.encode_layers_1):
-                skip_connect_list_2.insert(0, x)
-            x = encode_layer_3(x, time_emb=time_emb, class_emb=latent)
+        skip_connect_list = []
+        for idx, encode_layer in enumerate(self.encode_layers):
+            x = encode_layer(x, time_emb=time_emb, class_emb=latent)
+            if idx < len(self.encode_layers) - 1:
+                skip_connect_list.insert(0, x)
 
         x = self.mid_layer(x, time_emb=time_emb, class_emb=latent)
 
-        for idx, (skip_conv_layer_1, skip_conv_layer_2,
-                  layer_1, layer_2, layer_3) in enumerate(zip(self.skip_conv_layers_1,
-                                                            self.skip_conv_layers_2,
-                                                            self.decode_layers_1,
-                                                            self.decode_layers_2,
-                                                            self.decode_layers_3)):
-            skip_x = skip_connect_list_1[idx]
-            x = skip_conv_layer_1(x, skip_x)
-            x = layer_1(x, time_emb=time_emb, class_emb=latent)
-
-            skip_x = skip_connect_list_2[idx]
-            x = skip_conv_layer_2(x, skip_x)
-            x = layer_2(x, time_emb=time_emb, class_emb=latent)
-
-            x = layer_3(x, time_emb=time_emb, class_emb=latent)
+        for idx, (skip_conv_layer, decode_layer) in enumerate(zip(self.skip_conv_layers, self.decode_layers)):
+            if idx < len(self.decode_layers) - 1 and self.skip_connect:
+                skip_x = skip_connect_list[idx]
+                x = skip_conv_layer(x, skip_x)
+            x = decode_layer(x, time_emb=time_emb, class_emb=latent)
 
         x = self.seg_final_expanding(x)
         x = self.seg_final_conv(x)
@@ -333,32 +274,12 @@ class SwinDiffusionEncoder(nn.Module):
         self.pos_drop = nn.Dropout(p=drop_rate)
 
         # build layers
-        self.encode_layers_1 = nn.ModuleList()
-        self.encode_layers_2 = nn.ModuleList()
-        self.encode_layers_3 = nn.ModuleList()
+        self.encode_layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
             layer_dim = int(embed_dim * 2 ** i_layer)
             feature_resolution = np.array((patches_resolution[0] // (2 ** i_layer),
                                             patches_resolution[1] // (2 ** i_layer)))
-            layer_1 = BasicLayerV2(dim=layer_dim,
-                                    input_resolution=feature_resolution,
-                                    depth=depths[i_layer],
-                                    num_heads=num_heads[i_layer],
-                                    window_size=window_sizes[i_layer],
-                                    mlp_ratio=self.mlp_ratio,
-                                    qkv_bias=qkv_bias,
-                                    drop=drop_rate, attn_drop=attn_drop_rate,
-                                    drop_path=dpr[sum(depths[:i_layer]):sum(
-                                        depths[:i_layer + 1])],
-                                    norm_layer=norm_layer,
-                                    downsample=None,
-                                    use_checkpoint=use_checkpoint,
-                                    pretrained_window_size=pretrained_window_sizes[i_layer],
-                                    time_emb_dim=None,
-                                    class_emb_dim=None,
-                                    use_residual=True)
-            layer_2 = deepcopy(layer_1)
-            layer_3 = BasicLayerV2(dim=layer_dim,
+            encode_layer = BasicLayerV2(dim=layer_dim,
                                     input_resolution=feature_resolution,
                                     depth=depths[i_layer],
                                     num_heads=num_heads[i_layer],
@@ -374,10 +295,8 @@ class SwinDiffusionEncoder(nn.Module):
                                     pretrained_window_size=pretrained_window_sizes[i_layer],
                                     time_emb_dim=None,
                                     class_emb_dim=None,
-                                    use_residual=True)
-            self.encode_layers_1.append(layer_1)
-            self.encode_layers_2.append(layer_2)
-            self.encode_layers_3.append(layer_3)
+                                    use_residual=False)
+            self.encode_layers.append(encode_layer)
         depth_level = self.num_layers - 1
         feature_hw = (patches_resolution[0] // (2 ** depth_level),
                     patches_resolution[1] // (2 ** depth_level))
@@ -428,12 +347,8 @@ class SwinDiffusionEncoder(nn.Module):
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
 
-        for encode_layer_1, encode_layer_2, encode_layer_3 in zip(self.encode_layers_1,
-                                                                    self.encode_layers_2,
-                                                                    self.encode_layers_3):
-            x = encode_layer_1(x)
-            x = encode_layer_2(x)
-            x = encode_layer_3(x)
+        for encode_layer in self.encode_layers:
+            x = encode_layer(x)
 
         x = self.mid_layer(x)
         x = self.pool_layer(x)
