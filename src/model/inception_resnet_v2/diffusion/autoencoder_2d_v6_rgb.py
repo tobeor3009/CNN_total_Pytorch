@@ -51,7 +51,7 @@ class InceptionResNetV2_UNet(nn.Module):
             in_channel *= 2
         ##################################
         emb_dim = block_size * 16
-        emb_dim_list = [emb_dim, emb_channel]
+        emb_dim_list = [emb_dim, emb_channel + emb_dim]
         emb_type_list = ["seq", "seq"]
 
         ##################################
@@ -79,7 +79,7 @@ class InceptionResNetV2_UNet(nn.Module):
             nn.Linear(emb_dim * 3, emb_dim),
             nn.SiLU(),
             nn.Linear(emb_dim, emb_dim)
-        )    
+        )
         self.latent_model = InceptionResNetV2_Encoder(in_channel=cond_channel, img_size=img_size, block_size=block_size, 
                                                       emb_channel=emb_channel, norm=norm, act=act, last_channel_ratio=1,
                                                     use_checkpoint=use_checkpoint, attn_info_list=attn_info_list,
@@ -159,8 +159,7 @@ class InceptionResNetV2_UNet(nn.Module):
         class_emb = self.class_emb_layer(class_labels).to(dtype=x.dtype)
         class_emb = class_emb.flatten(1)
         class_emb = self.class_mlp(class_emb)
-        
-        time_emb = time_emb + class_emb
+        latent = torch.cat([latent, class_emb], dim=1)
         
         encode_feature, skip_connect_list = self.encode_forward(x, time_emb, latent)
 

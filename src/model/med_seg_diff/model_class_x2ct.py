@@ -8,7 +8,7 @@ import math
 from tqdm import tqdm
 from functools import partial
 from .util import normalize_to_neg_one_to_one, unnormalize_to_zero_to_one
-from .util import linear_beta_schedule, cosine_beta_schedule, sigmoid_beta_schedule
+from .util import linear_beta_schedule, cosine_beta_schedule, sigmoid_beta_schedule, const_beta_schedule
 from .util import exists, default, identity, identity, extract
 from .util import ModelPrediction
 
@@ -43,6 +43,8 @@ class MedSegDiff(nn.Module):
             betas = cosine_beta_schedule(timesteps)
         elif beta_schedule == 'sigmoid':
             betas = sigmoid_beta_schedule(timesteps)
+        elif beta_schedule == 'const':
+            betas = const_beta_schedule(timesteps)
         else:
             raise ValueError(f'unknown beta schedule {beta_schedule}')
 
@@ -156,7 +158,7 @@ class MedSegDiff(nn.Module):
 
         return ModelPrediction(pred_noise, x_start)
 
-    def p_mean_variance(self, x, t, c, x_self_cond=None, class_label=None, clip_denoised=False):
+    def p_mean_variance(self, x, t, c, x_self_cond=None, class_label=None, clip_denoised=True):
         preds = self.model_predictions(x, t, c, x_self_cond, class_label)
         x_start = preds.pred_x_start
 
@@ -167,7 +169,7 @@ class MedSegDiff(nn.Module):
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
     @torch.no_grad()
-    def p_sample(self, x, t, c, x_self_cond=None, class_label=None, clip_denoised=False):
+    def p_sample(self, x, t, c, x_self_cond=None, class_label=None, clip_denoised=True):
         b, *_, device = *x.shape, x.device
         batched_times = torch.full((x.shape[0],), t, device = x.device, dtype = torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(x=x, t=batched_times, c=c, 
@@ -193,7 +195,7 @@ class MedSegDiff(nn.Module):
         return img
 
     @torch.no_grad()
-    def ddim_sample(self, shape, cond_img, class_label, clip_denoised=False):
+    def ddim_sample(self, shape, cond_img, class_label, clip_denoised=True):
         batch, device, total_timesteps = shape[0], self.betas.device, self.num_timesteps
         sampling_timesteps, eta, objective = self.sampling_timesteps, self.ddim_sampling_eta, self.objective
 

@@ -7,48 +7,12 @@ import random
 import math
 from tqdm import tqdm
 from functools import partial
-ModelPrediction = namedtuple('ModelPrediction', ['pred_noise', 'pred_x_start'])
 
-# helpers functions
-def normalize_to_neg_one_to_one(img):
-    return img * 2 - 1
+from .util import normalize_to_neg_one_to_one, unnormalize_to_zero_to_one
+from .util import linear_beta_schedule, cosine_beta_schedule, sigmoid_beta_schedule, const_beta_schedule
+from .util import exists, default, identity, identity, extract
+from .util import ModelPrediction
 
-def unnormalize_to_zero_to_one(t):
-    return (t + 1) * 0.5
-
-def exists(x):
-    return x is not None
-
-def default(val, d):
-    if exists(val):
-        return val
-    return d() if callable(d) else d
-
-def identity(t, *args, **kwargs):
-    return t
-
-def extract(a, t, x_shape):
-    b, *_ = t.shape
-    out = a.gather(-1, t)
-    return out.reshape(b, *((1,) * (len(x_shape) - 1)))
-
-def linear_beta_schedule(timesteps):
-    scale = 1000 / timesteps
-    beta_start = scale * 0.0001
-    beta_end = scale * 0.02
-    return torch.linspace(beta_start, beta_end, timesteps, dtype = torch.float64)
-
-def cosine_beta_schedule(timesteps, s = 0.008):
-    """
-    cosine schedule
-    as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
-    """
-    steps = timesteps + 1
-    x = torch.linspace(0, timesteps, steps, dtype = torch.float64)
-    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
-    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return torch.clip(betas, 0, 0.999)
 
 class MedSegDiff(nn.Module):
     def __init__(
@@ -79,9 +43,12 @@ class MedSegDiff(nn.Module):
             betas = linear_beta_schedule(timesteps)
         elif beta_schedule == 'cosine':
             betas = cosine_beta_schedule(timesteps)
+        elif beta_schedule == 'sigmoid':
+            betas = sigmoid_beta_schedule(timesteps)
+        elif beta_schedule == 'const':
+            betas = const_beta_schedule(timesteps)
         else:
             raise ValueError(f'unknown beta schedule {beta_schedule}')
-
         alphas = 1. - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
         alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value = 1.)
