@@ -16,6 +16,11 @@ def default(val, d):
         return val
     return d() if callable(d) else d
 
+class WrapGroupNorm(nn.GroupNorm):
+    
+    def __init__(self, num_channels, *args, **kwargs):
+        super().__init__(num_channels=num_channels,*args, **kwargs)
+        
 class LayerNorm(nn.Module):
     def __init__(self, dim, bias = False):
         super().__init__()
@@ -117,16 +122,14 @@ class SinusoidalPosEmb(nn.Module):
 class BaseBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 norm="batch", groups=1, act=DEFAULT_ACT, bias=False):
+                 norm=nn.LayerNorm, groups=1, act=DEFAULT_ACT, bias=False):
         super().__init__()
 
         self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups, bias=bias)
-        if norm == "spectral":
-            self.conv = spectral_norm(self.conv)
-        if not bias or norm != "spectral":
-            self.norm_layer = get_norm(norm, out_channels, mode="2d")
+        if not bias:
+            self.norm_layer = norm(out_channels)
         else:
             self.norm_layer = nn.Identity()
         self.act_layer = get_act(act)
@@ -146,18 +149,11 @@ class ResNetBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
                  norm="batch", groups=1, act=DEFAULT_ACT, bias=False,
-                 emb_dim_list=[], attn_info=None, use_checkpoint=False):
+                 emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False):
         super().__init__()
 
         self.attn_info = attn_info
         self.use_checkpoint = use_checkpoint
-        # you always have time embedding
-        emb_type_list = []
-        if emb_dim_list is None:
-            emb_dim_list = []
-        if exists(attn_info):
-            if exists(attn_info["emb_type_list"]):
-                emb_type_list += attn_info["emb_type_list"]
         emb_block_list = []
         for emb_dim, emb_type in zip(emb_dim_list, emb_type_list):
             if emb_type == "seq":
@@ -171,7 +167,7 @@ class ResNetBlock2D(nn.Module):
             else:
                 raise Exception("emb_type must be seq or 2d")
             emb_block_list.append(emb_block)
-        self.emb_block_list = nn.ModuleList(emb_block_list) 
+        self.emb_block_list = nn.ModuleList(emb_block_list)
 
         self.block_1 = BaseBlock2D(in_channels, out_channels, kernel_size,
                                     stride, padding, norm, groups, act, bias)
@@ -185,10 +181,13 @@ class ResNetBlock2D(nn.Module):
 
         if attn_info is None:
             self.attn = nn.Identity()
-        elif attn_info["full_attn"]:
+        elif attn_info["full_attn"] is None:
+            self.attn = nn.Identity()
+        elif attn_info["full_attn"] is True:
             self.attn = Attention(out_channels, attn_info["num_heads"])
         else:
             self.attn = LinearAttention(out_channels, attn_info["num_heads"])
+
 
     def forward(self, x, *args):
         if self.use_checkpoint:
@@ -216,18 +215,11 @@ class ConvBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
                  norm="batch", groups=1, act=DEFAULT_ACT, bias=False,
-                 emb_dim_list=[], attn_info=None, use_checkpoint=False):
+                 emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False):
         super().__init__()
 
         self.attn_info = attn_info
         self.use_checkpoint = use_checkpoint
-        # you always have time embedding
-        emb_type_list = []
-        if emb_dim_list is None:
-            emb_dim_list = []
-        if exists(attn_info):
-            if exists(attn_info["emb_type_list"]):
-                emb_type_list += attn_info["emb_type_list"]
         emb_block_list = []
         for emb_dim, emb_type in zip(emb_dim_list, emb_type_list):
             if emb_type == "seq":
@@ -241,13 +233,15 @@ class ConvBlock2D(nn.Module):
             else:
                 raise Exception("emb_type must be seq or 2d")
             emb_block_list.append(emb_block)
-        self.emb_block_list = nn.ModuleList(emb_block_list) 
+        self.emb_block_list = nn.ModuleList(emb_block_list)
 
         self.block_1 = BaseBlock2D(in_channels, out_channels, kernel_size,
                                     stride, padding, norm, groups, act, bias)
         if attn_info is None:
             self.attn = nn.Identity()
-        elif attn_info["full_attn"]:
+        elif attn_info["full_attn"] is None:
+            self.attn = nn.Identity()
+        elif attn_info["full_attn"] is True:
             self.attn = Attention(out_channels, attn_info["num_heads"])
         else:
             self.attn = LinearAttention(out_channels, attn_info["num_heads"])

@@ -111,7 +111,7 @@ class WindowAttention(nn.Module):
     """
 
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0.,
-                 pretrained_window_size=[0, 0]):
+                 pretrained_window_size=[0, 0], cbp_dim=512):
 
         super().__init__()
         self.dim = dim
@@ -123,9 +123,9 @@ class WindowAttention(nn.Module):
         self.logit_scale = nn.Parameter(logit_scale_param, requires_grad=True)
 
         # mlp to generate continuous relative position bias
-        self.cpb_mlp = nn.Sequential(nn.Linear(3, 512, bias=True),
+        self.cpb_mlp = nn.Sequential(nn.Linear(3, cbp_dim, bias=True),
                                      nn.ReLU(inplace=True),
-                                     nn.Linear(512, num_heads, bias=False))
+                                     nn.Linear(cbp_dim, num_heads, bias=False))
         # get relative_coords_table
         relative_coords_z = np.arange(-(self.window_size[0] - 1),
                                       self.window_size[0], dtype=np.float32)
@@ -303,7 +303,8 @@ class SwinTransformerBlock(nn.Module):
         self.attn = WindowAttention(dim, window_size=to_3tuple(self.window_size),
                                     num_heads=num_heads, qkv_bias=qkv_bias,
                                     attn_drop=attn_drop, proj_drop=drop,
-                                    pretrained_window_size=to_3tuple(pretrained_window_size))
+                                    pretrained_window_size=to_3tuple(pretrained_window_size),
+                                    cbp_dim=np.clip(np.prod(input_resolution) // 16, 256, 1024))
 
         self.drop_path = DropPath(
             drop_path) if drop_path > 0. else nn.Identity()

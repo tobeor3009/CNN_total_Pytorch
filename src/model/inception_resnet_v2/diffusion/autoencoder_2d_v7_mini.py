@@ -1,7 +1,9 @@
 from torch import nn
 import numpy as np
 import torch
+from functools import partial
 from .diffusion_layer import default
+from .diffusion_layer import WrapGroupNorm
 from .diffusion_layer import ConvBlock2D, MultiDecoder2D, Output2D
 from .diffusion_layer import SinusoidalPosEmb, MaxPool2d, AvgPool2d
 
@@ -19,10 +21,9 @@ def get_skip_connect_channel_list(block_size, mini=False):
 
 class InceptionResNetV2_UNet(nn.Module):
     def __init__(self, in_channel, cond_channel, out_channel, img_size, block_size=16,
-                 emb_channel=1024, decode_init_channel=None,
-                 norm="group", act="silu", last_act=None, num_class_embeds=None,
-                 last_channel_ratio=1, self_condition=False,
-                 use_checkpoint=False, attn_info_list=[False, False, False, True],
+                 emb_channel=1024, decode_init_channel=None, act="silu", last_act=None, num_class_embeds=None,
+                 last_channel_ratio=1, self_condition=False, use_checkpoint=False,
+                 num_head_list=[4, 8, 16, 16],
                  block_depth_info="mini"):
         super().__init__()
         
@@ -56,11 +57,11 @@ class InceptionResNetV2_UNet(nn.Module):
         self.padding_3x3 = 1
         self.in_channel = in_channel
         self.block_size = block_size
-        self.norm = norm
+        self.norm = WrapGroupNorm
         self.act = act
         self.use_checkpoint = use_checkpoint
-        self.attn_info_list = attn_info_list
-        
+        self.num_head_list = num_head_list
+
         self.block_scale_list = [0.17, 0.1]
         self.act_layer = get_act(act)
         ##################################
@@ -88,7 +89,7 @@ class InceptionResNetV2_UNet(nn.Module):
         
         self.latent_model = InceptionResNetV2_Encoder(in_channel=cond_channel, img_size=img_size, block_size=block_size, 
                                                       emb_channel=emb_channel, norm=norm, act=act, last_channel_ratio=1,
-                                                    use_checkpoint=use_checkpoint, attn_info_list=attn_info_list,
+                                                    use_checkpoint=use_checkpoint, num_head_list=num_head_list,
                                                     block_depth_info=block_depth_info)
         # Stem block
         self.stem = self.get_encode_stem(emb_dim_list, emb_type_list)
@@ -217,15 +218,6 @@ class InceptionResNetV2_UNet(nn.Module):
             decode_feature = layer(decode_feature, *args)
         decode_feature = self.decode_final_conv(decode_feature)
         return decode_feature
-
-    def get_attn_info(self, emb_type_list, attn_info):
-        num_heads = 4
-        if attn_info is None:
-            return None
-        elif attn_info is False:
-            return {"emb_type_list":emb_type_list, "num_heads": num_heads, "full_attn": False}
-        elif attn_info is True:
-            return {"emb_type_list":emb_type_list, "num_heads": num_heads, "full_attn": True}
         
     def get_encode_stem(self, emb_dim_list, emb_type_list):
         padding_3x3 = self.padding_3x3
@@ -337,6 +329,53 @@ class InceptionResNetV2_UNet(nn.Module):
         })
         return mixed_6a
     
+    def get_encode_mixed_7a(self, emb_dim_list, emb_type_list):
+        padding_3x3 = self.padding_3x3
+        block_size = self.block_size
+        norm = self.norm
+        act = self.act
+        use_checkpoint = self.use_checkpoint
+        attn_info = self.get_attn_info(emb_type_list, self.attn_info_list[4])
+        non_attn_info = self.get_attn_info(emb_type_list, None)
+
+        mixed_7a_branch_0_1 = ConvBlock2D(block_size * 68, block_size * 16, 1, norm=norm, act=act,
+                                        emb_dim_list=emb_dim_list, attn_info=non_attn_info,
+                                        use_checkpoint=use_checkpoint)
+        mixed_7a_branch_0_2 = ConvBlock2D(block_size * 16, block_size * 24, 3, stride=2, padding=padding_3x3,
+                                        norm=norm, act=act,
+                                        emb_dim_list=emb_dim_list, attn_info=attn_info,
+                                        use_checkpoint=use_checkpoint)
+        mixed_7a_branch_1_1 = ConvBlock2D(block_size * 68, block_size * 16, 1, norm=norm, act=act,
+                                        emb_dim_list=emb_dim_list, attn_info=non_attn_info,
+                                        use_checkpoint=use_checkpoint)
+        mixed_7a_branch_1_2 = ConvBlock2D(block_size * 16, block_size * 18, 3, stride=2, padding=padding_3x3,
+                                        norm=norm, act=act,
+                                        emb_dim_list=emb_dim_list, attn_info=non_attn_info,
+                                        use_checkpoint=use_checkpoint)
+        mixed_7a_branch_2_1 = ConvBlock2D(block_size * 68, block_size * 16, 1, norm=norm, act=act,
+                                        emb_dim_list=emb_dim_list, attn_info=non_attn_info,
+                                        use_checkpoint=use_checkpoint)
+        mixed_7a_branch_2_2 = ConvBlock2D(block_size * 16, block_size * 18, 3, norm=norm, act=act,
+                                        emb_dim_list=emb_dim_list, attn_info=non_attn_info,
+                                        use_checkpoint=use_checkpoint)
+        mixed_7a_branch_2_3 = ConvBlock2D(block_size * 18, block_size * 20, 3, stride=2,
+                                        padding=padding_3x3, norm=norm, act=act,
+                                        emb_dim_list=emb_dim_list, attn_info=attn_info,
+                                        use_checkpoint=use_checkpoint)
+        mixed_7a_branch_pool_0 = MaxPool2d(3, stride=2, padding=padding_3x3)
+        
+        mixed_7a = nn.ModuleDict({
+            "mixed_7a_branch_0": nn.ModuleList([mixed_7a_branch_0_1,
+                                                mixed_7a_branch_0_2]),
+            "mixed_7a_branch_1": nn.ModuleList([mixed_7a_branch_1_1,
+                                                mixed_7a_branch_1_2]),
+            "mixed_7a_branch_2_1": nn.ModuleList([mixed_7a_branch_2_1,
+                                                  mixed_7a_branch_2_2,
+                                                  mixed_7a_branch_2_3]),
+            "mixed_7a_branch_pool": nn.ModuleList([mixed_7a_branch_pool_0])
+        })
+        return mixed_7a
+    
     def get_inception_block(self, emb_dim_list, emb_type_list, block_depth, get_block_fn):
         block_list = [get_block_fn(emb_dim_list, emb_type_list)
                       for _ in range(block_depth)]
@@ -345,42 +384,34 @@ class InceptionResNetV2_UNet(nn.Module):
 
     def get_inception_block_35(self, emb_dim_list, emb_type_list):
         block_size = self.block_size
-        norm = self.norm
+        norm = partial(self.norm, num_groups=self.num_head_list[2])
         act = self.act
         use_checkpoint = self.use_checkpoint
-        attn_info = self.get_attn_info(emb_type_list, self.attn_info_list[3])
-        non_attn_info = self.get_attn_info(emb_type_list, None)
+
+        common_kwarg_dict = {
+            "norm": norm, "act": act,
+            "emb_dim_list": emb_dim_list, "emb_type_list": emb_type_list,
+            "use_checkpoint": use_checkpoint
+        }
 
         in_channels = block_size * 20
         mixed_channel = block_size * 8
-
+        
         branch_0_0 = ConvBlock2D(in_channels, block_size * 2, 1,
-                                norm=norm, act=act,
-                                emb_dim_list=emb_dim_list, attn_info=attn_info,
-                                use_checkpoint=use_checkpoint)
+                                **common_kwarg_dict)
         branch_1_0 = ConvBlock2D(in_channels, block_size * 2, 1,
-                                norm=norm, act=act,
-                                emb_dim_list=emb_dim_list, attn_info=non_attn_info,
-                                use_checkpoint=use_checkpoint)
+                                **common_kwarg_dict)
         branch_1_1 = ConvBlock2D(block_size * 2, block_size * 2, 3,
-                                norm=norm, act=act,
-                                emb_dim_list=emb_dim_list, attn_info=non_attn_info,
-                                use_checkpoint=use_checkpoint)
+                                **common_kwarg_dict)
         branch_2_0 = ConvBlock2D(in_channels, block_size * 2, 1,
-                                norm=norm, act=act, 
-                                emb_dim_list=emb_dim_list, attn_info=non_attn_info,
-                                use_checkpoint=use_checkpoint)
+                                **common_kwarg_dict)
         branch_2_1 = ConvBlock2D(block_size * 2, block_size * 3, 3,
-                                norm=norm, act=act,
-                                emb_dim_list=emb_dim_list, attn_info=non_attn_info,
-                                use_checkpoint=use_checkpoint)
+                                **common_kwarg_dict)
         branch_2_2 = ConvBlock2D(block_size * 3, block_size * 4, 3,
-                                norm=norm, act=act,
-                                emb_dim_list=emb_dim_list, attn_info=attn_info,
-                                use_checkpoint=use_checkpoint)
+                                **common_kwarg_dict)
         up = ConvBlock2D(mixed_channel, in_channels, 1,
                         bias=True, norm=norm, act=None,
-                        emb_dim_list=emb_dim_list, attn_info=non_attn_info,
+                        emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=use_checkpoint)
         
         mixed = nn.ModuleDict({
@@ -395,34 +426,30 @@ class InceptionResNetV2_UNet(nn.Module):
 
     def get_inception_block_17(self, emb_dim_list, emb_type_list):
         block_size = self.block_size
-        norm = self.norm
+        norm = partial(self.norm, num_groups=self.num_head_list[2])
         act = self.act
         use_checkpoint = self.use_checkpoint
-        attn_info = self.get_attn_info(emb_type_list, self.attn_info_list[3])
-        non_attn_info = self.get_attn_info(emb_type_list, None)
+
+        common_kwarg_dict = {
+            "norm": norm, "act": act,
+            "emb_dim_list": emb_dim_list, "emb_type_list": emb_type_list,
+            "use_checkpoint": use_checkpoint
+        }
 
         in_channels = block_size * 68
         mixed_channel = block_size * 24
 
         branch_0_0 = ConvBlock2D(in_channels, block_size * 12, 1,
-                                norm=norm, act=act,
-                                emb_dim_list=emb_dim_list, attn_info=attn_info,
-                                use_checkpoint=use_checkpoint)
+                                **common_kwarg_dict)
         branch_1_0 = ConvBlock2D(in_channels, block_size * 8, 1,
-                                norm=norm, act=act,
-                                emb_dim_list=emb_dim_list, attn_info=non_attn_info,
-                                use_checkpoint=use_checkpoint)
+                                **common_kwarg_dict)
         branch_1_1 = ConvBlock2D(block_size * 8, block_size * 10, [1, 7],
-                                norm=norm, act=act,
-                                emb_dim_list=emb_dim_list, attn_info=non_attn_info,
-                                use_checkpoint=use_checkpoint)
+                                **common_kwarg_dict)
         branch_1_2 = ConvBlock2D(block_size * 10, block_size * 12, [7, 1],
-                                norm=norm, act=act,
-                                emb_dim_list=emb_dim_list, attn_info=attn_info,
-                                use_checkpoint=use_checkpoint)
+                                **common_kwarg_dict)
         up = ConvBlock2D(mixed_channel, in_channels, 1,
                         bias=True, norm=norm, act=None,
-                        emb_dim_list=emb_dim_list, attn_info=non_attn_info,
+                        emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=use_checkpoint)
         
         mixed = nn.ModuleDict({
@@ -432,11 +459,47 @@ class InceptionResNetV2_UNet(nn.Module):
                                        branch_1_2]),
         })
         return mixed, up
+    
+    def get_inception_block_8(self, emb_dim_list, emb_type_list):
+        block_size = self.block_size
+        norm = partial(self.norm, num_groups=self.num_head_list[3])
+        act = self.act
+        use_checkpoint = self.use_checkpoint
 
+        common_kwarg_dict = {
+            "norm": norm, "act": act,
+            "emb_dim_list": emb_dim_list, "emb_type_list": emb_type_list,
+            "use_checkpoint": use_checkpoint
+        }
+
+        in_channels = block_size * 130
+        mixed_channel = block_size * 28
+
+        branch_0_0 = ConvBlock2D(in_channels, block_size * 12, 1,
+                                **common_kwarg_dict)
+        branch_1_0 = ConvBlock2D(in_channels, block_size * 12, 1,
+                                **common_kwarg_dict)
+        branch_1_1 = ConvBlock2D(block_size * 12, block_size * 14, [1, 3],
+                                **common_kwarg_dict)
+        branch_1_2 = ConvBlock2D(block_size * 14, block_size * 16, [3, 1],
+                                **common_kwarg_dict)
+        up = ConvBlock2D(mixed_channel, in_channels, 1,
+                        bias=True, norm=norm, act=None,
+                        emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
+                        use_checkpoint=use_checkpoint)
+        
+        mixed = nn.ModuleDict({
+            "branch_0": nn.ModuleList([branch_0_0]),
+            "branch_1": nn.ModuleList([branch_1_0,
+                                       branch_1_1,
+                                       branch_1_2]),
+        })
+        return mixed, up
+    
 class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
     def __init__(self, in_channel, img_size, block_size=16, emb_channel=1024,
                  norm="group", act="silu", last_channel_ratio=1,
-                 use_checkpoint=False, attn_info_list=[None, False, False, True],
+                 use_checkpoint=False, num_head_list=[4, 8, 8, 16],
                  block_depth_info="mini"):
         super(InceptionResNetV2_UNet, self).__init__()
 

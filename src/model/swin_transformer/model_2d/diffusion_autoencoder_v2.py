@@ -1,4 +1,3 @@
-import torch
 from timm.models.layers import trunc_normal_
 import torch
 import numpy as np
@@ -169,7 +168,6 @@ class SwinDiffusionUnet(nn.Module):
                                                     norm_layer=norm_layer
                                                     )
         self.seg_final_conv = Output2D(layer_dim // 2, out_chans, act=out_act)
-        self.apply(self._init_weights)
 
         for bly in self.encode_layers:
             bly._init_respostnorm()
@@ -177,14 +175,18 @@ class SwinDiffusionUnet(nn.Module):
         for bly in self.decode_layers:
             bly._init_respostnorm()
 
+        self.apply(self._init_weights)
+
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=.02)
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
+        elif isinstance(m, nn.Conv2d):
+            nn.init.xavier_uniform_(m.weight)
+        elif isinstance(m, nn.GroupNorm):
+            nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
 
     @torch.jit.ignore
     def no_weight_decay(self):
@@ -324,14 +326,18 @@ class SwinDiffusionEncoder(nn.Module):
             bly._init_respostnorm()
         self.mid_layer._init_respostnorm()
             
+        self.apply(self._init_weights)
+
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, std=.02)
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
+        elif isinstance(m, nn.Conv2d):
+            nn.init.xavier_uniform_(m.weight)
+        elif isinstance(m, nn.GroupNorm):
+            nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
 
     @torch.jit.ignore
     def no_weight_decay(self):

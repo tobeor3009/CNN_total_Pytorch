@@ -71,16 +71,18 @@ class InceptionResNetV2_UNet(nn.Module):
             nn.Linear(emb_dim, emb_dim)
         )
 
-        self.class_emb_layer = nn.Embedding(num_class_embeds, emb_dim)
+        self.r_emb_layer = nn.Embedding(num_class_embeds, emb_dim)
+        self.g_emb_layer = nn.Embedding(num_class_embeds, emb_dim)
+        self.b_emb_layer = nn.Embedding(num_class_embeds, emb_dim)
         self.class_mlp = nn.Sequential(
             nn.SiLU(),
             nn.Linear(emb_dim * 3, emb_dim),
             nn.SiLU(),
             nn.Linear(emb_dim, emb_dim)
         )
-        emb_dim_list = [emb_dim, emb_channel + emb_dim]
+        emb_dim_list = [emb_dim, emb_channel, emb_dim]
         self.emb_dim_list = emb_dim_list
-        emb_type_list = ["seq", "seq"]
+        emb_type_list = ["seq", "seq", "seq"]
         self.latent_model = InceptionResNetV2_Encoder(in_channel=cond_channel, img_size=img_size, block_size=block_size, 
                                                       emb_channel=emb_channel, norm=norm, act=act, last_channel_ratio=1,
                                                     use_checkpoint=use_checkpoint, attn_info_list=attn_info_list,
@@ -151,15 +153,18 @@ class InceptionResNetV2_UNet(nn.Module):
 
         time_emb = self.time_mlp(time)
         latent = self.latent_model(cond)
-
-        class_emb = self.class_emb_layer(class_labels).to(dtype=x.dtype)
-        class_emb = class_emb.flatten(1)
+        r_class, g_class, b_class = class_labels.chunk(3, dim=1)
+        r_class, g_class, b_class = r_class.squeeze(1), g_class.squeeze(1), b_class.squeeze(1)
+        r_class = self.r_emb_layer(r_class).to(dtype=x.dtype)
+        g_class = self.g_emb_layer(g_class).to(dtype=x.dtype)
+        b_class = self.b_emb_layer(b_class).to(dtype=x.dtype)
+        
+        class_emb = torch.cat([r_class, g_class, b_class], dim=1)
         class_emb = self.class_mlp(class_emb)
-        latent = torch.cat([latent, class_emb], dim=1)
 
-        encode_feature, skip_connect_list = self.encode_forward(x, time_emb, latent)
+        encode_feature, skip_connect_list = self.encode_forward(x, time_emb, latent, class_emb)
         decode_feature = self.decode_forward(encode_feature, skip_connect_list,
-                                             time_emb, latent)
+                                             time_emb, latent, class_emb)
         return decode_feature
     
     def encode_forward(self, x, *args):

@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from timm.models.layers import DropPath, to_3tuple
 import numpy as np
+from ..layers import get_act, get_norm
 from ..layers import PixelShuffle3D
 from .swin_layers import DEFAULT_ACT, DROPOUT_INPLACE
 from ..model_3d.swin_layers import window_partition, window_reverse
@@ -40,16 +41,17 @@ class SinusoidalPosEmb(nn.Module):
         return emb
 
 class SkipConv1D(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, norm, kernel_size=1):
         super().__init__()
-        self.skip_conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1)
-        self.norm = nn.LayerNorm(out_channels)
+        self.skip_conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, 
+                                   kernel_size=kernel_size, stride=1, padding="same")
+        self.norm = norm(out_channels)
     def forward(self, *args):
         # expected shape: [B, N, C]
         x = torch.cat(args, dim=2)
         x = self.skip_conv(x.permute(0, 2, 1))
         x = x.permute(0, 2, 1)
-        x = self.norm(x) 
+        x = self.norm(x)
         return x
     
 class SwinTransformerBlock(nn.Module):
@@ -177,15 +179,15 @@ class SwinTransformerBlock(nn.Module):
         else:
             x = shifted_x
         x = x.view(B, Z * H * W, C)
-        x = shortcut + self.drop_path(self.norm1(x))
-
-        # FFN
-        x = x + self.drop_path(self.norm2(self.mlp(x)))
-
+        norm = self.norm1(x)
         if exists(scale_shift_list):
             for scale_shift in scale_shift_list:
                 scale, shift = scale_shift
-                x = x * (scale + 1) + shift
+                norm = norm * (scale + 1) + shift
+        x = shortcut + self.drop_path(norm)
+        # FFN
+        x = x + self.drop_path(self.norm2(self.mlp(x)))
+
         if self.use_residual:
             return shortcut + x
         else:
@@ -367,6 +369,55 @@ class PatchExpanding(nn.Module):
                                         W * self.dim_scale)
         return x
 
+class PatchExpandingMulti(nn.Module):
+    def __init__(self, input_resolution, dim,
+                 return_vector=True, dim_scale=2,
+                 norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.return_vector = return_vector
+        self.dim_scale = dim_scale
+        pixel_shuffle_conv_1 = nn.Conv3d(dim, dim * (dim_scale ** 3) // 2,
+                                         kernel_size=1, padding=0, bias=False)
+        pixel_shuffle = PixelShuffle3D(dim_scale)
+        pixel_shuffle_conv_2 = nn.Conv3d(dim // 2, dim // 2,
+                                         kernel_size=1, padding=0, bias=False)
+        self.pixel_shuffle_layer = nn.Sequential(
+            pixel_shuffle_conv_1,
+            pixel_shuffle,
+            pixel_shuffle_conv_2
+        )
+        upsample_layer = nn.Upsample(scale_factor=dim_scale, mode='trilinear')
+        conv_after_upsample = nn.Conv3d(dim, dim // 2, kernel_size=1)
+        self.upsample_layer = nn.Sequential(
+            upsample_layer,
+            conv_after_upsample
+        )
+        self.concat_conv = nn.Conv3d(dim, dim // 2, kernel_size=3, padding=1, stride=1)
+        
+        self.norm_layer = norm_layer(dim // 2)
+
+    def forward(self, x):
+        Z, H, W = self.input_resolution
+        B, L, C = x.shape
+        assert L == Z * H * W, f"input feature has wrong size {L} != {Z}, {H}, {W}"
+        assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({Z}*{H}*{W}) are not even."
+        x = x.permute(0, 2, 1).view(B, C, Z, H, W)
+        pixel_shuffle = self.pixel_shuffle_layer(x)
+        upsample = self.upsample_layer(x)
+        x = torch.cat([pixel_shuffle, upsample], dim=1)
+        x = self.concat_conv(x)
+        
+        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
+        x = self.norm_layer(x)
+        if not self.return_vector:
+            x = x.permute(0, 2, 1).view(B, self.dim // 2,
+                                        Z * self.dim_scale,
+                                        H * self.dim_scale,
+                                        W * self.dim_scale)
+        return x
+    
 class BasicLayerV1(nn.Module):
     """ A basic Swin Transformer layer for one stage.
 
@@ -390,7 +441,8 @@ class BasicLayerV1(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
-                 use_checkpoint=False, pretrained_window_size=0, time_emb_dim=None, class_emb_dim=None):
+                 use_checkpoint=False, pretrained_window_size=0,
+                 emb_dim_list=[], use_residual=False):
 
         super().__init__()
         self.dim = dim
@@ -399,27 +451,27 @@ class BasicLayerV1(nn.Module):
         self.depth = depth
         self.use_checkpoint = use_checkpoint
 
-        self.time_mlp = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(time_emb_dim, dim * 2)
-        ) if exists(time_emb_dim) else None
-        self.class_mlp = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(class_emb_dim, dim * 2)
-        ) if exists(class_emb_dim) else None
+        emb_block_list = []
+        for emb_dim in emb_dim_list:
+            emb_block = nn.Sequential(
+                                        nn.SiLU(),
+                                        nn.Linear(emb_dim, dim * 2)
+                                    )
+            emb_block_list.append(emb_block)
+        self.emb_block_list = nn.ModuleList(emb_block_list)
         # build blocks
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
-                                 shift_size=0 if (
-                                     i % 2 == 0) else window_size // 2,
+                                 shift_size=window_size // 2,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
                                  drop=drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
                                  norm_layer=norm_layer,
-                                 pretrained_window_size=pretrained_window_size)
+                                 pretrained_window_size=pretrained_window_size,
+                                 use_residual=use_residual)
             for i in range(depth)])
 
         # patch merging layer
@@ -434,27 +486,20 @@ class BasicLayerV1(nn.Module):
         else:
             self.upsample = None
         
-    def forward(self, x, time_emb=None, class_emb=None):
-        scale_shift_list = None
-        if exists(self.time_mlp) and exists(time_emb):
-            time_emb = self.time_mlp(time_emb)
-            time_emb = rearrange(time_emb, 'b c -> b 1 c')
-            time_scale_shift = time_emb.chunk(2, dim = 2)
-        if exists(self.class_mlp) and exists(class_emb):
-            class_emb = self.class_mlp(class_emb)
-            class_emb = rearrange(class_emb, 'b c -> b 1 c')
-            class_scale_shift = class_emb.chunk(2, dim = 2)
-        scale_shift_list = [time_scale_shift, class_scale_shift]
-        for idx, blk in enumerate(self.blocks):
-            if idx == 0:
-                blk_scale_shift = scale_shift_list
-            else:
-                blk_scale_shift = None
+    def forward(self, x, *args):
+        scale_shift_list = []
+        for emb_block, emb in zip(self.emb_block_list, args):
+            emb = emb_block(emb)
+            if emb.ndim == 2:
+                emb = emb.unsqueeze(1)
+            scale_shift = emb.chunk(2, dim=2)
+            scale_shift_list.append(scale_shift)
+        for blk in self.blocks:
             if self.use_checkpoint:
-                x = checkpoint(blk, x, blk_scale_shift,
+                x = checkpoint(blk, x, scale_shift_list,
                                use_reentrant=False)
             else:
-                x = blk(x, blk_scale_shift)
+                x = blk(x, scale_shift_list)
         if self.downsample is not None:
             if self.use_checkpoint:
                 x = checkpoint(self.downsample, x,
@@ -493,7 +538,7 @@ class BasicLayerV2(nn.Module):
                  mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0,
-                 time_emb_dim=None, class_emb_dim=None, use_residual=True):
+                 emb_dim_list=[], use_residual=False):
 
         super().__init__()
         self.dim = dim
@@ -525,21 +570,20 @@ class BasicLayerV2(nn.Module):
         else:
             self.upsample = None
 
-        self.time_mlp = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(time_emb_dim, dim * 2)
-        ) if exists(time_emb_dim) else None
-        self.class_mlp = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(class_emb_dim, dim * 2)
-        ) if exists(class_emb_dim) else None
+        emb_block_list = []
+        for emb_dim in emb_dim_list:
+            emb_block = nn.Sequential(
+                                        nn.SiLU(),
+                                        nn.Linear(emb_dim, dim * 2)
+                                    )
+            emb_block_list.append(emb_block)
+        self.emb_block_list = nn.ModuleList(emb_block_list)
 
         # build blocks
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
-                                 shift_size=0 if (
-                                     i % 2 == 0) else window_size // 2,
+                                 shift_size=window_size // 2,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
                                  drop=drop, attn_drop=attn_drop,
@@ -550,19 +594,14 @@ class BasicLayerV2(nn.Module):
                                  use_residual=use_residual)
             for i in range(depth)])
         
-    def forward(self, x, time_emb=None, class_emb=None):
+    def forward(self, x, *args):
         scale_shift_list = []
-        if exists(self.time_mlp) and exists(time_emb):
-            time_emb = self.time_mlp(time_emb)
-            time_emb = rearrange(time_emb, 'b c -> b 1 c')
-            time_scale_shift = time_emb.chunk(2, dim = 2)
-            scale_shift_list.append(time_scale_shift)
-        if exists(self.class_mlp) and exists(class_emb):
-            class_emb = self.class_mlp(class_emb)
-            class_emb = rearrange(class_emb, 'b c -> b 1 c')
-            class_scale_shift = class_emb.chunk(2, dim = 2)
-            scale_shift_list.append(class_scale_shift)
-
+        for emb_block, emb in zip(self.emb_block_list, args):
+            emb = emb_block(emb)
+            if emb.ndim == 2:
+                emb = emb.unsqueeze(1)
+            scale_shift = emb.chunk(2, dim=2)
+            scale_shift_list.append(scale_shift)
         if self.downsample is not None:
             if self.use_checkpoint:
                 x = checkpoint(self.downsample, x,
@@ -575,16 +614,12 @@ class BasicLayerV2(nn.Module):
                                use_reentrant=False)
             else:
                 x = self.upsample(x)
-        for idx, blk in enumerate(self.blocks):
-            if idx == 0:
-                blk_scale_shift = scale_shift_list
-            else:
-                blk_scale_shift = None
+        for blk in self.blocks:
             if self.use_checkpoint:
-                x = checkpoint(blk, x, blk_scale_shift,
+                x = checkpoint(blk, x, scale_shift_list,
                                use_reentrant=False)
             else:
-                x = blk(x, blk_scale_shift)
+                x = blk(x, scale_shift_list)
         return x
 
     def extra_repr(self) -> str:
@@ -605,4 +640,71 @@ class BasicLayerV2(nn.Module):
             nn.init.constant_(blk.norm2.bias, 0)
             nn.init.constant_(blk.norm2.weight, 0)
 
+class BaseBlock3D(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, padding='same',
+                 norm=nn.GroupNorm, groups=1, act=DEFAULT_ACT, bias=False):
+        super().__init__()
 
+        self.conv = nn.Conv3d(in_channels=in_channels, out_channels=out_channels,
+                              kernel_size=kernel_size, stride=stride, padding=padding,
+                              groups=groups, bias=bias)
+        if not bias:
+            self.norm_layer = norm(out_channels)
+        else:
+            self.norm_layer = nn.Identity()
+        self.act_layer = get_act(act)
+
+    def forward(self, x, scale_shift_list=None):
+        conv = self.conv(x)
+        norm = self.norm_layer(conv)
+        if exists(scale_shift_list):
+            for scale_shift in scale_shift_list:
+                scale, shift = scale_shift
+                norm = norm * (scale + 1) + shift
+        act = self.act_layer(norm)
+        return act
+
+class ConvBlock3D(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size,
+                 stride=1, padding='same',
+                 norm=nn.GroupNorm, groups=1, act=DEFAULT_ACT, bias=False,
+                 emb_dim_list=[], emb_type_list=[], use_checkpoint=False):
+        super().__init__()
+
+        self.use_checkpoint = use_checkpoint
+        # you always have time embedding
+        emb_block_list = []
+        for emb_dim, emb_type in zip(emb_dim_list, emb_type_list):
+            if emb_type == "seq":
+                emb_block = nn.Sequential(
+                                            nn.SiLU(),
+                                            nn.Linear(emb_dim, out_channels * 2)
+                                        )
+            elif emb_type == "3d":
+                emb_block = BaseBlock3D(emb_dim, out_channels * 2, kernel_size,
+                                        1, padding, norm, groups, act, bias)
+            else:
+                raise Exception("emb_type must be seq or 3d")
+            emb_block_list.append(emb_block)
+        self.emb_block_list = nn.ModuleList(emb_block_list)
+
+        self.block_1 = BaseBlock3D(in_channels, out_channels, kernel_size,
+                                    stride, padding, norm, groups, act, bias)
+        
+    def forward(self, x, *args):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x, *args,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x, *args)
+
+    def _forward_impl(self, x, *args):
+        scale_shift_list = []
+        for emb_block, emb in zip(self.emb_block_list, args):
+            emb = emb_block(emb)
+            emb = rearrange(emb, 'b c -> b c 1 1 1')
+            scale_shift = emb.chunk(2, dim=1)
+            scale_shift_list.append(scale_shift)
+        x = self.block_1(x, scale_shift_list)
+        return x

@@ -79,7 +79,7 @@ class WindowAttention(nn.Module):
     """
 
     def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0.,
-                 pretrained_window_size=[0, 0]):
+                 pretrained_window_size=[0, 0], cbp_dim=512):
 
         super().__init__()
         self.dim = dim
@@ -91,9 +91,9 @@ class WindowAttention(nn.Module):
                                         requires_grad=True)
 
         # mlp to generate continuous relative position bias
-        self.cpb_mlp = nn.Sequential(nn.Linear(2, 512, bias=True),
+        self.cpb_mlp = nn.Sequential(nn.Linear(2, cbp_dim, bias=True),
                                      nn.ReLU(inplace=True),
-                                     nn.Linear(512, num_heads, bias=False))
+                                     nn.Linear(cbp_dim, num_heads, bias=False))
         # get relative_coords_table
         relative_coords_h = torch.arange(-(self.window_size[0] - 1),
                                          self.window_size[0], dtype=torch.float32)
@@ -213,7 +213,6 @@ class WindowAttention(nn.Module):
         # x = self.proj(x)
         flops += N * self.dim * self.dim
         return flops
-
 
 class SwinTransformerBlock(nn.Module):
     r""" Swin Transformer Block.

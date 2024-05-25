@@ -1,15 +1,19 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from einops import rearrange, reduce
+from einops import rearrange
 import random
 from tqdm import tqdm
 from functools import partial
 
 from .util import normalize_to_neg_one_to_one, unnormalize_to_zero_to_one
 from .util import linear_beta_schedule, cosine_beta_schedule, sigmoid_beta_schedule, const_beta_schedule
-from .util import exists, default, identity, identity, extract, convert_class_label
-from .util import ModelPrediction
+from .util import exists, default, identity, identity, extract
+from .util import ModelPrediction, forward_with_cond_scale
+from einops import rearrange, reduce
+DEFAULT_COND_SCALE = 6.
+DEFAULT_RESCALED_PHI = 0.7
+
 class MedSegDiff(nn.Module):
     def __init__(
         self,
@@ -19,13 +23,11 @@ class MedSegDiff(nn.Module):
         sampling_timesteps = None,
         objective = 'pred_noise',
         beta_schedule = 'cosine',
-        ddim_sampling_eta = 0.,
+        ddim_sampling_eta = 1.,
         loss_fn=F.mse_loss,
-        auto_normalize = True,
-        offset_noise_strength = 0.,  # https://www.crosslabs.org/blog/diffusion-with-offset-noise
-        min_snr_loss_weight = False, # https://arxiv.org/abs/2303.09556
-        min_snr_gamma = 5,
-        use_timepool=False
+        offset_noise_strength = 0.,
+        min_snr_loss_weight = False,
+        min_snr_gamma = 5
     ):
         super().__init__()
 
@@ -38,7 +40,6 @@ class MedSegDiff(nn.Module):
         self.image_size = self.model.image_size
         self.objective = objective
         self.loss_fn = loss_fn
-        self.use_timepool = use_timepool
         assert objective in {'pred_noise', 'pred_x0', 'pred_v'}, 'objective must be either pred_noise (predict noise) or pred_x0 (predict image start) or pred_v (predict v [v-parameterization as defined in appendix D of progressive distillation paper, used in imagen-video successfully])'
 
         if beta_schedule == 'linear':
@@ -93,33 +94,32 @@ class MedSegDiff(nn.Module):
 
         # below: log calculation clipped because the posterior variance is 0 at the beginning of the diffusion chain
 
-        register_buffer('posterior_log_variance_clipped', torch.log(posterior_variance.clamp(min=1e-20)))
+        register_buffer('posterior_log_variance_clipped', torch.log(posterior_variance.clamp(min =1e-20)))
         register_buffer('posterior_mean_coef1', betas * torch.sqrt(alphas_cumprod_prev) / (1. - alphas_cumprod))
         register_buffer('posterior_mean_coef2', (1. - alphas_cumprod_prev) * torch.sqrt(alphas) / (1. - alphas_cumprod))
         
-        self.timepool = self.get_timepool()
+        # offset noise strength - 0.1 was claimed ideal
 
         self.offset_noise_strength = offset_noise_strength
-        snr = alphas_cumprod / (1 - alphas_cumprod)
+        # loss weight
 
-        # https://arxiv.org/abs/2303.09556
+        snr = alphas_cumprod / (1 - alphas_cumprod)
 
         maybe_clipped_snr = snr.clone()
         if min_snr_loss_weight:
             maybe_clipped_snr.clamp_(max = min_snr_gamma)
 
         if objective == 'pred_noise':
-            register_buffer('loss_weight', maybe_clipped_snr / snr)
+            loss_weight = maybe_clipped_snr / snr
         elif objective == 'pred_x0':
-            register_buffer('loss_weight', maybe_clipped_snr)
+            loss_weight = maybe_clipped_snr
         elif objective == 'pred_v':
-            register_buffer('loss_weight', maybe_clipped_snr / (snr + 1))
+            loss_weight = maybe_clipped_snr / (snr + 1)
 
-        # auto-normalization of data [0, 1] -> [-1, 1] - can turn off by setting it to be False
+        register_buffer('loss_weight', loss_weight)
 
-        self.normalize = normalize_to_neg_one_to_one if auto_normalize else identity
-        self.unnormalize = unnormalize_to_zero_to_one if auto_normalize else identity
-
+        self.timepool = self.get_timepool()
+        
     @property
     def device(self):
         return next(self.parameters()).device
@@ -160,17 +160,17 @@ class MedSegDiff(nn.Module):
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def model_predictions(self, x, t, c, x_self_cond = None, class_label=None, 
-                          clip_x_start=False, rederive_pred_noise = False):
-        model_output = self.model(x, t, c, x_self_cond, class_label)
+    def model_predictions(self, x, t, c, x_self_cond=None, class_label=None,
+                          cond_scale=DEFAULT_COND_SCALE, rescaled_phi=DEFAULT_RESCALED_PHI, clip_x_start=False):
+        model_output = forward_with_cond_scale(self.model, x, t, c,
+                                               x_self_cond=x_self_cond, class_label=class_label,
+                                               cond_scale=cond_scale, rescaled_phi=rescaled_phi)
         maybe_clip = partial(torch.clamp, min = -1., max = 1.) if clip_x_start else identity
 
         if self.objective == 'pred_noise':
             pred_noise = model_output
             x_start = self.predict_start_from_noise(x, t, pred_noise)
             x_start = maybe_clip(x_start)
-            if clip_x_start and rederive_pred_noise:
-                pred_noise = self.predict_noise_from_start(x, t, x_start)
 
         elif self.objective == 'pred_x0':
             x_start = model_output
@@ -185,8 +185,10 @@ class MedSegDiff(nn.Module):
 
         return ModelPrediction(pred_noise, x_start)
 
-    def p_mean_variance(self, x, t, c, x_self_cond=None, class_label=None, clip_denoised=True):
-        preds = self.model_predictions(x, t, c, x_self_cond, class_label)
+    def p_mean_variance(self, x, t, c, x_self_cond=None, class_label=None, 
+                        cond_scale=DEFAULT_COND_SCALE, rescaled_phi=DEFAULT_RESCALED_PHI, clip_denoised=True):
+        preds = self.model_predictions(x, t, c, x_self_cond, class_label, 
+                                       cond_scale, rescaled_phi, clip_denoised)
         x_start = preds.pred_x_start
 
         if clip_denoised:
@@ -195,19 +197,22 @@ class MedSegDiff(nn.Module):
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_start, x_t=x, t=t)
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
-    @torch.inference_mode()
-    def p_sample(self, x, t, c, x_self_cond=None, class_label=None, clip_denoised=True):
-        b, *_, device = *x.shape, x.device
-        batched_times = torch.full((b,), t, device = device, dtype = torch.long)
+    @torch.no_grad()
+    def p_sample(self, x, t, c, x_self_cond=None, class_label=None, 
+                 cond_scale=DEFAULT_COND_SCALE, rescaled_phi=DEFAULT_RESCALED_PHI, clip_denoised=True):
+        b, device = x.size(0), x.device
+        batched_times = torch.full((x.shape[0],), t, device = x.device, dtype = torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(x=x, t=batched_times, c=c,
                                                                           x_self_cond=x_self_cond, class_label=class_label,
+                                                                          cond_scale=cond_scale, rescaled_phi=rescaled_phi,
                                                                           clip_denoised=clip_denoised)
         noise = torch.randn_like(x) if t > 0 else 0. # no noise if t == 0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         return pred_img, x_start
 
-    @torch.inference_mode()
-    def p_sample_loop(self, shape, cond, class_label):
+    @torch.no_grad()
+    def p_sample_loop(self, shape, cond, class_label,
+                      cond_scale=DEFAULT_COND_SCALE, rescaled_phi=DEFAULT_RESCALED_PHI):
         batch, device, dtype = shape[0], self.betas.device, self.betas.dtype
 
         img = torch.randn(shape, device=device, dtype=dtype)
@@ -216,13 +221,15 @@ class MedSegDiff(nn.Module):
 
         for t in tqdm(reversed(range(0, self.num_timesteps)), total = self.num_timesteps):
             self_cond = x_start if self.self_condition else None
-            img, x_start = self.p_sample(img, t, cond, self_cond, class_label)
+            img, x_start = self.p_sample(img, t, cond, self_cond, class_label,
+                                         cond_scale=cond_scale, rescaled_phi=rescaled_phi)
 
         img = unnormalize_to_zero_to_one(img)
         return img
 
-    @torch.inference_mode()
-    def ddim_sample(self, shape, cond_img, class_label, clip_denoised=True):
+    @torch.no_grad()
+    def ddim_sample(self, shape, cond_img, class_label,
+                    cond_scale=DEFAULT_COND_SCALE, rescaled_phi=DEFAULT_RESCALED_PHI, clip_denoised=True):
         batch, device, total_timesteps = shape[0], self.betas.device, self.num_timesteps
         sampling_timesteps, eta, objective = self.sampling_timesteps, self.ddim_sampling_eta, self.objective
 
@@ -238,7 +245,8 @@ class MedSegDiff(nn.Module):
             time_cond = torch.full((batch,), time, device=device, dtype=torch.long)
             self_cond = x_start if self.self_condition else None
             pred_noise, x_start, *_ = self.model_predictions(img, time_cond, cond_img, self_cond, class_label,
-                                                             clip_x_start=clip_denoised, rederive_pred_noise=True)
+                                                             cond_scale=cond_scale, rescaled_phi=rescaled_phi,
+                                                             clip_x_start=clip_denoised)
 
             if time_next < 0:
                 img = x_start
@@ -256,19 +264,39 @@ class MedSegDiff(nn.Module):
                   c * pred_noise + \
                   sigma * noise
 
-        img = self.unnormalize(img)
+        img = unnormalize_to_zero_to_one(img)
         return img
 
-    @torch.inference_mode()
-    def sample(self, cond_img, class_label):
-        batch_size, device, dtype = cond_img.shape[0], self.device, self.dtype
+    @torch.no_grad()
+    def sample(self, cond_img, class_label, cond_scale=DEFAULT_COND_SCALE, rescaled_phi=DEFAULT_RESCALED_PHI):
+        batch_size, device, dtype = cond_img.size(0), self.device, self.dtype
         cond_img = cond_img.to(device=device, dtype=dtype)
-        class_label = convert_class_label(class_label, device)
-        
+        if isinstance(class_label, (list, tuple)):
+            class_label = [item.to(device=device, dtype=torch.long)
+                           for item in class_label]
+        else:
+            class_label = class_label.to(device=device, dtype=torch.long)
         image_size, mask_channels = self.image_size, self.mask_channels
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn((batch_size, mask_channels, image_size, image_size), cond_img, class_label).float()
+        return sample_fn((batch_size, mask_channels, image_size, image_size), cond_img, class_label,
+                         cond_scale, rescaled_phi).float()
 
+    def interpolate(self, x1, x2, classes, t=None, lam=0.5):
+        b, *_, device = *x1.shape, x1.device
+        t = default(t, self.num_timesteps - 1)
+
+        assert x1.shape == x2.shape
+
+        t_batched = torch.stack([torch.tensor(t, device = device)] * b)
+        xt1, xt2 = map(lambda x: self.q_sample(x, t = t_batched), (x1, x2))
+
+        img = (1 - lam) * xt1 + lam * xt2
+
+        for i in tqdm(reversed(range(0, t)), desc = 'interpolation sample time step', total = t):
+            img, _ = self.p_sample(img, i, classes)
+
+        return img
+    
     def q_sample(self, x_start, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
 
@@ -277,15 +305,11 @@ class MedSegDiff(nn.Module):
             extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
         )
 
-    def p_losses(self, x_start, t, cond, class_label, 
-                 noise=None, offset_noise_strength=None):
+    def p_losses(self, x_start, t, cond, class_label, noise = None):
         noise = default(noise, lambda: torch.randn_like(x_start))
-        offset_noise_strength = default(offset_noise_strength, self.offset_noise_strength)
 
-        if offset_noise_strength > 0.:
-            offset_noise = torch.randn(x_start.shape[:2], device = self.device)
-            noise += offset_noise_strength * rearrange(offset_noise, 'b c -> b c 1 1')
         # noise sample
+
         x = self.q_sample(x_start = x_start, t = t, noise = noise)
 
         # if doing self-conditioning, 50% of the time, predict x_start from current set of times
@@ -314,7 +338,6 @@ class MedSegDiff(nn.Module):
             target = v
         else:
             raise ValueError(f'unknown objective {self.objective}')
-
         loss = self.loss_fn(model_out, target, reduction = 'none')
         loss = reduce(loss, 'b ... -> b', 'mean')
         loss = loss * extract(self.loss_weight, t, loss.shape)
@@ -330,20 +353,21 @@ class MedSegDiff(nn.Module):
         device, dtype = self.device, self.dtype
         img = img.to(device=device, dtype=dtype)
         cond_img = cond_img.to(device)
-        class_label = convert_class_label(class_label, device)
+        
+        if isinstance(class_label, (list, tuple)):
+            class_label = [item.to(device=device, dtype=torch.long)
+                           for item in class_label]
+        else:
+            class_label = class_label.to(device=device, dtype=torch.long)
 
-        b, c, h, w, device, img_size, img_channels, mask_channels=*img.shape, img.device, self.image_size, self.input_img_channels, self.mask_channels
+        b, c, h, w, device, img_size, img_channels, mask_channels = *img.shape, img.device, self.image_size, self.input_img_channels, self.mask_channels
 
         assert h == img_size and w == img_size, f'height and width of image must be {img_size}'
         assert cond_img.shape[1] == img_channels, f'your input medical must have {img_channels} channels'
         assert img.shape[1] == mask_channels, f'the segmented image must have {mask_channels} channels'
 
-        if self.use_timepool:
-            times = self.get_time(b).to(device=device, dtype=torch.long)
-        else:
-            times = torch.randint(0, self.num_timesteps, (b,), 
-                                device=device, dtype=torch.long)
-        img = self.normalize(img)
+        times = self.get_time(b).to(device=device, dtype=torch.long)
+        img = normalize_to_neg_one_to_one(img)
         return self.p_losses(img, times, cond_img, class_label, *args, **kwargs)
     
     def get_time(self, batch_size):
