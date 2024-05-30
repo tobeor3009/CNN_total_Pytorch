@@ -40,6 +40,30 @@ class SinusoidalPosEmb(nn.Module):
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
 
+class PixelShuffleLinear(nn.Module):
+    def __init__(self, upscale_factor):
+        '''
+        :param scale: upsample scale
+        '''
+        super().__init__()
+
+        if isinstance(upscale_factor, int):
+            upscale_factor = (upscale_factor, upscale_factor, upscale_factor)
+        self.scale_num = np.prod(upscale_factor)
+
+    def forward(self, input):
+        batch_size, component, channels = input.size()
+        nOut = channels // self.scale_num
+
+        out_component = component * self.scale_num
+
+        input_view = input.view(batch_size, component, self.scale_num, nOut)
+
+        output = input_view.permute(0, 2, 1, 3)
+        output = output.contiguous()
+
+        return output.view(batch_size, out_component, nOut)
+
 class SkipConv1D(nn.Module):
     def __init__(self, in_channels, out_channels, norm, kernel_size=1):
         super().__init__()
@@ -90,7 +114,7 @@ class SwinTransformerBlock(nn.Module):
             self.window_size = min(self.input_resolution)
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
-        self.norm1 = norm_layer(num_channels=dim)
+        self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(dim, window_size=to_3tuple(self.window_size),
                                     num_heads=num_heads, qkv_bias=qkv_bias,
                                     attn_drop=attn_drop, proj_drop=drop,
@@ -98,7 +122,7 @@ class SwinTransformerBlock(nn.Module):
 
         self.drop_path = DropPath(
             drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(num_channels=dim)
+        self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
                        act_layer=act_layer, drop=drop)
@@ -241,7 +265,7 @@ class PatchEmbed(nn.Module):
         self.proj = nn.Conv3d(in_chans, embed_dim,
                               kernel_size=patch_size, stride=patch_size)
         if norm_layer is not None:
-            self.norm = norm_layer(num_channels=embed_dim)
+            self.norm = norm_layer(embed_dim)
         else:
             self.norm = None
 
@@ -298,7 +322,7 @@ class PatchMerging(nn.Module):
         self.input_resolution = input_resolution
         self.dim = dim
         self.reduction = nn.Linear(8 * dim, 2 * dim, bias=False)
-        self.norm = norm_layer(num_channels=2 * dim)
+        self.norm = norm_layer(2 * dim)
 
     def forward(self, x):
         """
@@ -346,10 +370,17 @@ class PatchExpanding(nn.Module):
         self.dim = dim
         self.return_vector = return_vector
         self.dim_scale = dim_scale
-        self.pixel_shuffle_conv_1 = nn.Conv3d(dim, dim * (dim_scale ** 3) // 2,
-                                              kernel_size=1, padding=0, bias=False)
-        self.pixel_shuffle = PixelShuffle3D(dim_scale)
-        self.norm_layer = norm_layer(num_channels=dim // 2)
+
+        pixel_conv = nn.Conv3d(dim, dim * (dim_scale ** 3) // 2,
+                               kernel_size=1, padding=0, bias=False)
+        if dim_scale == 1:
+            self.pixel_shuffle = pixel_conv
+        else:
+            self.pixel_shuffle = nn.Sequential(
+                            pixel_conv,
+                            PixelShuffle3D(dim_scale)
+            )
+        self.norm_layer = norm_layer(dim // 2)
 
     def forward(self, x):
         Z, H, W = self.input_resolution
@@ -358,7 +389,6 @@ class PatchExpanding(nn.Module):
             W, f"input feature has wrong size {L} != {Z}, {H}, {W}"
         assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({Z}*{H}*{W}) are not even."
         x = x.permute(0, 2, 1).view(B, C, Z, H, W)
-        x = self.pixel_shuffle_conv_1(x)
         x = self.pixel_shuffle(x)
         x = x.permute(0, 2, 3, 4, 1).view(B, -1, self.dim // 2)
         x = self.norm_layer(x)
@@ -369,6 +399,50 @@ class PatchExpanding(nn.Module):
                                         W * self.dim_scale)
         return x
 
+class PatchExpandingLinear(nn.Module):
+    def __init__(self, input_resolution, dim,
+                 return_vector=True, dim_scale=2,
+                 norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.return_vector = return_vector
+        self.dim_scale = dim_scale
+        
+        assert dim_scale in [1, 2], "not supported dim_scale"
+        self.mlp_layer = nn.Linear(dim, dim * (dim_scale ** 3) // 2, bias=False)
+        self.norm_layer = norm_layer(dim // 2)
+
+    def forward(self, x):
+        Z, H, W = self.input_resolution
+        B, L, C = x.shape
+        assert L == Z * H * \
+            W, f"input feature has wrong size {L} != {Z}, {H}, {W}"
+        assert Z % 2 == 0 and H % 2 == 0 and W % 2 == 0, f"x size ({Z}*{H}*{W}) are not even."
+
+        x = self.mlp_layer(x)
+        if self.dim_scale == 2:
+            half_dim = C // 2
+            x_expand = torch.empty(B, 2 * Z, 2 * H, 2 * W, half_dim, device=x.device, dtype=x.dtype)
+            x = x.reshape(B, Z, H, W, 4 * C)
+
+            x_expand[:, 0::2, 0::2, 0::2, :] = x[:, :, :, :, :half_dim]  # B H/2 W/2 C
+            x_expand[:, 1::2, 0::2, 0::2, :] = x[:, :, :, :, half_dim:half_dim * 2]  # B H/2 W/2 C
+            x_expand[:, 0::2, 1::2, 0::2, :] = x[:, :, :, :, half_dim * 2:half_dim * 3]  # B H/2 W/2 C
+            x_expand[:, 1::2, 1::2, 0::2, :] = x[:, :, :, :, half_dim * 3:half_dim * 4]  # B H/2 W/2 C
+            x_expand[:, 0::2, 0::2, 1::2, :] = x[:, :, :, :, half_dim * 4:half_dim * 5]  # B H/2 W/2 C
+            x_expand[:, 1::2, 0::2, 1::2, :] = x[:, :, :, :, half_dim * 5:half_dim * 6]  # B H/2 W/2 C
+            x_expand[:, 0::2, 1::2, 1::2, :] = x[:, :, :, :, half_dim * 6:half_dim * 7]  # B H/2 W/2 C
+            x_expand[:, 1::2, 1::2, 1::2, :] = x[:, :, :, :, half_dim * 7:half_dim * 8]  # B H/2 W/2 C
+            x = x_expand.view(B, 8 * Z * H * W, half_dim) # B 4*C H/2 W/2
+        x = self.norm_layer(x)
+        if not self.return_vector:
+            x = x.permute(0, 2, 1).view(B, self.dim // 2,
+                                        Z * self.dim_scale,
+                                        H * self.dim_scale,
+                                        W * self.dim_scale)
+        return x
+    
 class PatchExpandingMulti(nn.Module):
     def __init__(self, input_resolution, dim,
                  return_vector=True, dim_scale=2,
@@ -527,10 +601,12 @@ class BasicLayerV1(nn.Module):
 
     def _init_respostnorm(self):
         for blk in self.blocks:
-            nn.init.constant_(blk.norm1.bias, 0)
             nn.init.constant_(blk.norm1.weight, 0)
-            nn.init.constant_(blk.norm2.bias, 0)
             nn.init.constant_(blk.norm2.weight, 0)
+            if hasattr(blk.norm1, "bias"):
+                nn.init.constant_(blk.norm1.bias, 0)
+            if hasattr(blk.norm2, "bias"):
+                nn.init.constant_(blk.norm2.bias, 0)
 
 
 class BasicLayerV2(nn.Module):
@@ -635,10 +711,12 @@ class BasicLayerV2(nn.Module):
 
     def _init_respostnorm(self):
         for blk in self.blocks:
-            nn.init.constant_(blk.norm1.bias, 0)
             nn.init.constant_(blk.norm1.weight, 0)
-            nn.init.constant_(blk.norm2.bias, 0)
             nn.init.constant_(blk.norm2.weight, 0)
+            if hasattr(blk.norm1, "bias"):
+                nn.init.constant_(blk.norm1.bias, 0)
+            if hasattr(blk.norm2, "bias"):
+                nn.init.constant_(blk.norm2.bias, 0)
 
 class BaseBlock3D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,

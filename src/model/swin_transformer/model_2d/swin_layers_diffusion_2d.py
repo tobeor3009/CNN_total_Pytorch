@@ -230,6 +230,30 @@ class LayerNorm(nn.Module):
         mean = torch.mean(x, dim = self.normalize_dim, keepdim = True)
         return (x - mean) * (var + eps).rsqrt() * self.weight + default(self.bias, 0)
 
+class PixelShuffleLinear(nn.Module):
+    def __init__(self, upscale_factor):
+        '''
+        :param scale: upsample scale
+        '''
+        super().__init__()
+
+        if isinstance(upscale_factor, int):
+            upscale_factor = (upscale_factor, upscale_factor)
+        self.scale_num = np.prod(upscale_factor)
+
+    def forward(self, input):
+        batch_size, component, channels = input.size()
+        nOut = channels // self.scale_num
+
+        out_component = component * self.scale_num
+
+        input_view = input.view(batch_size, component, self.scale_num, nOut)
+
+        output = input_view.permute(0, 2, 1, 3)
+        output = output.contiguous()
+
+        return output.view(batch_size, out_component, nOut)
+
 class SkipLinear(nn.Module):
     def __init__(self, in_channels, out_channels, norm=None):
         super().__init__()
@@ -264,7 +288,7 @@ class SkipZConv(nn.Module):
     def __init__(self, in_channels, out_channels, norm=None, kernel_size=1):
         super().__init__()
         self.skip_conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
-                                   kernel_size=kernel_size, stride=1, padding="same")
+                                   kernel_size=kernel_size, stride=1, padding="same", bias=False)
         if norm is None:
             self.norm = nn.Identity()
         else:
@@ -276,6 +300,22 @@ class SkipZConv(nn.Module):
         x = self.norm(x)
         return x
 
+class SkipZLinear(nn.Module):
+    def __init__(self, in_channels, out_channels, norm=None):
+        super().__init__()
+        self.skip_linear = nn.Linear(in_channels, out_channels, bias=False)
+        if norm is None:
+            self.norm = nn.Identity()
+        else:
+            self.norm = norm(out_channels)
+    def forward(self, *args):
+        # expected shape: [B, N, C]
+        x = torch.cat(args, dim=2)
+        x = x.permute(0, 2, 1)
+        x = self.skip_linear(x)
+        x = self.norm(x)
+        return x.permute(0, 2, 1)
+    
 class LinearAttention(nn.Module):
     def __init__(self, dim, num_heads=4, dim_head=32, use_checkpoint=False):
         super().__init__()
@@ -295,12 +335,12 @@ class LinearAttention(nn.Module):
             RMSNorm(dim, mode="seq")
         )
 
-    def forward(self, x, *args):
+    def forward(self, x):
         if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x, *args,
+            return checkpoint(self._forward_impl, x,
                               use_reentrant=False)
         else:
-            return self._forward_impl(x, *args)
+            return self._forward_impl(x)
         
     def _forward_impl(self, x):
         b = x.size(0)
@@ -339,12 +379,12 @@ class Attention(nn.Module):
         self.to_qkv = nn.Linear(dim, hidden_dim * 3, bias=False)
         self.to_out = nn.Linear(hidden_dim, dim)
 
-    def forward(self, x, *args):
+    def forward(self, x):
         if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x, *args,
+            return checkpoint(self._forward_impl, x,
                               use_reentrant=False)
         else:
-            return self._forward_impl(x, *args)
+            return self._forward_impl(x)
         
     def _forward_impl(self, x):
         b = x.size(0)
@@ -380,12 +420,12 @@ class LinearAttention2D(nn.Module):
             RMSNorm(dim, mode="2d")
         )
 
-    def forward(self, x, *args):
+    def forward(self, x):
         if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x, *args,
+            return checkpoint(self._forward_impl, x,
                               use_reentrant=False)
         else:
-            return self._forward_impl(x, *args)
+            return self._forward_impl(x)
         
     def _forward_impl(self, x):
         b, c, h, w = x.shape
@@ -425,12 +465,12 @@ class Attention2D(nn.Module):
         self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias = False)
         self.to_out = nn.Conv2d(hidden_dim, dim, 1)
 
-    def forward(self, x, *args):
+    def forward(self, x):
         if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x, *args,
+            return checkpoint(self._forward_impl, x,
                               use_reentrant=False)
         else:
-            return self._forward_impl(x, *args)
+            return self._forward_impl(x)
         
     def _forward_impl(self, x):
         b, c, h, w = x.shape
@@ -924,9 +964,16 @@ class PatchExpanding(nn.Module):
         self.dim = dim
         self.return_vector = return_vector
         self.dim_scale = dim_scale
-        self.pixel_shuffle_conv_1 = nn.Conv2d(dim, dim * (dim_scale ** 2) // 2,
-                                              kernel_size=1, padding=0, bias=False)
-        self.pixel_shuffle = nn.PixelShuffle(dim_scale)
+        
+        pixel_conv = nn.Conv2d(dim, dim * (dim_scale ** 2) // 2,
+                               kernel_size=1, padding=0, bias=False)
+        if dim_scale == 1:
+            self.pixel_shuffle = pixel_conv
+        else:
+            self.pixel_shuffle = nn.Sequential(
+                            pixel_conv,
+                            nn.PixelShuffle(dim_scale)
+            )
         self.norm_layer = norm_layer(dim // 2)
 
     def forward(self, x):
@@ -935,7 +982,6 @@ class PatchExpanding(nn.Module):
         assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
         x = x.permute(0, 2, 1).view(B, C, H, W)
-        x = self.pixel_shuffle_conv_1(x)
         x = self.pixel_shuffle(x)
         
         x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
@@ -946,6 +992,42 @@ class PatchExpanding(nn.Module):
                                         W * self.dim_scale)
         return x
 
+class PatchExpandingLinear(nn.Module):
+    def __init__(self, input_resolution, dim,
+                 return_vector=True, dim_scale=2,
+                 norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.return_vector = return_vector
+        self.dim_scale = dim_scale
+        
+        assert dim_scale in [1, 2], "not supported dim_scale"
+        self.pixel_shuffle = nn.Linear(dim, dim * (dim_scale ** 2) // 2, bias=False)
+        self.norm_layer = norm_layer(dim // 2)
+
+    def forward(self, x):
+        H, W = self.input_resolution
+        B, L, C = x.shape
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
+        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+        x = self.pixel_shuffle(x)
+
+        if self.dim_scale == 2:
+            x_expand = torch.empty(B, 2 * H, 2 * W, C // 2, device=x.device, dtype=x.dtype)
+            x = x.reshape(B, H, W, 2 * C)
+            x_expand[:, 0::2, 0::2, :] = x[:, :, :, :C // 2]  # B H/2 W/2 C
+            x_expand[:, 1::2, 0::2, :] = x[:, :, :, C // 2:C]  # B H/2 W/2 C
+            x_expand[:, 0::2, 1::2, :] = x[:, :, :, C:C // 2 * 3]  # B H/2 W/2 C
+            x_expand[:, 1::2, 1::2, :] = x[:, :, :, C // 2 * 3:]  # B H/2 W/2 C
+            x = x_expand.view(B, 4 * H * W, C // 2) # B 4*C H/2 W/2
+        x = self.norm_layer(x)
+        if not self.return_vector:
+            x = x.permute(0, 2, 1).view(B, self.dim // 2,
+                                        H * self.dim_scale,
+                                        W * self.dim_scale)
+        return x
+    
 class PatchExpandingMulti(nn.Module):
     def __init__(self, input_resolution, dim,
                  return_vector=True, dim_scale=2,

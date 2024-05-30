@@ -12,10 +12,11 @@ from .swin_layers_diffusion_3d import BasicLayerV2 as BasicLayerV2_3D
 from .swin_layers_diffusion_3d import PatchEmbed as PatchEmbed3D
 from .swin_layers_diffusion_3d import PatchMerging as PatchMerging3D
 from .swin_layers_diffusion_3d import PatchExpanding as PatchExpanding3D
+from .swin_layers_diffusion_3d import PatchExpandingLinear as PatchExpandingLinear3D
 from .swin_layers_diffusion_3d import PatchExpandingMulti as PatchExpandingMulti3D
 from .swin_layers_diffusion_3d import ConvBlock3D
-from .swin_layers_diffusion_2d import BasicLayerV2, SkipConv1D, SkipZConv, AttentionPool1d
-from .swin_layers_diffusion_2d import exists, default, extract, SinusoidalPosEmb
+from .swin_layers_diffusion_2d import BasicLayerV2, SkipLinear, SkipZConv, AttentionPool1d
+from .swin_layers_diffusion_2d import exists, default, extract, LearnedSinusoidalPosEmb, Attention, RMSNorm
 from .swin_layers_diffusion_2d import PatchEmbed, PatchMerging, PatchExpanding
 from .swin_layers_diffusion_2d import get_norm_layer_partial, get_norm_layer_partial_conv
 
@@ -35,7 +36,7 @@ class SwinXrayCTAutoEncoder(nn.Module):
                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.0, latent_drop_rate=0.1,
                 patch_norm=True, skip_connect=True,
                 use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0],
-                self_condition=False, use_residual=False, last_conv_num=2
+                self_condition=False, use_residual=False
                 ):
         super().__init__()
         patch_size = int(patch_size)
@@ -60,12 +61,15 @@ class SwinXrayCTAutoEncoder(nn.Module):
             in_chans = in_chans * 2
 
         time_emb_dim = embed_dim * 4
+        sinu_pos_emb = LearnedSinusoidalPosEmb(time_emb_dim)
+        fourier_dim = time_emb_dim + 1
         self.time_mlp = nn.Sequential(
-            SinusoidalPosEmb(time_emb_dim // 2),
-            nn.Linear(time_emb_dim // 2, time_emb_dim),
+            sinu_pos_emb,
+            nn.Linear(fourier_dim, time_emb_dim),
             nn.SiLU(),
             nn.Linear(time_emb_dim, time_emb_dim)
         )
+
         self.latent_encoder = SwinDiffusionEncoder(img_size=img_size, patch_size=patch_size, in_chans=cond_chans, emb_chans=emb_chans,
                                                     embed_dim=embed_dim, depths=depths, num_heads=num_heads,
                                                     window_sizes=window_sizes, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape,
@@ -79,7 +83,7 @@ class SwinXrayCTAutoEncoder(nn.Module):
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed3D(img_size=img_size, patch_size=patch_size,
                                         in_chans=in_chans, embed_dim=embed_dim,
-                                        norm_layer=get_norm_layer_partial(num_heads[0]) if self.patch_norm else None)
+                                        norm_layer=RMSNorm if self.patch_norm else None)
         
         num_patches = self.patch_embed.num_patches
         patches_resolution = self.patch_embed.patches_resolution
@@ -100,7 +104,7 @@ class SwinXrayCTAutoEncoder(nn.Module):
                             "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
                             "drop":drop_rate, "attn_drop":attn_drop_rate,
                             "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                            "norm_layer":get_norm_layer_partial(num_heads[i_layer]),
+                            "norm_layer":RMSNorm,
                             "pretrained_window_size":pretrained_window_sizes[i_layer],
                             "emb_dim_list":emb_dim_list,
                             "use_checkpoint":use_checkpoint[i_layer], "use_residual":use_residual
@@ -119,7 +123,7 @@ class SwinXrayCTAutoEncoder(nn.Module):
                                 "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
                                 "drop":drop_rate, "attn_drop":attn_drop_rate,
                                 "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                                "norm_layer":get_norm_layer_partial(num_heads[i_layer]),
+                                "norm_layer":RMSNorm,
                                 "downsample":PatchMerging3D,
                                 "pretrained_window_size":pretrained_window_sizes[i_layer],
                                 "emb_dim_list":emb_dim_list + [layer_dim * 2],
@@ -139,7 +143,7 @@ class SwinXrayCTAutoEncoder(nn.Module):
                             "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
                             "drop":drop_rate, "attn_drop":attn_drop_rate,
                             "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                            "norm_layer":get_norm_layer_partial(num_heads[i_layer]),
+                            "norm_layer":RMSNorm,
                             "pretrained_window_size":pretrained_window_sizes[i_layer],
                             "emb_dim_list":emb_dim_list,
                             "use_checkpoint":use_checkpoint[i_layer], "use_residual":use_residual
@@ -152,8 +156,8 @@ class SwinXrayCTAutoEncoder(nn.Module):
             layer_dim = int(embed_dim * 2 ** d_i_layer)
             feature_resolution = np.array(patches_resolution) // (2 ** d_i_layer)
 
-            skip_conv_layer = SkipConv1D(layer_dim * 2, layer_dim,
-                                         norm=get_norm_layer_partial_conv(num_heads[i_layer]))
+            skip_conv_layer = SkipLinear(layer_dim * 2, layer_dim,
+                                         norm=RMSNorm)
             common_kwarg_dict = {"dim":layer_dim,
                                "input_resolution":feature_resolution,
                                 "depth":depths[i_layer],
@@ -162,7 +166,7 @@ class SwinXrayCTAutoEncoder(nn.Module):
                                "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
                                "drop":drop_rate, "attn_drop":attn_drop_rate,
                                "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                               "norm_layer":get_norm_layer_partial(num_heads[i_layer]),
+                               "norm_layer":RMSNorm,
                                "upsample":PatchExpanding3D,
                                "pretrained_window_size":pretrained_window_sizes[i_layer],
                                "emb_dim_list":emb_dim_list,
@@ -181,7 +185,7 @@ class SwinXrayCTAutoEncoder(nn.Module):
                             "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
                             "drop":drop_rate, "attn_drop":attn_drop_rate,
                             "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                            "norm_layer":get_norm_layer_partial(num_heads[i_layer]),
+                            "norm_layer":RMSNorm,
                             "upsample":None,
                             "pretrained_window_size":pretrained_window_sizes[i_layer],
                             "emb_dim_list":emb_dim_list,
@@ -192,18 +196,7 @@ class SwinXrayCTAutoEncoder(nn.Module):
                                                 dim=embed_dim,
                                                 return_vector=False,
                                                 dim_scale=patch_size,
-                                                norm_layer=get_norm_layer_partial(num_heads[i_layer]))
-        self.final_conv_list = nn.ModuleList()
-        common_kwarg_dict = {
-            "kernel_size":3, "stride":1,
-            "norm":get_norm_layer_partial_conv(num_heads[i_layer]), "bias":False,
-            "emb_dim_list":[], "emb_type_list":[], "use_checkpoint":use_checkpoint[i_layer]
-        }
-        for _ in range(last_conv_num):
-            in_channel = embed_dim // 2
-            out_channel = embed_dim // 2
-            final_conv = ConvBlock3D(in_channel, out_channel, **common_kwarg_dict)
-            self.final_conv_list.append(final_conv)
+                                                norm_layer=RMSNorm)
         self.out_conv = Output3D(embed_dim // 2, out_chans, act=out_act)
         self.apply(self._init_weights)
 
@@ -261,8 +254,6 @@ class SwinXrayCTAutoEncoder(nn.Module):
         
         x = self.final_layer(x, *emb_list)
         x = self.final_expanding(x)
-        for final_conv in self.final_conv_list:
-            x = final_conv(x)
         x = self.out_conv(x)
         return x
 
@@ -295,7 +286,7 @@ class SwinDiffusionEncoder(nn.Module):
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size,
                                     in_chans=in_chans, embed_dim=embed_dim,
-                                    norm_layer=get_norm_layer_partial(num_heads[0]) if self.patch_norm else None)
+                                    norm_layer=RMSNorm if self.patch_norm else None)
         
         num_patches = self.patch_embed.num_patches
         patches_resolution = self.patch_embed.patches_resolution
@@ -310,11 +301,11 @@ class SwinDiffusionEncoder(nn.Module):
 
         # build layers
         self.encode_layers = nn.ModuleList()
-        self.z_conv_list = nn.ModuleList()
+        self.z_feature_list = []
         for i_layer in range(self.num_layers):
             layer_dim = int(embed_dim * 2 ** i_layer)
             feature_resolution = np.array(patches_resolution) // (2 ** i_layer)
-            skip_feature_num = np.prod(feature_resolution) // 4
+            feature_z = feature_resolution[0] // 2
             common_kwarg_dict = {"dim":layer_dim,
                                 "input_resolution":feature_resolution,
                                 "depth":depths[i_layer],
@@ -323,7 +314,7 @@ class SwinDiffusionEncoder(nn.Module):
                                 "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
                                 "drop":drop_rate, "attn_drop":attn_drop_rate,
                                 "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                                "norm_layer":get_norm_layer_partial(num_heads[i_layer]),
+                                "norm_layer":RMSNorm,
                                 "downsample":PatchMerging,
                                 "pretrained_window_size":pretrained_window_sizes[i_layer],
                                 "emb_dim_list":[],
@@ -331,11 +322,9 @@ class SwinDiffusionEncoder(nn.Module):
                                 }
             
             encode_layer = BasicLayerV2(**common_kwarg_dict)
-            z_conv = SkipZConv(in_channels=skip_feature_num, out_channels=skip_feature_num * feature_resolution[0] // 2,
-                                 kernel_size=3, norm=get_norm_layer_partial_conv(num_heads[depth_level - i_layer - 1]))
             
             self.encode_layers.append(encode_layer)
-            self.z_conv_list.append(z_conv)
+            self.z_feature_list.append(feature_z)
 
         layer_dim = int(embed_dim * 2 ** depth_level)
         feature_hw = np.array(patches_resolution) // (2 ** depth_level)
@@ -347,7 +336,7 @@ class SwinDiffusionEncoder(nn.Module):
                             "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
                             "drop":drop_rate, "attn_drop":attn_drop_rate,
                             "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                            "norm_layer":get_norm_layer_partial(num_heads[i_layer]),
+                            "norm_layer":RMSNorm,
                             "pretrained_window_size":pretrained_window_sizes[i_layer],
                             "emb_dim_list":[],
                             "use_checkpoint":use_checkpoint[i_layer], "use_residual":use_residual
@@ -384,9 +373,9 @@ class SwinDiffusionEncoder(nn.Module):
         x = self.pos_drop(x)
 
         hidden_state_list = []
-        for encode_layer, z_conv in zip(self.encode_layers, self.z_conv_list):
+        for encode_layer, z_feature_num in zip(self.encode_layers, self.z_feature_list):
             x = encode_layer(x)
-            hidden_state = z_conv(x)
+            hidden_state = x.repeat(1, z_feature_num, 1)
             hidden_state_list.append(hidden_state)
         x = self.mid_layer(x)
         x = self.pool_layer(x)

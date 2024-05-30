@@ -11,6 +11,7 @@ from torch.cuda.amp import autocast
 from tqdm import tqdm
 from einops import rearrange, repeat, reduce, pack, unpack
 from einops.layers.torch import Rearrange
+from torch.utils.checkpoint import checkpoint
 
 # helpers
 
@@ -134,9 +135,10 @@ class Block(nn.Module):
         return x
 
 class ResnetBlock(nn.Module):
-    def __init__(self, dim, dim_out, *, emb_dim_list=[]):
+    def __init__(self, dim, dim_out, *, emb_dim_list=[], use_checkpoint=False):
         super().__init__()
 
+        self.use_checkpoint = use_checkpoint
         self.emb_mlp_list = nn.ModuleList()
         for emb_dim in emb_dim_list:
             emb_mlp = nn.Sequential(
@@ -148,8 +150,14 @@ class ResnetBlock(nn.Module):
         self.block1 = Block(dim, dim_out)
         self.block2 = Block(dim_out, dim_out)
         self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
-
     def forward(self, x, *emb_list):
+        if self.use_checkpoint:
+            x = checkpoint(self._forward_impl, x, *emb_list,
+                            use_reentrant=False)
+        else:
+            x = self._forward_impl(x, *emb_list)
+        return x
+    def _forward_impl(self, x, *emb_list):
 
         scale_shift_list = []
         for emb_mlp, emb in zip(self.emb_mlp_list, emb_list):
@@ -164,8 +172,9 @@ class ResnetBlock(nn.Module):
         return h + self.res_conv(x)
 
 class LinearAttention(nn.Module):
-    def __init__(self, dim, heads = 4, dim_head = 32):
+    def __init__(self, dim, heads = 4, dim_head = 32, use_checkpoint = False):
         super().__init__()
+        self.use_checkpoint = use_checkpoint
         self.scale = dim_head ** -0.5
         self.heads = heads
         hidden_dim = dim_head * heads
@@ -177,8 +186,14 @@ class LinearAttention(nn.Module):
             nn.Conv2d(hidden_dim, dim, 1),
             RMSNorm(dim, normalize_dim = 1)
         )
-
     def forward(self, x):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x)
+        
+    def _forward_impl(self, x):
         residual = x
 
         b, c, h, w = x.shape
@@ -201,8 +216,9 @@ class LinearAttention(nn.Module):
         return self.to_out(out) + residual
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads = 4, dim_head = 32, scale = 8, dropout = 0.):
+    def __init__(self, dim, heads = 4, dim_head = 32, scale = 8, dropout = 0., use_checkpoint = False):
         super().__init__()
+        self.use_checkpoint = use_checkpoint
         self.scale = scale
         self.heads = heads
         hidden_dim = dim_head * heads
@@ -218,6 +234,13 @@ class Attention(nn.Module):
         self.to_out = nn.Linear(hidden_dim, dim, bias = False)
 
     def forward(self, x):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x)
+        
+    def _forward_impl(self, x):
         x = self.norm(x)
 
         qkv = self.to_qkv(x).chunk(3, dim = -1)
@@ -295,9 +318,10 @@ class Transformer(nn.Module):
         heads = 4,
         ff_mult = 4,
         dropout = 0.,
+        use_checkpoint=False
     ):
         super().__init__()
-
+        self.use_checkpoint = use_checkpoint
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
@@ -305,7 +329,14 @@ class Transformer(nn.Module):
                 FeedForward(dim = dim, mult = ff_mult, emb_dim_list = emb_dim_list, dropout = dropout)
             ]))
 
-    def forward(self, x, *emb_list):
+    def forward(self, x, *args):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x, *args,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x, *args)
+        
+    def _forward_impl(self, x, *emb_list):
         for attn, ff in self.layers:
             x = attn(x) + x
             x = ff(x, *emb_list) + x
@@ -375,9 +406,13 @@ class UViT(nn.Module):
         patch_size = 1,
         dual_patchnorm = False,
         self_condition = False,
+        use_checkpoint = False
     ):
         super().__init__()
+        if isinstance(use_checkpoint, bool):
+            use_checkpoint = [use_checkpoint for _ in dim_mults]
 
+        layer_depth = len(dim_mults)
         # for compability with Medsegdiff
         self.image_size = img_size
         self.input_img_channels = cond_dim
@@ -412,7 +447,8 @@ class UViT(nn.Module):
                                             init_img_transform=init_img_transform,
                                             final_img_itransform=final_img_itransform,
                                             patch_size=patch_size,
-                                            dual_patchnorm=dual_patchnorm)
+                                            dual_patchnorm=dual_patchnorm,
+                                            use_checkpoint=use_checkpoint)
 
         self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
 
@@ -471,9 +507,9 @@ class UViT(nn.Module):
             is_last = ind >= (num_resolutions - 1)
 
             self.downs.append(nn.ModuleList([
-                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list),
-                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list),
-                LinearAttention(dim_in),
+                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind]),
+                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind]),
+                LinearAttention(dim_in, use_checkpoint=use_checkpoint[ind]),
                 Downsample(dim_in, dim_out, factor = factor)
             ]))
 
@@ -486,17 +522,18 @@ class UViT(nn.Module):
             dim_head = attn_dim_head,
             heads = attn_heads,
             ff_mult = ff_mult,
-            dropout = vit_dropout
+            dropout = vit_dropout,
+            use_checkpoint=use_checkpoint[-1]
         )
 
         for ind, ((dim_in, dim_out), factor) in enumerate(zip(reversed(in_out), reversed(downsample_factor))):
             is_last = ind == (len(in_out) - 1)
-
+            up_ind = layer_depth - ind
             self.ups.append(nn.ModuleList([
                 Upsample(dim_out, dim_in, factor = factor),
-                ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list),
-                ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list),
-                LinearAttention(dim_in),
+                ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[up_ind]),
+                ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[up_ind]),
+                LinearAttention(dim_in, use_checkpoint=use_checkpoint[up_ind]),
             ]))
 
         default_out_dim = input_channels
@@ -572,8 +609,12 @@ class LatentEncoder(nn.Module):
                 init_img_transform: callable = None,
                 final_img_itransform: callable = None,
                 patch_size = 1,
-                dual_patchnorm = False):
+                dual_patchnorm = False,
+                use_checkpoint = False):
         super().__init__()
+        if isinstance(use_checkpoint, bool):
+            use_checkpoint = [use_checkpoint for _ in dim_mults]
+
         if exists(init_img_transform) and exists(final_img_itransform):
             init_shape = torch.Size(1, 1, 32, 32)
             mock_tensor = torch.randn(init_shape)
@@ -623,9 +664,9 @@ class LatentEncoder(nn.Module):
             is_last = ind >= (num_resolutions - 1)
 
             self.downs.append(nn.ModuleList([
-                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list),
-                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list),
-                LinearAttention(dim_in),
+                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind]),
+                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind]),
+                LinearAttention(dim_in, use_checkpoint=use_checkpoint[ind]),
                 Downsample(dim_in, dim_out, factor = factor)
             ]))
 
@@ -638,7 +679,8 @@ class LatentEncoder(nn.Module):
             dim_head = attn_dim_head,
             heads = attn_heads,
             ff_mult = ff_mult,
-            dropout = vit_dropout
+            dropout = vit_dropout,
+            use_checkpoint=use_checkpoint[-1]
         )
         feature_num = (img_size // (2 ** 4)) ** 2
         self.pool_layer = AttentionPool(feature_num=feature_num,

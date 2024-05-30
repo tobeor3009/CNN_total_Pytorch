@@ -142,13 +142,11 @@ class WindowAttention(nn.Module):
         relative_coords_table = relative_coords_table.permute(
             1, 2, 3, 0).contiguous().unsqueeze(0)  # 1, 2*Wz-1, 2*Wh-1, 2*Ww-1, 2
         if pretrained_window_size[0] > 0:
-            relative_coords_table[:, :, :,
-                                  0] /= (pretrained_window_size[0] - 1)
-            relative_coords_table[:, :, :,
-                                  1] /= (pretrained_window_size[1] - 1)
+            relative_coords_table[..., 0] /= (pretrained_window_size[0] - 1)
+            relative_coords_table[..., 1] /= (pretrained_window_size[1] - 1)
         else:
-            relative_coords_table[:, :, :, 0] /= (self.window_size[0] - 1)
-            relative_coords_table[:, :, :, 1] /= (self.window_size[1] - 1)
+            relative_coords_table[..., 0] /= (self.window_size[0] - 1)
+            relative_coords_table[..., 1] /= (self.window_size[1] - 1)
         relative_coords_table *= 8  # normalize to -8, 8
         relative_coords_table = torch.sign(relative_coords_table) * torch.log2(
             torch.abs(relative_coords_table) + 1.0) / np.log2(8)
