@@ -13,11 +13,9 @@ from einops import rearrange, repeat, reduce, pack, unpack
 from einops.layers.torch import Rearrange
 from torch.utils.checkpoint import checkpoint
 
-
 from .utils import exists, identity, is_lambda, default, cast_tuple, append_dims, l2norm
 from .utils import Upsample, Downsample, LearnedSinusoidalPosEmb, Block, ResnetBlock
 from .utils import LinearAttention, Attention, FeedForward, Transformer, AttentionPool
-
     
 # model
 class UViT(nn.Module):
@@ -68,6 +66,8 @@ class UViT(nn.Module):
         input_channels = channels
 
         init_dim = default(init_dim, dim)
+        
+        ct_mode = "3d"
 
         self.latent_encoder = LatentEncoder(dim=dim,
                                             img_size=img_size,
@@ -87,7 +87,7 @@ class UViT(nn.Module):
                                             dual_patchnorm=dual_patchnorm,
                                             use_checkpoint=use_checkpoint)
 
-        self.init_conv = nn.Conv2d(input_channels, init_dim, 7, padding = 3)
+        self.init_conv = nn.Conv3d(input_channels, init_dim, 7, padding = 3)
 
         # whether to do initial patching, as alternative to dwt
 
@@ -98,17 +98,18 @@ class UViT(nn.Module):
 
         if needs_patch:
             if not dual_patchnorm:
-                self.init_conv = nn.Conv2d(channels, init_dim, patch_size, stride = patch_size)
+                self.init_conv = nn.Conv3d(channels, init_dim, patch_size, stride = patch_size)
             else:
                 self.init_conv = nn.Sequential(
-                    Rearrange('b c (h p1) (w p2) -> b h w (c p1 p2)', p1 = patch_size, p2 = patch_size),
+                    Rearrange('b c (z p1) (h p2) (w p3) -> b z h w (c p1 p2 p3)',
+                              p1=patch_size, p2=patch_size, p3=patch_size),
                     nn.LayerNorm(input_channels),
                     nn.Linear(input_channels, init_dim),
                     nn.LayerNorm(init_dim),
-                    Rearrange('b h w c -> b c h w')
+                    Rearrange('b z h w c -> b c z h w')
                 )
 
-            self.unpatchify = nn.ConvTranspose2d(input_channels, channels, patch_size, stride = patch_size)
+            self.unpatchify = nn.ConvTranspose3d(input_channels, channels, patch_size, stride = patch_size)
 
         # determine dimensions
 
@@ -144,10 +145,10 @@ class UViT(nn.Module):
             is_last = ind >= (num_resolutions - 1)
 
             self.downs.append(nn.ModuleList([
-                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind]),
-                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind]),
-                LinearAttention(dim_in, use_checkpoint=use_checkpoint[ind]),
-                Downsample(dim_in, dim_out, factor = factor)
+                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind], mode=ct_mode),
+                ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind], mode=ct_mode),
+                LinearAttention(dim_in, use_checkpoint=use_checkpoint[ind], mode=ct_mode),
+                Downsample(dim_in, dim_out, factor = factor, mode=ct_mode)
             ]))
 
         mid_dim = dims[-1]
@@ -165,19 +166,19 @@ class UViT(nn.Module):
 
         for ind, ((dim_in, dim_out), factor) in enumerate(zip(reversed(in_out), reversed(downsample_factor))):
             is_last = ind == (len(in_out) - 1)
-            up_ind = layer_depth - ind
+            up_ind = layer_depth - ind - 1
             self.ups.append(nn.ModuleList([
-                Upsample(dim_out, dim_in, factor = factor),
-                ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[up_ind]),
-                ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[up_ind]),
-                LinearAttention(dim_in, use_checkpoint=use_checkpoint[up_ind]),
+                Upsample(dim_out, dim_in, factor = factor, mode=ct_mode),
+                ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[up_ind], mode=ct_mode),
+                ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[up_ind], mode=ct_mode),
+                LinearAttention(dim_in, use_checkpoint=use_checkpoint[up_ind], mode=ct_mode),
             ]))
 
         default_out_dim = input_channels
         self.out_dim = default(out_dim, default_out_dim)
 
-        self.final_res_block = ResnetBlock(dim * 2, dim, emb_dim_list=emb_dim_list)
-        self.final_conv = nn.Conv2d(dim, self.out_dim, 1)
+        self.final_res_block = ResnetBlock(dim * 2, dim, emb_dim_list=emb_dim_list, mode=ct_mode)
+        self.final_conv = nn.Conv3d(dim, self.out_dim, 1)
 
     def forward(self, x, time, cond=None, x_self_cond=None, class_labels=None,
                 cond_drop_prob=None):
@@ -192,7 +193,6 @@ class UViT(nn.Module):
         emb_list = [t, latent]
         
         h = []
-
         for block1, block2, attn, downsample in self.downs:
             x = block1(x, *emb_list)
             h.append(x)
@@ -203,13 +203,13 @@ class UViT(nn.Module):
 
             x = downsample(x)
 
-        x = rearrange(x, 'b c h w -> b h w c')
+        x = rearrange(x, 'b c z h w -> b z h w c')
         x, ps = pack([x], 'b * c')
 
         x = self.vit(x, *emb_list)
 
         x, = unpack(x, ps, 'b * c')
-        x = rearrange(x, 'b h w c -> b c h w')
+        x = rearrange(x, 'b z h w c -> b c z h w')
 
         for upsample, block1, block2, attn in self.ups:
             x = upsample(x)
