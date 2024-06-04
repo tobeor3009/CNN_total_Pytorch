@@ -25,6 +25,7 @@ class SwinMultitask(nn.Module):
                 get_class=False, get_seg=True, get_validity=False,
                 use_residual=False):
         super().__init__()
+        self.model_norm_layer = nn.LayerNorm
         patch_size = int(patch_size)
         
         ##################################
@@ -85,7 +86,7 @@ class SwinMultitask(nn.Module):
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size,
                                     in_chans=in_chans, embed_dim=embed_dim,
-                                    norm_layer=RMSNorm if self.patch_norm else None)
+                                    norm_layer=self.model_norm_layer if self.patch_norm else None)
         
         num_patches = self.patch_embed.num_patches
         patches_resolution = self.patch_embed.patches_resolution
@@ -224,7 +225,7 @@ class SwinMultitask(nn.Module):
                             "mlp_ratio":self.mlp_ratio, "qkv_bias":self.qkv_bias, 
                             "drop":self.drop_rate, "attn_drop":self.attn_drop_rate,
                             "drop_path":self.dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
-                            "norm_layer":RMSNorm,
+                            "norm_layer":self.model_norm_layer,
                             "pretrained_window_size":self.pretrained_window_sizes[i_layer],
                             "emb_dim_list":self.emb_dim_list,
                             "use_checkpoint":self.use_checkpoint[i_layer], "use_residual":self.use_residual
@@ -267,7 +268,7 @@ class SwinMultitask(nn.Module):
             common_kwarg_dict = self.get_layer_config_dict(layer_dim, feature_resolution, i_layer)
             common_kwarg_dict["upsample"] = PatchExpandingLinear
             skip_layer = SkipLinear(layer_dim * 2, layer_dim,
-                                    norm=RMSNorm)
+                                    norm=self.model_norm_layer)
             decode_layer = BasicLayerV1(**common_kwarg_dict)
             
             skip_layers.append(skip_layer)
@@ -284,7 +285,7 @@ class SwinMultitask(nn.Module):
                                                     dim=self.embed_dim,
                                                     return_vector=False,
                                                     dim_scale=self.patch_size,
-                                                    norm_layer=RMSNorm
+                                                    norm_layer=self.model_norm_layer
                                                     )
         out_conv = Output2D(self.embed_dim // 2, self.seg_out_chans, act=self.seg_out_act)
         return seg_final_layer, seg_final_expanding, out_conv
@@ -308,15 +309,12 @@ class SwinMultitask(nn.Module):
         h, w = self.feature_hw
         common_kwarg_dict = self.get_layer_config_dict(self.feature_dim, self.feature_hw, i_layer)
         validity_layer = BasicLayerV2(**common_kwarg_dict)
-        validity_conv = ConvBlock2D(self.validity_dim, self.embed_dim,
-                                    kernel_size=3, act="silu", norm=partial(RMSNorm, mode="2d"))
         validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
-        validity_out_conv = ConvBlock2D(self.embed_dim, validity_shape[0],
+        validity_out_conv = ConvBlock2D(self.validity_dim, validity_shape[0],
                                         kernel_size=1, act=validity_act, norm=nn.Identity)
         validity_head = nn.Sequential(
             validity_layer,
             Rearrange('b (h w) c -> b c h w', h=h, w=w),
-            validity_conv,
             validity_avg_pool,
             validity_out_conv
         )

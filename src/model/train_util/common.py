@@ -1,6 +1,5 @@
 import torch
 
-
 def calculate_threshold(model):
     all_gradients = torch.cat([p.grad.view(-1)
                               for p in model.parameters() if p.grad is not None])

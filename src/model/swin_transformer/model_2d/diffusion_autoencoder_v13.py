@@ -32,8 +32,8 @@ class SwinDiffusionUnet(nn.Module):
         ##################################
         self.patch_size = patch_size
         self.patch_norm = patch_norm
-        self.out_chans = out_act
-        self.out_act = out_chans
+        self.out_chans = out_chans
+        self.out_act = out_act
         self.embed_dim = embed_dim
         self.depths = depths
         self.num_heads = num_heads
@@ -46,6 +46,7 @@ class SwinDiffusionUnet(nn.Module):
         self.attn_drop_rate = attn_drop_rate
         if isinstance(pretrained_window_sizes, int):
             pretrained_window_sizes = [pretrained_window_sizes for _ in num_heads]
+        self.pretrained_window_sizes = pretrained_window_sizes
         if isinstance(use_checkpoint, bool):
             use_checkpoint = [use_checkpoint for _ in num_heads]
         self.use_checkpoint = use_checkpoint
@@ -170,7 +171,6 @@ class SwinDiffusionUnet(nn.Module):
 
         time_emb = self.time_mlp(time)
         latent = self.latent_encoder(cond)
-        latent = self.latent_drop(latent)
 
         if self.num_class_embeds is not None:
             class_emb = self.class_emb_layer(class_labels).to(dtype=x.dtype)
@@ -302,7 +302,7 @@ class SwinDiffusionEncoder(SwinDiffusionUnet):
                 embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
                 window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True, patch_norm=True,
                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1, latent_drop_rate=0.1,
-                use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0],
+                use_checkpoint=False, pretrained_window_sizes=0,
                 use_residual=False
                 ):
         super(SwinDiffusionUnet, self).__init__()
@@ -319,9 +319,12 @@ class SwinDiffusionEncoder(SwinDiffusionUnet):
         self.qkv_bias = qkv_bias
         self.drop_rate = drop_rate
         self.attn_drop_rate = attn_drop_rate
+        if isinstance(pretrained_window_sizes, int):
+            pretrained_window_sizes = [pretrained_window_sizes for _ in num_heads]
         self.pretrained_window_sizes = pretrained_window_sizes
         if isinstance(use_checkpoint, bool):
             use_checkpoint = [use_checkpoint for _ in num_heads]
+        self.use_checkpoint = use_checkpoint
         self.use_residual = use_residual
         ##################################
         self.num_layers = len(depths)
@@ -329,6 +332,7 @@ class SwinDiffusionEncoder(SwinDiffusionUnet):
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         feature_dim = int(self.embed_dim * 2 ** self.num_layers)
         self.feature_dim = feature_dim
+        self.emb_dim_list = []
         # stochastic depth
         self.dpr = [x.item() for x in torch.linspace(0, drop_path_rate,
                                                 sum(depths))]  # stochastic depth decay rule
