@@ -172,7 +172,7 @@ class LearnedSinusoidalPosEmb(nn.Module):
 # building block modules
 
 class Block(nn.Module):
-    def __init__(self, dim, dim_out, mode="2d"):
+    def __init__(self, dim, dim_out, mode="2d", use_checkpoint=False):
         super().__init__()
         if mode == "2d":
             self.proj = nn.Conv2d(dim, dim_out, 3, padding = 1)
@@ -180,8 +180,14 @@ class Block(nn.Module):
             self.proj = nn.Conv3d(dim, dim_out, 3, padding = 1)
         self.norm = RMSNorm(dim_out, normalize_dim = 1)
         self.act = nn.SiLU()
-
+        
+        self.use_checkpoint = use_checkpoint
+    
     def forward(self, x, scale_shift_list=[]):
+        x = process_layer(self.use_checkpoint, self._forward_impl, x, scale_shift_list)
+        return x
+    
+    def _forward_impl(self, x, scale_shift_list=[]):
         x = self.proj(x)
         x = self.norm(x)
 
@@ -206,21 +212,14 @@ class ResnetBlock(nn.Module):
             )
             self.emb_mlp_list.append(emb_mlp)
 
-        self.block1 = Block(dim, dim_out, mode=mode)
-        self.block2 = Block(dim_out, dim_out, mode=mode)
+        self.block1 = Block(dim, dim_out, mode=mode, use_checkpoint=use_checkpoint)
+        self.block2 = Block(dim_out, dim_out, mode=mode, use_checkpoint=use_checkpoint)
         if mode == "2d":
             self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
         elif mode == "3d":
             self.res_conv = nn.Conv3d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
         
     def forward(self, x, *emb_list):
-        if self.use_checkpoint:
-            x = checkpoint(self._forward_impl, x, *emb_list,
-                            use_reentrant=False)
-        else:
-            x = self._forward_impl(x, *emb_list)
-        return x
-    def _forward_impl(self, x, *emb_list):
 
         scale_shift_list = []
         for emb_mlp, emb in zip(self.emb_mlp_list, emb_list):
@@ -266,11 +265,8 @@ class LinearAttention(nn.Module):
 
 
     def forward(self, x):
-        if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x,
-                              use_reentrant=False)
-        else:
-            return self._forward_impl(x)
+        x = process_layer(self.use_checkpoint, self._forward_impl, x)
+        return x
     
     def _forward_impl(self, x):
         residual = x
@@ -313,11 +309,8 @@ class Attention(nn.Module):
         self.to_out = nn.Linear(hidden_dim, dim, bias = False)
 
     def forward(self, x):
-        if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x,
-                              use_reentrant=False)
-        else:
-            return self._forward_impl(x)
+        x = process_layer(self.use_checkpoint, self._forward_impl, x)
+        return x
         
     def _forward_impl(self, x):
         x = self.norm(x)
