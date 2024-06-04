@@ -249,6 +249,8 @@ class LatentEncoder(nn.Module):
                 dual_patchnorm = False,
                 use_checkpoint = False):
         super().__init__()
+
+        layer_depth = len(dim_mults)
         if isinstance(use_checkpoint, bool):
             use_checkpoint = [use_checkpoint for _ in dim_mults]
 
@@ -319,7 +321,7 @@ class LatentEncoder(nn.Module):
             dropout = vit_dropout,
             use_checkpoint=use_checkpoint[-1]
         )
-        feature_num = (img_size // (2 ** 4)) ** 2
+        feature_num = (img_size // (2 ** layer_depth)) ** 2
         self.pool_layer = AttentionPool(feature_num=feature_num,
                                         embed_dim=mid_dim,
                                         num_heads=attn_heads, output_dim=latent_dim)
