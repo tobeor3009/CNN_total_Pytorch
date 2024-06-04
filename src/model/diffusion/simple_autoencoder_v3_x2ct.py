@@ -13,7 +13,7 @@ from einops import rearrange, repeat, reduce, pack, unpack
 from einops.layers.torch import Rearrange
 from torch.utils.checkpoint import checkpoint
 
-from .utils import exists, identity, is_lambda, default, cast_tuple, append_dims, l2norm
+from .utils import exists, identity, is_lambda, default, cast_tuple, append_dims, l2norm, process_layer
 from .utils import Upsample, Downsample, LearnedSinusoidalPosEmb, Block, ResnetBlock
 from .utils import LinearAttention, Attention, FeedForward, Transformer, AttentionPool
     
@@ -44,15 +44,16 @@ class UViT(nn.Module):
         use_checkpoint = False
     ):
         super().__init__()
-        if isinstance(use_checkpoint, bool):
-            use_checkpoint = [use_checkpoint for _ in dim_mults]
-
         layer_depth = len(dim_mults)
+        self.layer_depth = layer_depth
         # for compability with Medsegdiff
         self.image_size = img_size
         self.input_img_channels = cond_dim
         self.mask_channels = channels
         self.self_condition = self_condition
+        if isinstance(use_checkpoint, bool):
+            use_checkpoint = [use_checkpoint for _ in dim_mults]
+        self.use_checkpoint = use_checkpoint
         # for initial dwt transform (or whatever transform researcher wants to try here)
 
         if exists(init_img_transform) and exists(final_img_itransform):
@@ -177,13 +178,9 @@ class UViT(nn.Module):
         default_out_dim = input_channels
         self.out_dim = default(out_dim, default_out_dim)
 
-        self.final_res_block = ResnetBlock(dim * 2, dim, emb_dim_list=emb_dim_list, mode=ct_mode)
+        self.final_res_block = ResnetBlock(dim * 2, dim, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[-1], mode=ct_mode)
         self.final_conv = nn.Conv3d(dim, self.out_dim, 1)
 
-    def process_layer(self, layer, x, *emb_list):
-        x = checkpoint(layer, x, *emb_list,
-                       use_reentrant=False)
-        return x
     def forward(self, x, time, cond=None, x_self_cond=None, class_labels=None,
                 cond_drop_prob=None):
         
@@ -197,7 +194,7 @@ class UViT(nn.Module):
         emb_list = [t, latent]
         
         h = []
-        for block1, block2, attn, downsample in self.downs:
+        for ind, (block1, block2, attn, downsample) in enumerate(self.downs):
             x = block1(x, *emb_list)
             h.append(x)
 
@@ -205,7 +202,7 @@ class UViT(nn.Module):
             x = attn(x)
             h.append(x)
 
-            x = self.process_layer(downsample, x)
+            x = process_layer(self.use_checkpoint[ind], downsample, x)
 
         x = rearrange(x, 'b c z h w -> b z h w c')
         x, ps = pack([x], 'b * c')
@@ -215,8 +212,9 @@ class UViT(nn.Module):
         x, = unpack(x, ps, 'b * c')
         x = rearrange(x, 'b z h w c -> b c z h w')
 
-        for upsample, block1, block2, attn in self.ups:
-            x = self.process_layer(upsample, x)
+        for ind, (upsample, block1, block2, attn) in enumerate(self.ups):
+            up_ind = self.layer_depth - ind - 1
+            x = process_layer(self.use_checkpoint[up_ind], upsample, x)
 
             x = torch.cat((x, h.pop()), dim = 1)
             x = block1(x, *emb_list)
@@ -257,6 +255,7 @@ class LatentEncoder(nn.Module):
         layer_depth = len(dim_mults)
         if isinstance(use_checkpoint, bool):
             use_checkpoint = [use_checkpoint for _ in dim_mults]
+        self.use_checkpoint = use_checkpoint
 
         if exists(init_img_transform) and exists(final_img_itransform):
             init_shape = torch.Size(1, 1, 32, 32)
@@ -331,23 +330,18 @@ class LatentEncoder(nn.Module):
                                         num_heads=attn_heads, output_dim=latent_dim)
         self.out = nn.Sequential(nn.SiLU(), nn.Dropout(0.05), nn.Linear(latent_dim, latent_dim),
                                  nn.SiLU(), nn.Dropout(0.05), nn.Linear(latent_dim, latent_dim))
-    
-    def process_layer(self, layer, x, *emb_list):
-        x = checkpoint(layer, x, *emb_list,
-                       use_reentrant=False)
-        return x
-            
+
     def forward(self, x):
         x = self.init_img_transform(x)
 
         x = self.init_conv(x)
 
-        for block1, block2, attn, downsample in self.downs:
+        for ind, (block1, block2, attn, downsample) in enumerate(self.downs):
             x = block1(x)
             x = block2(x)
             x = attn(x)
 
-            x = self.process_layer(downsample, x)
+            x = process_layer(self.use_checkpoint[ind], downsample, x)
 
         x = rearrange(x, 'b c h w -> b h w c')
         x, ps = pack([x], 'b * c')
@@ -357,6 +351,6 @@ class LatentEncoder(nn.Module):
         x, = unpack(x, ps, 'b * c')
         x = rearrange(x, 'b h w c -> b c h w')
 
-        x = self.pool_layer(x)
+        x = process_layer(self.use_checkpoint[-1], self.pool_layer, x)
         x = self.out(x)
         return x

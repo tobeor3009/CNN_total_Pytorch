@@ -14,8 +14,15 @@ from einops import rearrange, repeat, reduce, pack, unpack
 from einops.layers.torch import Rearrange
 from torch.utils.checkpoint import checkpoint
 
-# helpers
+def process_layer(use_checkpoint, layer, x, *emb_list):
+    if use_checkpoint:
+        x = checkpoint(layer, x, *emb_list,
+                        use_reentrant=False)
+    else:
+        x = layer(x, *emb_list)
+    return x
 
+# helpers
 def exists(val):
     return val is not None
 
