@@ -180,6 +180,10 @@ class UViT(nn.Module):
         self.final_res_block = ResnetBlock(dim * 2, dim, emb_dim_list=emb_dim_list, mode=ct_mode)
         self.final_conv = nn.Conv3d(dim, self.out_dim, 1)
 
+    def process_layer(self, layer, x, *emb_list):
+        x = checkpoint(layer, x, *emb_list,
+                       use_reentrant=False)
+        return x
     def forward(self, x, time, cond=None, x_self_cond=None, class_labels=None,
                 cond_drop_prob=None):
         
@@ -201,7 +205,7 @@ class UViT(nn.Module):
             x = attn(x)
             h.append(x)
 
-            x = downsample(x)
+            x = self.process_layer(downsample, x)
 
         x = rearrange(x, 'b c z h w -> b z h w c')
         x, ps = pack([x], 'b * c')
@@ -212,7 +216,7 @@ class UViT(nn.Module):
         x = rearrange(x, 'b z h w c -> b c z h w')
 
         for upsample, block1, block2, attn in self.ups:
-            x = upsample(x)
+            x = self.process_layer(upsample, x)
 
             x = torch.cat((x, h.pop()), dim = 1)
             x = block1(x, *emb_list)
