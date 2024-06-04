@@ -147,7 +147,7 @@ class UViT(nn.Module):
             is_last = ind >= (num_resolutions - 1)
             if use_attns[ind]:
                 attn_layer = LinearAttention(dim_in, heads=dim_mults[ind], dim_head=attn_dim_head,
-                                use_checkpoint=use_checkpoint[ind], mode=ct_mode),
+                                use_checkpoint=use_checkpoint[ind], mode=ct_mode)
             else:
                 attn_layer = nn.Identity()
             self.downs.append(nn.ModuleList([
@@ -175,7 +175,7 @@ class UViT(nn.Module):
             up_ind = layer_depth - ind - 1
             if use_attns[up_ind]:
                 attn_layer = LinearAttention(dim_in, heads=dim_mults[up_ind], dim_head=attn_dim_head,
-                                use_checkpoint=use_checkpoint[up_ind], mode=ct_mode),
+                                use_checkpoint=use_checkpoint[up_ind], mode=ct_mode)
             else:
                 attn_layer = nn.Identity()
             self.ups.append(nn.ModuleList([
