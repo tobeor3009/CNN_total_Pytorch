@@ -331,7 +331,12 @@ class LatentEncoder(nn.Module):
                                         num_heads=attn_heads, output_dim=latent_dim)
         self.out = nn.Sequential(nn.SiLU(), nn.Dropout(0.05), nn.Linear(latent_dim, latent_dim),
                                  nn.SiLU(), nn.Dropout(0.05), nn.Linear(latent_dim, latent_dim))
-        
+    
+    def process_layer(self, layer, x, *emb_list):
+        x = checkpoint(layer, x, *emb_list,
+                       use_reentrant=False)
+        return x
+            
     def forward(self, x):
         x = self.init_img_transform(x)
 
@@ -342,7 +347,7 @@ class LatentEncoder(nn.Module):
             x = block2(x)
             x = attn(x)
 
-            x = downsample(x)
+            x = self.process_layer(downsample, x)
 
         x = rearrange(x, 'b c h w -> b h w c')
         x, ps = pack([x], 'b * c')
