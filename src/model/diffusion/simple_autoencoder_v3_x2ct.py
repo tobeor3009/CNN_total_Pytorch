@@ -28,6 +28,7 @@ class UViT(nn.Module):
         out_dim = None,
         latent_dim = None,
         dim_mults = (1, 2, 4, 8),
+        use_attns = [True, True, True, True],
         downsample_factor = 2,
         channels = 3,
         vit_depth = 6,
@@ -144,11 +145,15 @@ class UViT(nn.Module):
 
         for ind, ((dim_in, dim_out), factor) in enumerate(zip(in_out, downsample_factor)):
             is_last = ind >= (num_resolutions - 1)
-
+            if use_attns[ind]:
+                attn_layer = LinearAttention(dim_in, heads=dim_mults[ind], dim_head=attn_dim_head,
+                                use_checkpoint=use_checkpoint[ind], mode=ct_mode),
+            else:
+                attn_layer = nn.Identity()
             self.downs.append(nn.ModuleList([
                 ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind], mode=ct_mode),
                 ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind], mode=ct_mode),
-                LinearAttention(dim_in, heads=dim_mults[ind], use_checkpoint=use_checkpoint[ind], mode=ct_mode),
+                attn_layer,
                 Downsample(dim_in, dim_out, factor = factor, mode=ct_mode)
             ]))
 
@@ -168,11 +173,16 @@ class UViT(nn.Module):
         for ind, ((dim_in, dim_out), factor) in enumerate(zip(reversed(in_out), reversed(downsample_factor))):
             is_last = ind == (len(in_out) - 1)
             up_ind = layer_depth - ind - 1
+            if use_attns[up_ind]:
+                attn_layer = LinearAttention(dim_in, heads=dim_mults[up_ind], dim_head=attn_dim_head,
+                                use_checkpoint=use_checkpoint[up_ind], mode=ct_mode),
+            else:
+                attn_layer = nn.Identity()
             self.ups.append(nn.ModuleList([
                 Upsample(dim_out, dim_in, factor = factor, mode=ct_mode),
                 ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[up_ind], mode=ct_mode),
                 ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[up_ind], mode=ct_mode),
-                LinearAttention(dim_in, heads=dim_mults[up_ind], use_checkpoint=use_checkpoint[up_ind], mode=ct_mode),
+                attn_layer
             ]))
 
         default_out_dim = input_channels
@@ -308,7 +318,8 @@ class LatentEncoder(nn.Module):
             self.downs.append(nn.ModuleList([
                 ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind]),
                 ResnetBlock(dim_in, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[ind]),
-                LinearAttention(dim_in, heads=dim_mults[ind], use_checkpoint=use_checkpoint[ind]),
+                LinearAttention(dim_in, heads=dim_mults[ind], dim_head=attn_dim_head,
+                                use_checkpoint=use_checkpoint[ind]),
                 Downsample(dim_in, dim_out, factor = factor)
             ]))
 
