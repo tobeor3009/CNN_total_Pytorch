@@ -401,18 +401,18 @@ class Transformer(nn.Module):
                 FeedForward(dim = dim, mult = ff_mult, emb_dim_list = emb_dim_list, dropout = dropout)
             ]))
 
-    def forward(self, x, *args):
-        if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x, *args,
-                              use_reentrant=False)
-        else:
-            return self._forward_impl(x, *args)
-        
-    def _forward_impl(self, x, *emb_list):
+    def forward(self, x, *emb_list):
         for attn, ff in self.layers:
-            x = attn(x) + x
-            x = ff(x, *emb_list) + x
-
+            if self.use_checkpoint:
+                x = checkpoint(self.process_block, attn, ff, x, *emb_list,
+                              use_reentrant=False)
+            else:
+                x = self.process_block(attn, ff, x, *emb_list)
+        return x
+    
+    def process_block(self, attn, ff, x, *emb_list):
+        x = attn(x) + x
+        x = ff(x, *emb_list) + x
         return x
     
 class AttentionPool(nn.Module):
