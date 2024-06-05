@@ -149,7 +149,7 @@ class SwinXrayCTAutoEncoder(nn.Module):
                             "use_checkpoint":use_checkpoint[i_layer], "use_residual":use_residual
                             }
         self.mid_layer_1 = BasicLayerV2_3D(**common_kwarg_dict)
-        self.mid_attn = Attention(dim=feature_hw, num_heads=num_heads[-1],
+        self.mid_attn = Attention(dim=layer_dim, num_heads=num_heads[-1],
                                   use_checkpoint=self.use_checkpoint[i_layer])
         self.mid_layer_2 = BasicLayerV2_3D(**common_kwarg_dict)
         self.skip_conv_layers = nn.ModuleList()
