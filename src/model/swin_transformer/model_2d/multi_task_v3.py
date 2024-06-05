@@ -94,7 +94,7 @@ class SwinMultitask(nn.Module):
         self.feature_hw = np.array(self.patches_resolution) // (2 ** self.num_layers)
 
         if self.ape:
-            pos_embed_shape = torch.zeros(1, num_patches, 1)
+            pos_embed_shape = torch.zeros(1, num_patches, embed_dim)
             self.absolute_pos_embed = nn.Parameter(pos_embed_shape)
             trunc_normal_(self.absolute_pos_embed, std=.02)
         self.pos_drop = nn.Dropout(p=drop_rate)

@@ -148,7 +148,10 @@ class SwinXrayCTAutoEncoder(nn.Module):
                             "emb_dim_list":emb_dim_list,
                             "use_checkpoint":use_checkpoint[i_layer], "use_residual":use_residual
                             }
-        self.mid_layer = BasicLayerV2_3D(**common_kwarg_dict)
+        self.mid_layer_1 = BasicLayerV2(**common_kwarg_dict)
+        self.mid_attn = Attention(dim=feature_hw, num_heads=num_heads[-1],
+                                  use_checkpoint=self.use_checkpoint[i_layer])
+        self.mid_layer_2 = BasicLayerV2(**common_kwarg_dict)
         self.skip_conv_layers = nn.ModuleList()
         self.decode_layers = nn.ModuleList()
         for d_i_layer in range(self.num_layers, 0, -1):
@@ -244,8 +247,9 @@ class SwinXrayCTAutoEncoder(nn.Module):
             x = encode_layer(x, *emb_list)
             skip_connect_list.append(x)
 
-        x = self.mid_layer(x, *emb_list)
-        
+        x = self.mid_layer_1(x, *emb_list)
+        x = self.mid_attn(x)
+        x = self.mid_layer_2(x, *emb_list)       
         for skip_conv_layer, decode_layer in zip(self.skip_conv_layers, self.decode_layers):
             skip_x = skip_connect_list.pop()
             x = skip_conv_layer(x, skip_x)
