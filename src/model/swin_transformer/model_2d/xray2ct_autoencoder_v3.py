@@ -205,7 +205,8 @@ class SwinXrayCTAutoEncoder(nn.Module):
 
         for bly in self.encode_layers:
             bly._init_respostnorm()
-        self.mid_layer._init_respostnorm()
+        self.mid_layer_1._init_respostnorm()
+        self.mid_layer_2._init_respostnorm()
         for bly in self.decode_layers:
             bly._init_respostnorm()
 
