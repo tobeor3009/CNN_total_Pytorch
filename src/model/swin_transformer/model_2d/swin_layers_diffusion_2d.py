@@ -147,7 +147,10 @@ class Attend(nn.Module):
         out = einsum(f"b h i j, b h j d -> b h i d", attn, v)
 
         return out
-
+class SelfAttention(nn.MultiheadAttention):
+    def forward(self, x):
+        output = super().forward(query=x, key=x, value=x, need_weights=False)
+        return output[0]
 class LearnedSinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -176,6 +179,26 @@ class SinusoidalPosEmb(nn.Module):
         emb = x[:, None] * emb[None, :]
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
+
+class LambdaLayer(nn.Module):
+    def __init__(self, lambd):
+        super(LambdaLayer, self).__init__()
+        self.lambd = lambd
+    def forward(self, x):
+        print(x.shape)
+        print(self.lambd(x).shape)
+        return self.lambd(x)
+    
+class Interpolate(nn.Module):
+    def __init__(self, scale_factor, mode):
+        super(Interpolate, self).__init__()
+        self.interp = nn.functional.interpolate
+        self.scale_factor = scale_factor
+        self.mode = mode
+        
+    def forward(self, x):
+        x = self.interp(x, scale_factor=self.scale_factor, mode=self.mode, align_corners=False)
+        return x
     
 class GroupNormChannelFirst(nn.GroupNorm):
     
@@ -364,7 +387,7 @@ class LinearAttention(nn.Module):
         return self.to_out(out)
     
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=32, flash=False, use_checkpoint=False):
+    def __init__(self, dim, num_heads=4, dim_head=32, flash=False, use_checkpoint=False, use_norm=True):
         super().__init__()
         self.use_checkpoint = use_checkpoint
         self.num_heads = num_heads
@@ -373,7 +396,7 @@ class Attention(nn.Module):
         self.dim_head = dim_head
         self.scale = dim_head ** -0.5
 
-        self.norm = RMSNorm(dim, mode="seq")
+        self.norm = RMSNorm(dim, mode="seq") if use_norm else nn.Identity()
         self.attend = Attend(flash=flash)
         self.mem_kv = nn.Parameter(torch.randn(2, num_heads, num_mem_kv, dim_head))
         self.to_qkv = nn.Linear(dim, hidden_dim * 3, bias=False)
@@ -805,8 +828,8 @@ class PatchEmbed(nn.Module):
         super().__init__()
         img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
-        patches_resolution = [img_size[0] // patch_size[0],
-                              img_size[1] // patch_size[1]]
+        patches_resolution = np.array([img_size[0] // patch_size[0],
+                                       img_size[1] // patch_size[1]])
         self.img_size = img_size
         self.patch_size = patch_size
         self.patches_resolution = patches_resolution

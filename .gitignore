@@ -14,5 +14,6 @@ ckpts/
 *.db
 .vscode
 temp*.py
+temp*.sh
 __pycache__
 .ipynb_checkpoints

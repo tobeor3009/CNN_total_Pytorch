@@ -8,7 +8,7 @@ from .swin_layers import Output2D
 from .swin_layers_diffusion_2d import LinearAttention2D, LinearAttention, Attention2D, Attention, RMSNorm
 from .swin_layers_diffusion_2d import BasicLayerV1, BasicLayerV2, SkipConv1D, SkipLinear, AttentionPool1d
 from .swin_layers_diffusion_2d import default, prob_mask_like, LearnedSinusoidalPosEmb
-from .swin_layers_diffusion_2d import PatchEmbed, PatchMerging, PatchMergingConv, PatchExpandingLinear, ConvBlock2D
+from .swin_layers_diffusion_2d import PatchEmbed, PatchMerging, PatchMergingConv, PatchExpanding, ConvBlock2D
 from .swin_layers_diffusion_2d import get_norm_layer_partial, get_norm_layer_partial_conv
 
 from einops import rearrange, repeat
@@ -119,7 +119,7 @@ class SwinDiffusionUnet(nn.Module):
         self.feature_hw = np.array(self.patches_resolution) // (2 ** self.num_layers)
 
         if self.ape:
-            pos_embed_shape = torch.zeros(1, num_patches, 1)
+            pos_embed_shape = torch.zeros(1, num_patches, embed_dim)
             self.absolute_pos_embed = nn.Parameter(pos_embed_shape)
             trunc_normal_(self.absolute_pos_embed, std=.02)
         self.pos_drop = nn.Dropout(p=drop_rate)
@@ -273,7 +273,7 @@ class SwinDiffusionUnet(nn.Module):
             layer_dim = int(self.embed_dim * 2 ** d_i_layer)
             feature_resolution = np.array(self.patches_resolution) // (2 ** d_i_layer)
             common_kwarg_dict = self.get_layer_config_dict(layer_dim, feature_resolution, i_layer)
-            common_kwarg_dict["upsample"] = PatchExpandingLinear
+            common_kwarg_dict["upsample"] = PatchExpanding
             skip_layer = SkipLinear(layer_dim * 2, layer_dim,
                                     norm=RMSNorm)
             decode_layer = BasicLayerV1(**common_kwarg_dict)
@@ -288,7 +288,7 @@ class SwinDiffusionUnet(nn.Module):
         i_layer = 0
         common_kwarg_dict = self.get_layer_config_dict(self.embed_dim, self.patches_resolution, i_layer)
         seg_final_layer = BasicLayerV1(**common_kwarg_dict)
-        seg_final_expanding = PatchExpandingLinear(input_resolution=self.patches_resolution,
+        seg_final_expanding = PatchExpanding(input_resolution=self.patches_resolution,
                                                     dim=self.embed_dim,
                                                     return_vector=False,
                                                     dim_scale=self.patch_size,

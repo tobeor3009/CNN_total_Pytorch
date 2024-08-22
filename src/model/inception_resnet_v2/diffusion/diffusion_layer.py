@@ -1,13 +1,19 @@
+from collections import namedtuple
+from packaging import version
+from functools import wraps
+from functools import partial
+import math
+import numpy as np
+
 import torch
 from torch import nn, einsum
-from torch.nn.utils import spectral_norm
+import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
-from einops import rearrange
+from einops import rearrange, repeat
 from ..common_module.cbam import CBAM
 from ..common_module.layers import get_act, get_norm, DEFAULT_ACT
 from ..common_module.layers import ConcatBlock
-import math
-import numpy as np
+
 def exists(x):
     return x is not None
 
@@ -15,6 +21,30 @@ def default(val, d):
     if exists(val):
         return val
     return d() if callable(d) else d
+
+def extract(target_list, t, x_shape):
+    batch_size, *_ = t.shape
+    out = target_list[t - 1]
+    return out.reshape(batch_size, *((1,) * (len(x_shape) - 1)))
+
+def prob_mask_like(shape, prob, device):
+    if prob == 1:
+        return torch.ones(shape, device = device, dtype = torch.bool)
+    elif prob == 0:
+        return torch.zeros(shape, device = device, dtype = torch.bool)
+    else:
+        return torch.zeros(shape, device = device).float().uniform_(0, 1) < prob
+
+def once(fn):
+    called = False
+    @wraps(fn)
+    def inner(x):
+        nonlocal called
+        if called:
+            return
+        called = True
+        return fn(x)
+    return inner
 
 class WrapGroupNorm(nn.GroupNorm):
     
@@ -32,7 +62,115 @@ class LayerNorm(nn.Module):
         var = torch.var(x, dim = 1, unbiased = False, keepdim = True)
         mean = torch.mean(x, dim = 1, keepdim = True)
         return (x - mean) * (var + eps).rsqrt() * self.g + default(self.b, 0)
+print_once = once(print)
 
+# main class
+
+AttentionConfig = namedtuple('AttentionConfig', ['enable_flash', 'enable_math', 'enable_mem_efficient'])
+
+class Attend(nn.Module):
+    def __init__(
+        self,
+        dropout = 0.,
+        flash = False,
+        scale = None
+    ):
+        super().__init__()
+        self.dropout = dropout
+        self.scale = scale
+        self.attn_dropout = nn.Dropout(dropout)
+
+        self.flash = flash
+        assert not (flash and version.parse(torch.__version__) < version.parse('2.0.0')), 'in order to use flash attention, you must be using pytorch 2.0 or above'
+
+        # determine efficient attention configs for cuda and cpu
+
+        self.cpu_config = AttentionConfig(True, True, True)
+        self.cuda_config = None
+
+        if not torch.cuda.is_available() or not flash:
+            return
+
+        device_properties = torch.cuda.get_device_properties(torch.device('cuda'))
+
+        if device_properties.major == 8 and device_properties.minor == 0:
+            print_once('A100 GPU detected, using flash attention if input tensor is on cuda')
+            self.cuda_config = AttentionConfig(True, False, False)
+        else:
+            print_once('Non-A100 GPU detected, using math or mem efficient attention if input tensor is on cuda')
+            self.cuda_config = AttentionConfig(False, True, True)
+
+    def flash_attn(self, q, k, v):
+        _, heads, q_len, _, k_len, is_cuda, device = *q.shape, k.shape[-2], q.is_cuda, q.device
+
+        if exists(self.scale):
+            default_scale = q.shape[-1]
+            q = q * (self.scale / default_scale)
+
+        q, k, v = map(lambda t: t.contiguous(), (q, k, v))
+
+        # Check if there is a compatible device for flash attention
+
+        config = self.cuda_config if is_cuda else self.cpu_config
+
+        # pytorch 2.0 flash attn: q, k, v, mask, dropout, causal, softmax_scale
+
+        with torch.backends.cuda.sdp_kernel(**config._asdict()):
+            out = F.scaled_dot_product_attention(
+                q, k, v,
+                dropout_p = self.dropout if self.training else 0.
+            )
+
+        return out
+
+    def forward(self, q, k, v):
+        """
+        einstein notation
+        b - batch
+        h - heads
+        n, i, j - sequence length (base sequence length, source, target)
+        d - feature dimension
+        """
+
+        q_len, k_len, device = q.shape[-2], k.shape[-2], q.device
+
+        if self.flash:
+            return self.flash_attn(q, k, v)
+
+        scale = default(self.scale, q.shape[-1] ** -0.5)
+
+        # similarity
+
+        sim = einsum(f"b h i d, b h j d -> b h i j", q, k) * scale
+
+        # attention
+
+        attn = sim.softmax(dim = -1)
+        attn = self.attn_dropout(attn)
+
+        # aggregate values
+
+        out = einsum(f"b h i j, b h j d -> b h i d", attn, v)
+
+        return out
+class RMSNorm(nn.Module):
+    def __init__(self, dim, mode="2d"):
+        super().__init__()
+        if mode == "seq":
+            param_shape = (1, 1, dim)
+            self.normalize_dim = 2
+        elif mode == "1d":
+            param_shape = (1, dim, 1)
+            self.normalize_dim = 1
+        elif mode == "2d":
+            param_shape = (1, dim, 1, 1)
+            self.normalize_dim = 1
+
+        self.weight = nn.Parameter(torch.ones(*param_shape))
+        self.scale = dim ** 0.5
+    def forward(self, x):
+        return F.normalize(x, dim=self.normalize_dim) * self.weight * self.scale
+    
 class LinearAttention(nn.Module):
     def __init__(self, dim, num_heads=4, dim_head=None):
         super().__init__()
@@ -42,10 +180,10 @@ class LinearAttention(nn.Module):
         self.dim_head = dim_head
         self.scale = (dim_head / num_heads) ** -0.5
         self.prenorm = LayerNorm(dim)
-        # self.to_qkv = nn.Conv2d(dim, dim_head * 3, 1, bias=False, groups=num_heads)
-        self.to_q = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
-        self.to_k = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
-        self.to_v = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        self.to_qkv = nn.Conv2d(dim, dim_head * 3, 1, bias=False, groups=num_heads)
+        # self.to_q = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        # self.to_k = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        # self.to_v = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
         self.to_out = nn.Sequential(
             nn.Conv2d(dim_head, dim, 1),
             LayerNorm(dim)
@@ -55,16 +193,13 @@ class LinearAttention(nn.Module):
         b, c, h, w = x.shape
 
         x = self.prenorm(x)
-        q = self.to_q(x)
-        k = self.to_k(x)
-        v = self.to_v(x)
-        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), (q, k, v))
+        qkv = self.to_qkv(x).chunk(3, dim=1)
+        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), qkv)
 
         q = q.softmax(dim = -2)
         k = k.softmax(dim = -1)
 
         q = q * self.scale
-
         context = torch.einsum('b h d n, b h e n -> b h d e', k, v)
 
         out = torch.einsum('b h d e, b h d n -> b h e n', context, q)
@@ -82,10 +217,10 @@ class Attention(nn.Module):
         self.scale = (dim_head / num_heads) ** -0.5
 
         self.prenorm = LayerNorm(dim)
-        # self.to_qkv = nn.Conv2d(dim, dim_head * 3, 1, bias=False, groups=num_heads)
-        self.to_q = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
-        self.to_k = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
-        self.to_v = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        self.to_qkv = nn.Conv2d(dim, dim_head * 3, 1, bias=False)
+        # self.to_q = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        # self.to_k = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        # self.to_v = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
         self.to_out = nn.Conv2d(dim_head, dim, 1)
 
     def forward(self, x):
@@ -93,10 +228,8 @@ class Attention(nn.Module):
 
         x = self.prenorm(x)
 
-        q = self.to_q(x)
-        k = self.to_k(x)
-        v = self.to_v(x)
-        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), (q, k, v))
+        qkv = self.to_qkv(x).chunk(3, dim=1)
+        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), qkv)
         q = q * self.scale
         sim = einsum('b h d i, b h d j -> b h i j', q, k)
         attn = sim.softmax(dim = -1)
@@ -118,7 +251,19 @@ class SinusoidalPosEmb(nn.Module):
         emb = x[:, None] * emb[None, :]
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
-    
+class LearnedSinusoidalPosEmb(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        assert (dim % 2) == 0
+        half_dim = dim // 2
+        self.weights = nn.Parameter(torch.randn(half_dim))
+
+    def forward(self, x):
+        x = rearrange(x, 'b -> b 1')
+        freqs = x * rearrange(self.weights, 'd -> 1 d') * 2 * math.pi
+        fouriered = torch.cat((freqs.sin(), freqs.cos()), dim = -1)
+        fouriered = torch.cat((x, fouriered), dim = -1)
+        return fouriered    
 class BaseBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
@@ -220,6 +365,11 @@ class ConvBlock2D(nn.Module):
 
         self.attn_info = attn_info
         self.use_checkpoint = use_checkpoint
+
+        if emb_dim_list is None:
+            emb_dim_list = []
+        if emb_type_list is None:
+            emb_type_list = []
         emb_block_list = []
         for emb_dim, emb_type in zip(emb_dim_list, emb_type_list):
             if emb_type == "seq":
@@ -375,7 +525,7 @@ class Inception_Resnet_Block2D(nn.Module):
 class MultiDecoder2D(nn.Module):
     def __init__(self, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2,
-                 emb_dim_list=None, attn_info=None, use_checkpoint=False):
+                 emb_dim_list=None, emb_type_list=None, attn_info=None, use_checkpoint=False):
         super().__init__()
 
         self.use_checkpoint = use_checkpoint
@@ -408,7 +558,7 @@ class MultiDecoder2D(nn.Module):
         self.concat_conv = ConvBlock2D(in_channels=out_channels * 2,
                                        out_channels=out_channels, kernel_size=3,
                                        stride=1, padding=1, norm=norm, act=act,
-                                       emb_dim_list=emb_dim_list, attn_info=attn_info,
+                                       emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=attn_info,
                                        use_checkpoint=use_checkpoint)
 
     def forward(self, x, *args):

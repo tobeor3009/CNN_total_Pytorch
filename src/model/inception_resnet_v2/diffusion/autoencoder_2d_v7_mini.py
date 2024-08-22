@@ -218,6 +218,15 @@ class InceptionResNetV2_UNet(nn.Module):
             decode_feature = layer(decode_feature, *args)
         decode_feature = self.decode_final_conv(decode_feature)
         return decode_feature
+
+    def get_attn_info(self, emb_type_list, attn_info):
+        num_heads = 4
+        if attn_info is None:
+            return None
+        elif attn_info is False:
+            return {"emb_type_list":emb_type_list, "num_heads": num_heads, "full_attn": False}
+        elif attn_info is True:
+            return {"emb_type_list":emb_type_list, "num_heads": num_heads, "full_attn": True}
         
     def get_encode_stem(self, emb_dim_list, emb_type_list):
         padding_3x3 = self.padding_3x3

@@ -1,4 +1,6 @@
 import torch
+import torch.nn.functional as F
+
 SMOOTH = 1e-7
 
 def get_clip(y_pred, y_true, smooth):
@@ -29,7 +31,17 @@ def get_bce_loss_class(y_pred, y_true, per_image=False, smooth=SMOOTH):
         return per_image_loss
     else:
         return torch.mean(per_image_loss)
-    
+
+def get_cce_loss_class(y_pred, y_true, per_image=False, smooth=SMOOTH):
+    axis = 1
+    y_pred, y_true, _, _ = get_clip(y_pred, y_true, smooth)
+    y_pred = torch.log(y_pred)
+    per_image_loss = -torch.sum(y_true * y_pred, dim=axis)
+    if per_image:
+        return per_image_loss
+    else:
+        return torch.mean(per_image_loss)
+        
 def get_bce_loss(y_pred, y_true, per_image=False, smooth=SMOOTH):
     axis = get_seg_dim(y_true)
     y_pred, y_true, y_true_rev, y_pred_rev = get_clip(y_pred, y_true, smooth)

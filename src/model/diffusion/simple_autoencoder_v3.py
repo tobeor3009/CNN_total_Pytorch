@@ -165,7 +165,7 @@ class UViT(nn.Module):
 
         for ind, ((dim_in, dim_out), factor) in enumerate(zip(reversed(in_out), reversed(downsample_factor))):
             is_last = ind == (len(in_out) - 1)
-            up_ind = layer_depth - ind
+            up_ind = layer_depth - ind - 1
             self.ups.append(nn.ModuleList([
                 Upsample(dim_out, dim_in, factor = factor),
                 ResnetBlock(dim_in * 2, dim_in, emb_dim_list=emb_dim_list, use_checkpoint=use_checkpoint[up_ind]),
