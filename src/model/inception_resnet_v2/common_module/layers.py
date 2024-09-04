@@ -418,14 +418,19 @@ class Output3D(nn.Module):
     def __init__(self, in_channels, out_channels,
                  act="tanh"):
         super().__init__()
-        self.conv_1x1x1 = nn.Conv3d(in_channels=in_channels,
+        self.conv_5x5x5 = nn.Conv3d(in_channels=in_channels,
                                     out_channels=out_channels,
-                                    kernel_size=1, padding=0)
+                                    kernel_size=5, padding=2)
+        self.conv_3x3x3 = nn.Conv3d(in_channels=in_channels,
+                                    out_channels=out_channels,
+                                    kernel_size=3, padding=1)
         self.act = get_act(act)
 
     def forward(self, x):
-        conv_1x1x1 = self.conv_1x1x1(x)
-        output = self.act(conv_1x1x1)
+        conv_5x5x5 = self.conv_5x5x5(x)
+        conv_3x3x3 = self.conv_3x3x3(x)
+        output = (conv_5x5x5 + conv_3x3x3) / math.sqrt(2)
+        output = self.act(output)
         return output
 
 
