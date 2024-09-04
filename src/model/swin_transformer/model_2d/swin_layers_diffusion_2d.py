@@ -387,7 +387,7 @@ class LinearAttention(nn.Module):
         return self.to_out(out)
     
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=32, flash=False, use_checkpoint=False, use_norm=True):
+    def __init__(self, dim, num_heads=4, dim_head=32, flash=False, use_checkpoint=False, use_norm=True, dropout=0.0):
         super().__init__()
         self.use_checkpoint = use_checkpoint
         self.num_heads = num_heads
@@ -397,7 +397,7 @@ class Attention(nn.Module):
         self.scale = dim_head ** -0.5
 
         self.norm = RMSNorm(dim, mode="seq") if use_norm else nn.Identity()
-        self.attend = Attend(flash=flash)
+        self.attend = Attend(flash=flash, dropout=dropout)
         self.mem_kv = nn.Parameter(torch.randn(2, num_heads, num_mem_kv, dim_head))
         self.to_qkv = nn.Linear(dim, hidden_dim * 3, bias=False)
         self.to_out = nn.Linear(hidden_dim, dim)

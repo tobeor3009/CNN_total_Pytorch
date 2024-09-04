@@ -7,7 +7,7 @@ import numpy as np
 from .cbam import CBAM as CBAM2D
 from .cbam_3d import CBAM3D
 from torch.nn.utils import spectral_norm
-INPLACE = False
+INPLACE = True
 DEFAULT_ACT = "relu6"
 
 
@@ -174,7 +174,7 @@ class ConvBlock1D(nn.Module):
 class ConvBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 norm="batch", groups=1, act=DEFAULT_ACT, bias=False, name=None):
+                 norm="batch", groups=1, act=DEFAULT_ACT, bias=False, dropout_proba=0.0):
         super().__init__()
         self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
@@ -186,18 +186,19 @@ class ConvBlock2D(nn.Module):
         else:
             self.norm_layer = nn.Identity()
         self.act_layer = get_act(act)
-
+        self.dropout_layer = nn.Dropout2d(p=dropout_proba, inplace=INPLACE)
     def forward(self, x):
         conv = self.conv(x)
         norm = self.norm_layer(conv)
         act = self.act_layer(norm)
-        return act
+        out = self.dropout_layer(act)
+        return out
 
 
 class ConvBlock3D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 act=DEFAULT_ACT, norm="batch", groups=1, bias=False, name=None):
+                 act=DEFAULT_ACT, norm="batch", groups=1, bias=False, dropout_proba=0.0):
         super().__init__()
         self.conv = nn.Conv3d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
@@ -211,12 +212,14 @@ class ConvBlock3D(nn.Module):
             self.norm_layer = nn.Identity()
 
         self.act = get_act(act)
+        self.dropout_layer = nn.Dropout3d(p=dropout_proba, inplace=INPLACE)
 
     def forward(self, x):
         conv = self.conv(x)
         norm = self.norm_layer(conv)
         act = self.act(norm)
-        return act
+        out = self.dropout_layer(act)
+        return out
 
 
 class LambdaLayer(nn.Module):

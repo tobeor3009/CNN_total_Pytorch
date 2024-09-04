@@ -4,13 +4,11 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
-from .layers import DEFAULT_ACT, HighwayLayer, PixelShuffle3D
+from .layers import DEFAULT_ACT, INPLACE, HighwayLayer, PixelShuffle3D
 from .layers import get_act, get_norm
-
-
 class MultiDecoder2D(nn.Module):
     def __init__(self, input_hw, in_channels, out_channels,
-                 norm="layer", act=DEFAULT_ACT, kernel_size=2,
+                 norm="layer", act=DEFAULT_ACT, dropout_proba=0.0, kernel_size=2,
                  use_highway=False, use_pixelshuffle_only=False):
         super().__init__()
         h, w = input_hw
@@ -55,7 +53,7 @@ class MultiDecoder2D(nn.Module):
                                              kernel_size=3, padding=1)
         self.norm = get_norm(norm, upsample_shape, mode="2d")
         self.act = get_act(act)
-
+        self.dropout = nn.Dropout2d(p=dropout_proba, inplace=INPLACE)
     def forward(self, x):
         pixel_shuffle = self.pixel_shuffle(x)
         if not self.use_pixelshuffle_only:
@@ -69,12 +67,13 @@ class MultiDecoder2D(nn.Module):
             out = pixel_shuffle
         out = self.norm(out)
         out = self.act(out)
+        out = self.dropout(out)
         return out
 
 
 class MultiDecoder3D(nn.Module):
     def __init__(self, input_zhw, in_channels, out_channels,
-                 norm="layer", act=DEFAULT_ACT, kernel_size=2,
+                 norm="layer", act=DEFAULT_ACT, dropout_proba=0.0, kernel_size=2,
                  use_highway=False, use_pixelshuffle_only=False):
         super().__init__()
         self.use_highway = use_highway
@@ -118,6 +117,7 @@ class MultiDecoder3D(nn.Module):
                                              kernel_size=1, padding=0)
         self.norm = get_norm(norm, upsample_shape, mode="3d")
         self.act = get_act(act)
+        self.dropout = nn.Dropout3d(p=dropout_proba, inplace=INPLACE)
 
     def forward(self, x):
         pixel_shuffle = self.pixel_shuffle(x)
@@ -132,6 +132,7 @@ class MultiDecoder3D(nn.Module):
             out = pixel_shuffle
         out = self.norm(out)
         out = self.act(out)
+        out = self.dropout(out)
         return out
 
 

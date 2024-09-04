@@ -13,8 +13,8 @@ from .common_layer import ClassificationHead
 
 class InceptionResNetV2MultiTask2D(nn.Module):
     def __init__(self, input_shape, class_channel=None, seg_channels=None, validity_shape=(1, 8, 8), inject_class_channel=None,
-                 block_size=16, include_cbam=False, include_context=False, decode_init_channel=None,
-                 skip_connect=True, dropout_proba=0.05, norm="batch", act=DEFAULT_ACT,
+                 block_size=16, include_cbam=False, decode_init_channel=None,
+                 skip_connect=True, norm="batch", act=DEFAULT_ACT, dropout_proba=0.05,
                  seg_act="softmax", class_act="softmax", recon_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_recon=False, get_validity=False,
                  use_class_head_simple=True, use_decode_pixelshuffle_only=False,
@@ -30,8 +30,15 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         self.get_validity = get_validity
         self.inject_class_channel = inject_class_channel
 
-        self.norm = norm
         self.act = act
+        self.dropout_proba = dropout_proba
+        self.conv_block_common_arg_dict = {
+            "norm": norm,
+            "act": act,
+            "dropout_proba": dropout_proba
+        }
+
+
         self.channel_mode = "2d"
         if self.channel_mode == "2d":
             self.inject_unsqueeze = lambda x: x[:, :, None, None]
@@ -49,9 +56,8 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         skip_connect_channel_list = get_skip_connect_channel_list(block_size)
 
         self.base_model = InceptionResNetV2_2D(n_input_channels=input_channel, block_size=block_size,
-                                               padding="same", norm=norm, act=act,
-                                               include_cbam=include_cbam, include_context=include_context,
-                                               include_skip_connection_tensor=skip_connect)
+                                               padding="same", norm=norm, act=act, dropout_proba=dropout_proba,
+                                               include_cbam=include_cbam, include_skip_connection_tensor=skip_connect)
         if self.get_seg:
             self.seg_module_list = self.get_decode_layers(input_shape, decode_init_channel,
                                                         skip_connect_channel_list, use_decode_pixelshuffle_only,
@@ -81,10 +87,10 @@ class InceptionResNetV2MultiTask2D(nn.Module):
     def get_decode_layers(self, input_shape, decode_init_channel,
                           skip_connect_channel_list, use_decode_pixelshuffle_only,
                           use_decode_simpleoutput, decode_channels, decode_act):
-        norm, act = self.norm, self.act
+        conv_block_common_arg_dict = self.conv_block_common_arg_dict
         init_conv = ConvBlock2D(in_channels=self.feature_channel_num,
-                                            out_channels=decode_init_channel,
-                                            kernel_size=1, norm=norm, act=act)
+                                out_channels=decode_init_channel, kernel_size=1,
+                                **conv_block_common_arg_dict)
         skip_conv_list = nn.ModuleList()
         conv_list = nn.ModuleList()
         up_list = nn.ModuleList()
@@ -97,20 +103,20 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                         (2 ** (decode_i + 1)))
             if self.skip_connect:
                 skip_channel = skip_connect_channel_list[4 - decode_i]
-                decode_skip_conv = ConvBlock2D(in_channels=skip_channel,
-                                                out_channels=decode_in_channels,
-                                                kernel_size=1, norm=norm, act=act)
+                decode_skip_conv = ConvBlock2D(in_channels=skip_channel, 
+                                               out_channels=decode_in_channels, kernel_size=1, 
+                                               **conv_block_common_arg_dict)
                 decode_in_channels *= 2
                 skip_conv_list.append(decode_skip_conv)
             decode_conv = ConvBlock2D(in_channels=decode_in_channels,
                                         out_channels=decode_out_channels,
-                                        kernel_size=3, norm=norm, act=act)
+                                        kernel_size=3, **conv_block_common_arg_dict)
             decode_up = MultiDecoder2D(input_hw=decode_shape,
                                         in_channels=decode_out_channels,
                                         out_channels=decode_out_channels,
-                                        kernel_size=2, norm=norm, act=act,
-                                        use_highway=False,
-                                        use_pixelshuffle_only=use_decode_pixelshuffle_only)
+                                        kernel_size=2, use_highway=False,
+                                        use_pixelshuffle_only=use_decode_pixelshuffle_only,
+                                        **conv_block_common_arg_dict)
             conv_list.append(decode_conv)
             up_list.append(decode_up)
 
@@ -137,20 +143,25 @@ class InceptionResNetV2MultiTask2D(nn.Module):
 
     def get_validity_block(self, validity_shape, validity_act):
         validity_init_channel = self.block_size * 32
+        common_arg_dict = {
+            "norm": "spectral", 
+            "act": self.act, 
+            "dropout_proba": self.dropout_proba
+        }
         validity_conv_1 = ConvBlock2D(self.feature_channel_num, validity_init_channel,
-                                            kernel_size=3, padding=1,
-                                            norm="spectral", act=self.act)
+                                        kernel_size=3, padding=1,
+                                        **common_arg_dict)
         validity_conv_2 = ConvBlock2D(validity_init_channel,
                                             validity_init_channel // 2,
                                             kernel_size=3, padding=1,
-                                            norm="spectral", act=self.act)
+                                            **common_arg_dict)
         validity_conv_3 = ConvBlock2D(validity_init_channel // 2,
                                             validity_init_channel // 2,
                                             kernel_size=3, padding=1,
-                                            norm="spectral", act=self.act)
+                                            **common_arg_dict)
         validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
         validity_final_conv = ConvBlock2D(validity_init_channel // 2, validity_shape[0],
-                                                kernel_size=1, act=validity_act, norm=None)
+                                                kernel_size=1, act=validity_act, norm=None, dropout_proba=0.0)
         validity_block = nn.Sequential(
             validity_conv_1,
             validity_conv_2,
