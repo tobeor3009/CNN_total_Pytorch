@@ -60,9 +60,8 @@ to_jpeg_transform = A.ImageCompression(quality_lower=99,
                                        p=1)
 
 to_tensor_transform = albumentations.pytorch.transforms.ToTensorV2()
+
 ################### Preprocess Constant ###################
-
-
 def get_resized_array(image_array, target_size, interpolation):
     image_resized_array = image_array
     if target_size is not None:
@@ -71,7 +70,6 @@ def get_resized_array(image_array, target_size, interpolation):
                                          interpolation=INTER_DICT[interpolation]
                                          )
     return image_resized_array
-
 
 def get_augumented_array(image_array, augmentation_proba, augmentation_policy_dict):
     final_transform_list = []
