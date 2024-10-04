@@ -8,7 +8,7 @@ from einops import rearrange
 from ..model_2d.swin_layers import ChannelDropout, Mlp
 from ..layers import get_act, PixelShuffle3D
 DEFAULT_ACT = get_act("leakyrelu")
-DROPOUT_INPLACE = True
+DROPOUT_INPLACE = False
 
 def window_partition(x, window_size):
     """

@@ -7,7 +7,7 @@ from timm.models.layers import DropPath, to_2tuple
 import numpy as np
 from ..layers import get_act
 DEFAULT_ACT = get_act("leakyrelu")
-DROPOUT_INPLACE = True
+DROPOUT_INPLACE = False
 
 class ChannelDropout(nn.Module):
     def __init__(self, p=0.5, inplace=DROPOUT_INPLACE):
