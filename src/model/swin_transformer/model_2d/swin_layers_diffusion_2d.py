@@ -685,7 +685,7 @@ class SwinTransformerBlock(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
-                 mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0., drop_path=0.,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0., drop_path=0.,
                  act_layer=DEFAULT_ACT, norm_layer=nn.LayerNorm, pretrained_window_size=0):
         super().__init__()
         self.dim = dim
@@ -703,7 +703,7 @@ class SwinTransformerBlock(nn.Module):
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(dim, window_size=to_2tuple(self.window_size),
                                     num_heads=num_heads, qkv_bias=qkv_bias,
-                                    attn_drop=attn_drop, proj_drop=drop,
+                                    qkv_drop=qkv_drop, attn_drop=attn_drop, proj_drop=drop,
                                     pretrained_window_size=to_2tuple(pretrained_window_size),
                                     cbp_dim=np.clip(np.prod(input_resolution) // 16, 256, 1024))
 
@@ -1122,7 +1122,7 @@ class BasicLayerV1(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0,
                  emb_dim_list=[], use_residual=False):
@@ -1152,7 +1152,7 @@ class BasicLayerV1(nn.Module):
                                  shift_size=window_size // 2,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
-                                 drop=drop, attn_drop=attn_drop,
+                                 drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
                                  norm_layer=norm_layer,
@@ -1237,7 +1237,7 @@ class BasicLayerV1(nn.Module):
 
 class BasicLayerV2(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0,
                  emb_dim_list=[], use_residual=False):
@@ -1290,7 +1290,7 @@ class BasicLayerV2(nn.Module):
                                  shift_size=window_size // 2,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
-                                 drop=drop, attn_drop=attn_drop,
+                                 drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
                                  norm_layer=norm_layer,

@@ -9,7 +9,18 @@ from ..layers import get_act
 DEFAULT_ACT = get_act("leakyrelu")
 DROPOUT_INPLACE = True
 
+class ChannelDropout(nn.Module):
+    def __init__(self, p=0.5, inplace=DROPOUT_INPLACE):
+        super(ChannelDropout, self).__init__()
+        self.p = p
+        self.dropout1d = nn.Dropout1d(p=self.p, inplace=inplace)
 
+    def forward(self, x):
+        x = x.permute(0, 2, 1)
+        x = self.dropout1d(x)
+        x = x.permute(0, 2, 1)
+        return x
+    
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=DEFAULT_ACT, drop=0.):
         super().__init__()
@@ -18,7 +29,7 @@ class Mlp(nn.Module):
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer
         self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop, inplace=DROPOUT_INPLACE)
+        self.drop = ChannelDropout(drop, inplace=DROPOUT_INPLACE)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -78,7 +89,7 @@ class WindowAttention(nn.Module):
         pretrained_window_size (tuple[int]): The height and width of the window in pre-training.
     """
 
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0.,
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qkv_drop=0., attn_drop=0., proj_drop=0.,
                  pretrained_window_size=[0, 0], cbp_dim=512):
 
         super().__init__()
@@ -143,9 +154,10 @@ class WindowAttention(nn.Module):
         else:
             self.q_bias = None
             self.v_bias = None
+        self.qkv_drop = ChannelDropout(qkv_drop, inplace=DROPOUT_INPLACE)
         self.attn_drop = nn.Dropout(attn_drop, inplace=DROPOUT_INPLACE)
         self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop, inplace=DROPOUT_INPLACE)
+        self.proj_drop = ChannelDropout(proj_drop, inplace=DROPOUT_INPLACE)
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x, mask=None):
@@ -160,6 +172,7 @@ class WindowAttention(nn.Module):
             qkv_bias = torch.cat((self.q_bias, torch.zeros_like(
                 self.v_bias, requires_grad=False), self.v_bias))
         qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
+        qkv = self.qkv_drop(qkv)
         qkv = qkv.reshape(B_, N, 3,
                           self.num_heads, -1).permute(2, 0, 3, 1, 4).contiguous()
         # make torchscript happy (cannot use tensor as tuple)
@@ -189,10 +202,10 @@ class WindowAttention(nn.Module):
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
-
         attn = self.attn_drop(attn)
-
+        
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -234,7 +247,7 @@ class SwinTransformerBlock(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
-                 mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0., drop_path=0.,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0., drop_path=0.,
                  act_layer=DEFAULT_ACT, norm_layer=nn.LayerNorm, pretrained_window_size=0):
         super().__init__()
         self.dim = dim
@@ -252,7 +265,7 @@ class SwinTransformerBlock(nn.Module):
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(dim, window_size=to_2tuple(self.window_size),
                                     num_heads=num_heads, qkv_bias=qkv_bias,
-                                    attn_drop=attn_drop, proj_drop=drop,
+                                    qkv_drop=qkv_drop, attn_drop=attn_drop, proj_drop=drop,
                                     pretrained_window_size=to_2tuple(pretrained_window_size))
 
         self.drop_path = DropPath(
@@ -499,7 +512,7 @@ class BasicLayerV1(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0):
 
@@ -517,7 +530,7 @@ class BasicLayerV1(nn.Module):
                                      i % 2 == 0) else window_size // 2,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
-                                 drop=drop, attn_drop=attn_drop,
+                                 drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
                                  norm_layer=norm_layer,
@@ -597,7 +610,7 @@ class BasicLayerV2(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0):
 
@@ -637,7 +650,7 @@ class BasicLayerV2(nn.Module):
                                      i % 2 == 0) else window_size // 2,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
-                                 drop=drop, attn_drop=attn_drop,
+                                 drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
                                  norm_layer=norm_layer,

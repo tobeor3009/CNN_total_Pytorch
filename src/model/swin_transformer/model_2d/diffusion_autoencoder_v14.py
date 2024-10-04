@@ -19,7 +19,7 @@ class SwinDiffusionUnet(nn.Module):
                 emb_chans=1024, num_class_embeds=None, cond_drop_prob=0.5,
                 embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
                 window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True, patch_norm=True,
-                drop_rate=0., attn_drop_rate=0., drop_path_rate=0.0, latent_drop_rate=0.1,
+                drop_rate=0., qkv_drop_rate=0., attn_drop_rate=0., drop_path_rate=0.0, latent_drop_rate=0.1,
                 use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0],
                 self_condition=False, use_residual=False):
         super().__init__()
@@ -58,7 +58,7 @@ class SwinDiffusionUnet(nn.Module):
         self.latent_encoder = SwinDiffusionEncoder(img_size=img_size, patch_size=patch_size, in_chans=cond_chans, emb_chans=emb_chans,
                                                 embed_dim=embed_dim, depths=depths, num_heads=num_heads,
                                                 window_sizes=window_sizes, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, ape=ape,
-                                                drop_rate=drop_rate, attn_drop_rate=attn_drop_rate, drop_path_rate=drop_path_rate,
+                                                drop_rate=drop_rate, qkv_drop_rate=qkv_drop_rate, attn_drop_rate=attn_drop_rate, drop_path_rate=drop_path_rate,
                                                 use_checkpoint=use_checkpoint, pretrained_window_sizes=pretrained_window_sizes,
                                                 patch_norm=patch_norm, use_residual=use_residual
                                                 )
@@ -112,7 +112,7 @@ class SwinDiffusionUnet(nn.Module):
                             "num_heads":num_heads[i_layer],
                             "window_size":window_sizes[i_layer],
                             "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
-                            "drop":drop_rate, "attn_drop":attn_drop_rate,
+                            "qkv_drop": qkv_drop_rate, "drop":drop_rate, "attn_drop":attn_drop_rate,
                             "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                             "norm_layer":nn.LayerNorm,
                             "pretrained_window_size":pretrained_window_sizes[i_layer],
@@ -137,7 +137,7 @@ class SwinDiffusionUnet(nn.Module):
                                "num_heads":num_heads[i_layer],
                                "window_size":window_sizes[i_layer],
                                "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
-                               "drop":drop_rate, "attn_drop":attn_drop_rate,
+                               "drop":drop_rate, "qkv_drop": qkv_drop_rate, "attn_drop":attn_drop_rate,
                                "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                                "norm_layer":nn.LayerNorm,
                                 "downsample":PatchMerging,
@@ -158,7 +158,7 @@ class SwinDiffusionUnet(nn.Module):
                             "num_heads":num_heads[i_layer],
                             "window_size":window_sizes[i_layer],
                             "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
-                            "drop":drop_rate, "attn_drop":attn_drop_rate,
+                            "drop":drop_rate, "qkv_drop": qkv_drop_rate, "attn_drop":attn_drop_rate,
                             "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                             "norm_layer":nn.LayerNorm,
                             "pretrained_window_size":pretrained_window_sizes[i_layer],
@@ -190,7 +190,7 @@ class SwinDiffusionUnet(nn.Module):
                                "num_heads":num_heads[i_layer],
                                "window_size":window_sizes[i_layer],
                                "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
-                               "drop":drop_rate, "attn_drop":attn_drop_rate,
+                               "drop":drop_rate, "qkv_drop": qkv_drop_rate, "attn_drop":attn_drop_rate,
                                "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                                "norm_layer":nn.LayerNorm,
                                "upsample":PatchExpanding,
@@ -210,7 +210,7 @@ class SwinDiffusionUnet(nn.Module):
                                             window_size=window_sizes[i_layer],
                                             mlp_ratio=self.mlp_ratio,
                                             qkv_bias=qkv_bias,
-                                            drop=drop_rate, attn_drop=attn_drop_rate,
+                                            drop=drop_rate, qkv_drop=qkv_drop_rate, attn_drop=attn_drop_rate,
                                             drop_path=dpr[sum(depths[:i_layer]):sum(
                                                 depths[:i_layer + 1])],
                                             norm_layer=nn.LayerNorm,
@@ -268,7 +268,6 @@ class SwinDiffusionUnet(nn.Module):
         time_emb = self.time_mlp(time)
         latent = self.latent_encoder(cond)
         latent = self.latent_drop(latent)
-
         if self.num_class_embeds is not None:
             class_emb = self.class_emb_layer(class_labels).to(dtype=x.dtype)
             if cond_drop_prob > 0:
@@ -327,7 +326,7 @@ class SwinDiffusionEncoder(nn.Module):
     def __init__(self, img_size=512, patch_size=4, in_chans=1, emb_chans=1024,
                 embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
                 window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True, patch_norm=True,
-                drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
+                drop_rate=0., qkv_drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                 use_checkpoint=False, pretrained_window_sizes=[0, 0, 0, 0],
                 use_residual=False
                 ):
@@ -368,7 +367,7 @@ class SwinDiffusionEncoder(nn.Module):
                             "num_heads":num_heads[i_layer],
                             "window_size":window_sizes[i_layer],
                             "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
-                            "drop":drop_rate, "attn_drop":attn_drop_rate,
+                            "drop":drop_rate, "qkv_drop": qkv_drop_rate, "attn_drop":attn_drop_rate,
                             "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                             "norm_layer":nn.LayerNorm,
                             "pretrained_window_size":pretrained_window_sizes[i_layer],
@@ -389,7 +388,7 @@ class SwinDiffusionEncoder(nn.Module):
                                "num_heads":num_heads[i_layer],
                                "window_size":window_sizes[i_layer],
                                "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
-                               "drop":drop_rate, "attn_drop":attn_drop_rate,
+                               "drop":drop_rate, "qkv_drop": qkv_drop_rate, "attn_drop":attn_drop_rate,
                                "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                                "norm_layer":nn.LayerNorm,
                                "downsample":PatchMerging,
@@ -410,7 +409,7 @@ class SwinDiffusionEncoder(nn.Module):
                             "num_heads":num_heads[i_layer],
                             "window_size":window_sizes[i_layer],
                             "mlp_ratio":self.mlp_ratio, "qkv_bias":qkv_bias, 
-                            "drop":drop_rate, "attn_drop":attn_drop_rate,
+                            "drop":drop_rate, "qkv_drop": qkv_drop_rate, "attn_drop":attn_drop_rate,
                             "drop_path":dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                             "norm_layer":nn.LayerNorm,
                             "pretrained_window_size":pretrained_window_sizes[i_layer],
