@@ -90,7 +90,7 @@ class SwinX2CT(nn.Module):
         self.mid_layer_1, self.mid_2d_3d, self.mid_layer_2 = self.get_mid_layer()
         
         self.decode_layers = self.get_decode_layers()
-        self.seg_final_layer, self.seg_final_interpolate, self.out_act = self.get_seg_final_layers()
+        self.seg_final_layer, self.seg_final_expanding, self.out_act = self.get_seg_final_layers()
         for bly in self.decode_layers:
             bly._init_respostnorm()
         self.seg_final_layer._init_respostnorm()
@@ -156,7 +156,7 @@ class SwinX2CT(nn.Module):
             x = decode_layer(x, skip_x)
 
         x = self.seg_final_layer(x)
-        x = self.seg_final_interpolate(x)
+        x = self.seg_final_expanding(x)
         x = self.out_act(x)
         return x
     
@@ -225,16 +225,14 @@ class SwinX2CT(nn.Module):
         return decode_layers
     
     def get_seg_final_layers(self):
-        z, h, w = self.patches_resolution_3d
         i_layer = 0
         common_kwarg_dict = self.get_layer_config_dict(self.embed_dim, self.patches_resolution_3d, i_layer, self.emb_dim_list)
         seg_final_layer = BasicLayerV1_3D(**common_kwarg_dict)
-        seg_final_interpolate = nn.Sequential(
-            nn.Linear(self.embed_dim, self.embed_dim * 32, bias=False),
-            Rearrange('b (z h w) c -> b c z h w', z=z, h=h, w=w),
-            PixelShuffle3D(4)
-        )
-        if 4 // self.patch_size >= 1:
-            seg_final_interpolate.append(Interpolate(scale_factor=1 / (4 // self.patch_size), mode="trilinear"))
+
+        seg_final_expanding = PatchExpanding3D(input_resolution=self.patches_resolution_3d,
+                                                dim=self.embed_dim,
+                                                return_vector=False,
+                                                dim_scale=self.patch_size,
+                                                norm_layer=self.model_norm_layer)
         out_conv = Output3D(self.embed_dim // 2, self.seg_out_chans, act=self.seg_out_act)
-        return seg_final_layer, seg_final_interpolate, out_conv
+        return seg_final_layer, seg_final_expanding, out_conv

@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 import torch
+from torch.nn import functional as F
 import torchvision.transforms.functional as TF
 
 def rotate_and_crop_with_padding(image, crop_size=256, angle_range=(0, 360)):
@@ -72,14 +73,14 @@ def rotate_and_crop_tensor(image_tensor, crop_size=128, angle_range=(0, 360), nu
     pad_w = (diagonal_length - W) // 2
 
     # 이미지 패딩 추가 (회전 후 이미지가 잘리지 않도록 0으로 패딩)
-    padded_tensor = torch.nn.functional.pad(image_tensor, (pad_w, pad_w, pad_h, pad_h), mode='constant', value=0)
+    padded_tensor = F.pad(image_tensor, (pad_w, pad_w, pad_h, pad_h), mode='constant', value=0)
 
     # 배치 형태의 텐서 처리
     cropped_tensors = []
     for _ in range(num_crop_repeat):
         for b in range(B):
             # 랜덤한 각도 생성
-            angle = np.random.uniform(angle_range[0], angle_range[1])
+            angle = np.random.uniform(*angle_range)
 
             # 배치 내의 이미지 선택 (C, H, W)
             single_image_tensor = padded_tensor[b]
