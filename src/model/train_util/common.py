@@ -2,7 +2,7 @@ import torch
 
 import torch
 import random
-
+from src.util.fold_unfold import fold_nd
 def hook_fn(grad, mask, num_dims, patch_size, input_shape):
     """
     후킹 함수로, 그라디언트에 마스크를 적용하여 특정 패치의 그라디언트를 무시하도록 한다.
@@ -47,9 +47,7 @@ def hook_fn(grad, mask, num_dims, patch_size, input_shape):
         grad_fold = grad_unfold.view(B, C, -1, patch_size ** 3)
         grad_fold = grad_fold.permute(0, 1, 3, 2)
         grad_fold = grad_fold.contiguous().view(B, C * patch_size ** 3, -1)
-        grad_fold = torch.nn.functional.fold(
-            grad_fold, (D, H, W), kernel_size=(patch_size, patch_size, patch_size), stride=(patch_size, patch_size, patch_size)
-        )
+        grad_fold = fold_nd(grad_fold, batch_size=B, output_size=D, patch_size=patch_size, stride=patch_size, pad_size=0, img_dim=3, fold_idx=None)
 
     return grad_fold
 
