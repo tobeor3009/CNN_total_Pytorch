@@ -52,6 +52,7 @@ def get_fold_idx_tensor(batch_size, in_channels, output_size, patch_size, stride
     fold_idx = fold_idx.contiguous().view(1, 1, -1).long().expand(batch_size, in_channels, -1)
     return fold_idx
 
+# fold_nd input_shape: [B * patch_num, C, patch_size, patch_size]
 def fold_nd(unfold_tensor, batch_size, output_size, patch_size, stride, pad_size, img_dim, fold_idx=None):
 
     padded_output_size = output_size + pad_size * 2
