@@ -45,10 +45,11 @@ def hook_fn(grad, mask, num_dims, patch_size, input_shape):
 
         # 3D 텐서 형태로 fold 복원
         grad_fold = grad_unfold.view(B, C, -1, patch_size ** 3)
-        grad_fold = grad_fold.permute(0, 1, 3, 2)
-        grad_fold = grad_fold.contiguous().view(B, C * patch_size ** 3, -1)
-        grad_fold = fold_nd(grad_fold, batch_size=B, output_size=D, patch_size=patch_size, stride=patch_size, pad_size=0, img_dim=3, fold_idx=None)
-
+        grad_fold = grad_fold.permute(0, 2, 1, 3)
+        grad_fold = grad_fold.contiguous().view(-1, C, patch_size ** 3)
+        grad_fold = grad_fold.view(-1, C, patch_size, patch_size, patch_size)
+        grad_fold = fold_nd(grad_fold, batch_size=B, output_size=D, patch_size=patch_size, stride=patch_size,
+                            pad_size=0, img_dim=3, fold_idx=None)
     return grad_fold
 
 def mask_gradient(input_tensor, target_tensor, patch_size=64, ignore_prob=0.95):
