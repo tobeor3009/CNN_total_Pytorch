@@ -18,7 +18,7 @@ def get_deepspeed_config_dict(train_dataset, loader_batch_size, batch_size, num_
         "gradient_clipping": 1.0,
         "pipeline_parallel": True,
         "steps_per_print": epoch_step_size,
-        ## 정밀도는 bp16에 비해 높으나, gradient overflow, underflow 문제가 빈번하여 bf16사용 추천
+        ## 정밀도는 bf16에 비해 높으나, gradient overflow, underflow 문제가 빈번하여 bf16사용 추천
         "fp16": {
             "enabled": False,
             "loss_scale": 0, # 0 means dynamic loss_scale, another value means fixed loss scaling
