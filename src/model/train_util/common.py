@@ -65,6 +65,7 @@ def mask_gradient(input_tensor, target_tensor, patch_size=64, ignore_prob=0.95):
     - patch_size (int): 패치 크기 (기본값 64)
     - ignore_prob (float): 그라디언트를 무시할 확률 (기본값 0.95)
     """
+    target_tensor.requires_grad = True
     # 입력 텐서의 차원 수 확인
     num_dims = input_tensor.dim()
 
