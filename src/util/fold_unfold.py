@@ -1,10 +1,12 @@
-import numpy as np
-import torch
+import math
 import collections
 from itertools import repeat
 from functools import partial
+import numpy as np
+import torch
 from torch import nn
 from torch.nn import functional as F
+
 def get_list_numel(list_obj):
     return int(np.prod(list_obj))
 
@@ -180,13 +182,15 @@ def compute_stride_weights(image_size, patch_size, stride, pad_size, img_dim):
     return patch_weight
 
 class PatchSplitModel(nn.Module):
-    def __init__(self, model, image_size, split_num, stride_num=2, output_size=None, patch_combine_method="region_voting", img_dim=2):
+    def __init__(self, model, image_size, split_num, stride_num=2, output_size=None,
+                 patch_combine_method="region_voting", img_dim=2, process_at_once=32):
         super().__init__()
         method_list = ["region_voting", "eulidian_weight"]
         assert patch_combine_method in method_list, f"check combine_method in {method_list}"
         if output_size == None:
             output_size = image_size
         self.model = model
+        self.process_at_once = process_at_once
         patch_size = image_size // split_num
         stride = patch_size // stride_num
         pad_size = stride
@@ -203,7 +207,10 @@ class PatchSplitModel(nn.Module):
     def forward(self, x):
         batch_size = x.size(0)
         x_patches = self.extract_patches(x)
-        y_pred_patches = self.model(x_patches)
+        if self.process_at_once is None:
+            y_pred_patches = self.model(x_patches)
+        else:
+            y_pred_patches = self.process_patch_array(x_patches, self.model, self.process_at_once)
         y_pred_recon = self.combine_region_voting_patches(y_pred_patches, batch_size=batch_size)
         return y_pred_recon
     
@@ -226,3 +233,17 @@ class PatchSplitModel(nn.Module):
         else:
             y_pred_patches = x
         return loss_fn(y_pred_patches, y_patches)
+    
+    def process_patch_array(self, patch_tensor, target_model, process_at_once):
+        data_num = patch_tensor.shape[0]
+        batch_num = math.ceil(data_num / process_at_once)
+        pred_patch_array = []
+        for batch_idx in range(batch_num):
+            start_idx = batch_idx * process_at_once
+            end_idx = min(start_idx + process_at_once, data_num)
+            pred_patch_array_part = target_model(patch_tensor[start_idx:end_idx])
+            if isinstance(pred_patch_array_part, list):
+                pred_patch_array_part = pred_patch_array_part[0]
+            pred_patch_array.append(pred_patch_array_part)
+        pred_patch_array = torch.cat(pred_patch_array, axis=0)
+        return pred_patch_array

@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-
+from functools import partial
 SMOOTH = 1e-7
 
 def get_clip(y_pred, y_true, smooth):
@@ -76,7 +76,6 @@ def get_focal_loss(y_pred, y_true, per_image=False, gamma=2.0, smooth=SMOOTH):
     else:
         return torch.mean(per_image_loss)
 
-
 def get_dice_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH):
     axis = get_seg_dim(y_true)
     tp = torch.sum(y_true * y_pred, axis=axis)
@@ -94,7 +93,7 @@ def get_dice_loss(y_pred, y_true, log=False, per_image=False, smooth=SMOOTH):
         return torch.mean(dice_score_per_image)
 
 
-def get_tversky_loss(y_pred, y_true, beta=0.7, 
+def get_tversky_loss(y_pred, y_true, beta=0.7,
                      log=False, per_image=False, smooth=SMOOTH):
     axis = get_seg_dim(y_true)
     alpha = 1 - beta
@@ -174,6 +173,13 @@ def get_tversky_bce_focal_loss(y_pred, y_true):
 def get_propotional_bce_focal_loss(y_pred, y_true):
     return get_bce_loss(y_pred, y_true) + get_focal_loss(y_pred, y_true) + get_propotional_loss(y_pred, y_true)
 
+def final_loss_fn(y_pred, y_true, region_loss):
+    C = y_true.shape[1]
+    if C > 1:
+        y_pred = y_pred[:, 1:]
+        y_true = y_true[:, 1:]
+    return region_loss(y_pred, y_true)
+
 def get_loss_fn(loss_select):
     if loss_select == "dice":
         region_loss = get_dice_loss
@@ -199,15 +205,11 @@ def get_loss_fn(loss_select):
         region_loss = get_tversky_bce_focal_loss
     elif loss_select == "propotional_bce_focal":
         region_loss = get_propotional_bce_focal_loss
-
-    def final_loss_fn(y_pred, y_true):
-        C = y_true.shape[1]
-        if C > 1:
-            y_pred = y_pred[:, 1:]
-            y_true = y_true[:, 1:]
-        return region_loss(y_pred, y_true)
-#     pointwise_loss = get_bce_loss(y_pred, y_true, per_image=True)
-    return final_loss_fn
+    else:
+        region_loss = get_dice_loss
+        print("region loss selected as dice loss")
+           
+    return partial(final_loss_fn, region_loss=region_loss)
 
 
 def get_dice_score(y_pred, y_true, mask_threshold=0.5):
