@@ -181,6 +181,19 @@ def compute_stride_weights(image_size, patch_size, stride, pad_size, img_dim):
         patch_weight[-stride:, :, :, -patch_per_dim:] = 1
     return patch_weight
 
+def process_patch_array(patch_tensor, target_model, process_at_once, part_process_fn=None):
+    data_num = patch_tensor.shape[0]
+    batch_num = math.ceil(data_num / process_at_once)
+    pred_patch_array = []
+    for batch_idx in range(batch_num):
+        start_idx = batch_idx * process_at_once
+        end_idx = min(start_idx + process_at_once, data_num)
+        pred_patch_array_part = target_model(patch_tensor[start_idx:end_idx])
+        if part_process_fn is not None:
+            pred_patch_array_part = part_process_fn(pred_patch_array_part)
+        pred_patch_array.append(pred_patch_array_part)
+    pred_patch_array = torch.cat(pred_patch_array, axis=0)
+    return pred_patch_array
 class PatchSplitModel(nn.Module):
     def __init__(self, model, image_size, split_num, stride_num=2, output_size=None,
                  patch_combine_method="region_voting", img_dim=2, process_at_once=32):
@@ -210,7 +223,7 @@ class PatchSplitModel(nn.Module):
         if self.process_at_once is None:
             y_pred_patches = self.model(x_patches)
         else:
-            y_pred_patches = self.process_patch_array(x_patches, self.model, self.process_at_once)
+            y_pred_patches = process_patch_array(x_patches, self.model, self.process_at_once)
         y_pred_recon = self.combine_region_voting_patches(y_pred_patches, batch_size=batch_size)
         return y_pred_recon
     
@@ -233,17 +246,3 @@ class PatchSplitModel(nn.Module):
         else:
             y_pred_patches = x
         return loss_fn(y_pred_patches, y_patches)
-    
-    def process_patch_array(self, patch_tensor, target_model, process_at_once):
-        data_num = patch_tensor.shape[0]
-        batch_num = math.ceil(data_num / process_at_once)
-        pred_patch_array = []
-        for batch_idx in range(batch_num):
-            start_idx = batch_idx * process_at_once
-            end_idx = min(start_idx + process_at_once, data_num)
-            pred_patch_array_part = target_model(patch_tensor[start_idx:end_idx])
-            if isinstance(pred_patch_array_part, list):
-                pred_patch_array_part = pred_patch_array_part[0]
-            pred_patch_array.append(pred_patch_array_part)
-        pred_patch_array = torch.cat(pred_patch_array, axis=0)
-        return pred_patch_array
