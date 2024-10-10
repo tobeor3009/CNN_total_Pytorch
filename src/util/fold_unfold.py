@@ -193,7 +193,6 @@ def process_patch_array(patch_tensor, target_model, process_at_once, part_proces
         if dynamic_process:
             target_data = target_data.to(device)
             pred_patch_array_part = target_model(target_data)
-            target_data = target_data.to("cpu")
         else:
             pred_patch_array_part = target_model(target_data)
         if part_process_fn is not None:
