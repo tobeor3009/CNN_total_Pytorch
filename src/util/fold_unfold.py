@@ -181,19 +181,27 @@ def compute_stride_weights(image_size, patch_size, stride, pad_size, img_dim):
         patch_weight[-stride:, :, :, -patch_per_dim:] = 1
     return patch_weight
 
-def process_patch_array(patch_tensor, target_model, process_at_once, part_process_fn=None):
+def process_patch_array(patch_tensor, target_model, process_at_once, part_process_fn=None, dynamic_process=False):
     data_num = patch_tensor.shape[0]
+    device = target_model.device
     batch_num = math.ceil(data_num / process_at_once)
     pred_patch_array = []
     for batch_idx in range(batch_num):
         start_idx = batch_idx * process_at_once
         end_idx = min(start_idx + process_at_once, data_num)
-        pred_patch_array_part = target_model(patch_tensor[start_idx:end_idx])
+        target_data = patch_tensor[start_idx:end_idx]
+        if dynamic_process:
+            target_data = target_data.to(device)
+            pred_patch_array_part = target_model(target_data)
+            target_data = target_data.to("cpu")
+        else:
+            pred_patch_array_part = target_model(target_data)
         if part_process_fn is not None:
             pred_patch_array_part = part_process_fn(pred_patch_array_part)
         pred_patch_array.append(pred_patch_array_part)
     pred_patch_array = torch.cat(pred_patch_array, axis=0)
     return pred_patch_array
+
 class PatchSplitModel(nn.Module):
     def __init__(self, model, image_size, split_num, stride_num=2, output_size=None,
                  patch_combine_method="region_voting", img_dim=2, process_at_once=32):
