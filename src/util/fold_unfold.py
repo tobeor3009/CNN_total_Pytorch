@@ -183,7 +183,7 @@ def compute_stride_weights(image_size, patch_size, stride, pad_size, img_dim):
 
 def process_patch_array(patch_tensor, target_model, process_at_once, part_process_fn=None, dynamic_process=False):
     data_num = patch_tensor.shape[0]
-    device = target_model.device
+    device = next(target_model.parameters()).device
     batch_num = math.ceil(data_num / process_at_once)
     pred_patch_array = []
     for batch_idx in range(batch_num):
