@@ -15,7 +15,6 @@ def get_rev(y_pred, y_true):
     y_true_rev = 1 - y_true
     return y_pred_rev, y_true_rev
 
-
 def get_seg_dim(tensor):
     num_dims = len(tensor.shape)
     axis = tuple(range(2, num_dims))
@@ -147,31 +146,52 @@ def get_propotional_loss(y_pred, y_true, beta=0.3,
 
 
 def get_dice_bce_loss(y_pred, y_true):
-    return get_bce_loss(y_pred, y_true) + get_dice_loss(y_pred, y_true)
+    dice_loss = get_dice_loss(y_pred, y_true)
+    bce_loss = get_bce_loss(y_pred, y_true)
+    return (dice_loss + bce_loss) / 2
 
 def get_tversky_bce_loss(y_pred, y_true):
-    return get_bce_loss(y_pred, y_true) + get_tversky_loss(y_pred, y_true)
+    tversky_loss = get_tversky_loss(y_pred, y_true)
+    bce_loss = get_bce_loss(y_pred, y_true)
+    return (tversky_loss + bce_loss) / 2
 
 def get_propotional_bce_loss(y_pred, y_true):
-    return get_bce_loss(y_pred, y_true) + get_propotional_loss(y_pred, y_true)
+    propotional_loss = get_propotional_loss(y_pred, y_true)
+    bce_loss = get_bce_loss(y_pred, y_true)
+    return (propotional_loss + bce_loss) / 2
 
 def get_dice_focal_loss(y_pred, y_true):
-    return get_focal_loss(y_pred, y_true) + get_dice_loss(y_pred, y_true)
+    dice_loss = get_dice_loss(y_pred, y_true)
+    focal_loss = get_focal_loss(y_pred, y_true)
+    return (dice_loss + focal_loss) / 2
 
 def get_tversky_focal_loss(y_pred, y_true):
-    return get_focal_loss(y_pred, y_true) + get_tversky_loss(y_pred, y_true)
+    tversky_loss = get_tversky_loss(y_pred, y_true)
+    focal_loss = get_focal_loss(y_pred, y_true)
+    return (tversky_loss + focal_loss) / 2
 
 def get_propotional_focal_loss(y_pred, y_true):
-    return get_focal_loss(y_pred, y_true) + get_propotional_loss(y_pred, y_true)
+    propotional_loss = get_propotional_loss(y_pred, y_true)
+    focal_loss = get_focal_loss(y_pred, y_true)
+    return (propotional_loss + focal_loss) / 2
 
 def get_dice_bce_focal_loss(y_pred, y_true):
-    return get_bce_loss(y_pred, y_true) + get_focal_loss(y_pred, y_true) + get_dice_loss(y_pred, y_true)
+    dice_loss = get_dice_loss(y_pred, y_true)
+    bce_loss = get_bce_loss(y_pred, y_true)
+    focal_loss = get_focal_loss(y_pred, y_true)
+    return (dice_loss + bce_loss + focal_loss) / 3
 
 def get_tversky_bce_focal_loss(y_pred, y_true):
-    return get_bce_loss(y_pred, y_true) + get_focal_loss(y_pred, y_true) + get_tversky_loss(y_pred, y_true)
+    tversky_loss = get_tversky_loss(y_pred, y_true)
+    bce_loss = get_bce_loss(y_pred, y_true)
+    focal_loss = get_focal_loss(y_pred, y_true)
+    return (tversky_loss + bce_loss + focal_loss) / 3
 
 def get_propotional_bce_focal_loss(y_pred, y_true):
-    return get_bce_loss(y_pred, y_true) + get_focal_loss(y_pred, y_true) + get_propotional_loss(y_pred, y_true)
+    propotional_loss = get_propotional_loss(y_pred, y_true)
+    bce_loss = get_bce_loss(y_pred, y_true)
+    focal_loss = get_focal_loss(y_pred, y_true)
+    return (propotional_loss + bce_loss + focal_loss) / 3
 
 def final_loss_fn(y_pred, y_true, region_loss):
     C = y_true.shape[1]
