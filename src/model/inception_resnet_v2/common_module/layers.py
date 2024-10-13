@@ -7,7 +7,7 @@ import numpy as np
 from .cbam import CBAM as CBAM2D
 from .cbam_3d import CBAM3D
 from torch.nn.utils import spectral_norm
-INPLACE = True
+INPLACE = False
 DEFAULT_ACT = "relu6"
 
 
