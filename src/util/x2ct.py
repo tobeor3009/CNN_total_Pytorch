@@ -43,20 +43,24 @@ def crop_full_drr_tensor(image_tensor, size, patch_size, stride, pad_size):
 
 def crop_drr_tensor(image_tensor, cropped_centers, crop_size=(64, 64)):
     # 입력 텐서 크기 확인
-    B, C, H, W = image_tensor.shape
+    # real_batch_size, cropped_centers_num, num_crop_repeat = 2, 24, 12
+    real_batch_size, C, H, W = image_tensor.shape
+    cropped_centers_num = cropped_centers.size(0)
+    num_crop_repeat = cropped_centers_num // real_batch_size
+    
     crop_h, crop_w = crop_size
     
-    assert C == 2, f"channel must be 2, but image_shape shape is {B, C, H, W}"
+    assert C == 2, f"channel must be 2, but image_shape shape is {real_batch_size, C, H, W}"
     if H < crop_h or W < crop_w:
         raise ValueError(f"입력 이미지 크기 {image_tensor.shape}가 크롭 크기 {crop_size}보다 작습니다.")
 
     # 각 배치별로 랜덤 크롭 수행
     cropped_tensors = []
     
-    for repeat_idx in range(len(cropped_centers)):
+    for repeat_idx in range(num_crop_repeat):
         # 배치 크기만큼의 랜덤 크롭 위치 설정
-        for b in range(B):
-            crop_idx = B * repeat_idx + b
+        for b in range(real_batch_size):
+            crop_idx = num_crop_repeat * b + repeat_idx
             start_d = cropped_centers[crop_idx, 0]
             start_h = cropped_centers[crop_idx, 1]
             start_w = cropped_centers[crop_idx, 2]
