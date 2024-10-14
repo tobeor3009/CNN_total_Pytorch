@@ -58,8 +58,8 @@ def crop_drr_tensor(image_tensor, cropped_centers, crop_size=(64, 64)):
     cropped_tensors = []
     
     for repeat_idx in range(num_crop_repeat):
-        # 배치 크기만큼의 랜덤 크롭 위치 설정
         for b in range(real_batch_size):
+        # 배치 크기만큼의 랜덤 크롭 위치 설정
             crop_idx = num_crop_repeat * b + repeat_idx
             start_d = cropped_centers[crop_idx, 0]
             start_h = cropped_centers[crop_idx, 1]
@@ -108,7 +108,10 @@ def random_crop_3d_tensor(image_tensor, crop_size=(64, 64, 64), num_crop_repeat=
         
         for b in range(B):
             # 각 배치에 대해 랜덤 위치에서 크롭 수행
-            cropped_image = image_tensor[b, :, start_d[b]:start_d[b]+crop_d, start_h[b]:start_h[b]+crop_h, start_w[b]:start_w[b]+crop_w]
+            cropped_image = image_tensor[b, :,
+                                         start_d[b]:start_d[b]+crop_d,
+                                         start_h[b]:start_h[b]+crop_h,
+                                         start_w[b]:start_w[b]+crop_w]
             cropped_tensors.append(cropped_image)
         cropped_d_centers.append(start_d)
         cropped_h_centers.append(start_h)
