@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import random
 
 
-def compute_gradient_penalty(D, real_samples, fake_samples, blend_labels):
+def compute_gradient_penalty_blend(D, real_samples, fake_samples, blend_labels):
     """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2 using blended images."""
     inter_mode = "nearest"
     device = real_samples.device
