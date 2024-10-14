@@ -96,6 +96,7 @@ def toggle_grad(target_model, require_grads=False):
         param.requires_grad = require_grads
 
 def average_across_gpus(torch_scalar):
+    dist.barrier()
     dist.reduce(torch_scalar, dist.ReduceOp.AVG)
     return torch_scalar.item()
 
