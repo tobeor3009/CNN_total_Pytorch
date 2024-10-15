@@ -4,7 +4,7 @@ import torch.distributed as dist
 
 def get_deepspeed_config_dict(train_dataset, loader_batch_size, batch_size, num_workers,
                               stage_coef_list=[10, 90], decay_epoch=100,
-                              cycle_min_lr=2e-5, cycle_max_lr=1e-4, decay_lr_rate=0.1):
+                              cycle_min_lr=4e-5, cycle_max_lr=2e-4, decay_lr_rate=0.25):
     train_dataloader_len = math.ceil(len(train_dataset) / loader_batch_size)
     num_gpu = torch.cuda.device_count()
     train_batch_size = batch_size
