@@ -98,7 +98,7 @@ def mask_gradient(input_tensor, target_tensor, patch_size=64, ignore_prob=0.95):
     background_mask = 1 - tissue_mask
 
     # 무작위 확률에 따른 마스크 생성
-    random_mask = torch.tensor([random.random() > ignore_prob for _ in range(tissue_mask.numel())], 
+    random_mask = torch.tensor([random.random() > ignore_prob for _ in range(tissue_mask.numel())],
                                device=input_tensor.device, dtype=torch.float32).view_as(tissue_mask)
 
     # 최종 마스크 생성
