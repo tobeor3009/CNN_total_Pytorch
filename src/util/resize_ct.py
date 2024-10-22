@@ -39,12 +39,17 @@ def resize_dicom_series(image, resize_factor_list):
     
     # source_image, refrence, transform, interpolation method, default value
     new_img = sitk.Resample(image, reference_image, centered_transform, sitk.sitkBSpline, min_value)
+    # Ensure the image is in grayscale (1-channel) if not already
+    if new_img.GetNumberOfComponentsPerPixel() > 1:
+        # Convert multi-channel image to grayscale by averaging channels
+        array = sitk.GetArrayFromImage(new_img)
+        grayscale_array = np.mean(array, axis=-1)  # Averaging the color channels
+        new_img = sitk.GetImageFromArray(grayscale_array)
+        new_img.CopyInformation(reference_image)  # Retain the spatial metadat
     new_img = sitk.Cast(new_img, sitk.sitkInt16)
     return new_img
 
-def write_series_to_path(target_image, original_sample_path, target_path, slice_thickness, reader=None):
-    if reader is None:
-        reader = sitk.ImageSeriesReader()
+def write_series_to_path(target_image, original_sample_path, target_path, slice_thickness):
     tags_to_copy = ["0010|0010", # Patient Name
                     "0010|0020", # Patient ID
                     "0010|0030", # Patient Birth Date
@@ -55,9 +60,11 @@ def write_series_to_path(target_image, original_sample_path, target_path, slice_
                     "0008|0050", # Accession Number
                     "0008|0060"  # Modality
     ]
+
     modification_time = time.strftime("%H%M%S")
     modification_date = time.strftime("%Y%m%d")
     direction = target_image.GetDirection()
+    
     try:
         series_tag_value = reader.GetMetaData(0,"0008|103e")
     except RuntimeError:

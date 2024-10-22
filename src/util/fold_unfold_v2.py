@@ -28,8 +28,8 @@ def assert_patch_stride_size(patch_size, stride):
     assert patch_size % stride == 0, "patch_size must be divisible by stride"
 
 # expected shape = [B * num_patch, C, H // patch_size, W // patch_size]
-def unfold_nd(input_tensor, patch_size, stride, pad_size, img_dim):
-    
+def unfold_nd(input_tensor, patch_size, stride, pad_size):
+    img_dim = input_tensor.dim() - 2
     unfold_dim_range = range(2, 2 + img_dim)
     pad_tuple = to_ntuple(pad_size, img_dim * 2)
     input_tensor = F.pad(input_tensor, pad_tuple, mode="constant", value=0)
@@ -38,7 +38,6 @@ def unfold_nd(input_tensor, patch_size, stride, pad_size, img_dim):
     return input_tensor
 
 def get_fold_idx_tensor(batch_size, in_channels, output_size, patch_size, stride, pad_size, img_dim, device):
-
     padded_output_size = output_size + pad_size * 2
     padded_output_size_tuple = to_ntuple(padded_output_size, img_dim)
     padded_output_size_numel = get_list_numel(padded_output_size_tuple)
