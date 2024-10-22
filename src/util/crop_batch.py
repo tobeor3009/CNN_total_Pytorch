@@ -1,10 +1,11 @@
+import random
+from functools import partial
+
 import numpy as np
 import cv2
 import torch
 from torch.nn import functional as F
 import torchvision.transforms.functional as TF
-import random
-from functools import partial
 
 def rotate_and_crop_with_padding(image, crop_size=256, angle_range=(0, 360)):
     h, w = image.shape[:2]
@@ -62,7 +63,7 @@ def get_rand_edge_origin_idx(rotate_size, crop_size, crop_coef=2.0):
     edge_end = rotate_size - crop_size - edge_start + 1
     edge_adj_num = int(round(crop_size / crop_coef))
     
-    edge_candi_early = range(crop_size - edge_adj_num, edge_start + 1) 
+    edge_candi_early = range(crop_size - edge_adj_num, edge_start + 1)
     edge_candi_late = range(edge_end, edge_end + edge_adj_num)
     edge_candi_list = list(edge_candi_early) + list(edge_candi_late)
     return random.choice(edge_candi_list)
@@ -94,14 +95,17 @@ def rotate_and_crop_tensor(image_tensor, crop_size=128, angle_range=(0, 360), nu
     배치 형태의 torch 텐서를 입력으로 받아 랜덤 회전 후, 랜덤 위치의 크롭을 수행하는 함수.
     
     Args:
-        image_tensor (torch.Tensor): 입력 이미지 텐서, 크기 (B, C, 512, 512)
+        image_tensor (torch.Tensor): 입력 이미지 텐서, 크기 (B, C, H, W)
         crop_size (int): 크롭할 이미지의 크기 (기본값: 128)
         angle_range (tuple): 회전 각도의 범위 (기본값: (0, 360)) center_crop 때만 사용되며, border_crop때는 회전하지 않는다.
         num_crop_repeat (int): 각 이미지당 생성할 크롭 횟수 (기본값: 1)
         center_crop_ratio (float): crop 할때 center_crop 과 border_crop을 달리 취급해서 수행하는데, center_crop의 비율을 결정하며, border_crop은 (1 - center_crop) 이다.
-        crop_coef (float): border를 crop할때 얼마나 멀리 crop할지 결정하는 ratio. 너무 작으면 padding된 의미없는 부분을 잘라온다. 크면 이미지를 커버하지 못하는 부분이 생긴다.
+        crop_coef (float): border를 crop할때 얼마나 멀리 crop할지 결정하는 ratio. 너무 작으면 padding된 의미없는 부분을 잘라온다. 크면 이미지를 커버하지 못하는 (border 쪽) 부분이 생긴다.
         patch_size가 image_size의 1/4 이면 2.0, 1/8 이면 1.2를 추천한다.
-        
+    
+    Caution:
+        이 함수는 H % crop_size == 0, W % crop_size == 0 를 만족해야 하며, H // crop_size >= 4 가 되도록 한다. W도 마찬가지. H == W 인 경우를 상정하고 설계되었다. 
+        바꾸려면 crop_size 과 crop_coef를 tuple로 들어가게 설계해야한다.
     Returns:
         torch.Tensor: 랜덤 회전 및 크롭 후의 이미지 텐서, 크기 (B * num_crop_repeat, C, crop_size, crop_size)
     """
@@ -136,8 +140,7 @@ def rotate_and_crop_tensor(image_tensor, crop_size=128, angle_range=(0, 360), nu
             single_image_tensor = padded_tensor[b]
 
             # 텐서를 PIL 이미지로 변환하여 회전 수행
-            rotated_image = TF.rotate(single_image_tensor, angle=angle)
-
+            rotated_image = TF.rotate(single_image_tensor, angle=angle, fill=0)
             # 회전된 이미지의 크기
             _, rotated_h, rotated_w = rotated_image.shape
             
@@ -152,3 +155,14 @@ def rotate_and_crop_tensor(image_tensor, crop_size=128, angle_range=(0, 360), nu
     # 결과 텐서로 변환 (B * num_crop_repeat, C, crop_size, crop_size)
     cropped_tensor_batch = torch.stack(cropped_tensors, dim=0)
     return cropped_tensor_batch
+
+def rotate_and_crop_tensor_for_seg(image_tensor, mask_idx_tensor, crop_size=128, 
+                                   angle_range=(0, 360), num_crop_repeat=64, center_crop_ratio=0.8, crop_coef=2.0):
+    
+    concat_tensor = torch.cat([image_tensor, mask_idx_tensor.unsqueeze(1).float()], dim=1)
+
+    concat_patch_tensor = rotate_and_crop_tensor(concat_tensor, crop_size=crop_size, angle_range=angle_range, num_crop_repeat=num_crop_repeat,
+                                                 center_crop_ratio=center_crop_ratio, crop_coef=crop_coef)
+    image_patch_tensor, mask_idx_patch_tensor = concat_patch_tensor[:, :-1], concat_patch_tensor[:, -1]
+    mask_idx_patch_tensor = (mask_idx_patch_tensor > 0.5).long()
+    return image_patch_tensor, mask_idx_patch_tensor
