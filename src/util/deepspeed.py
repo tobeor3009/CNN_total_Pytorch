@@ -156,7 +156,7 @@ def onehot_and_permute(idx_tensor, num_classes):
 
 def seg_idx_mask_to_class_label(idx_tensor, num_classes):
     img_dim = idx_tensor.dim() - 1
-    sum_dim_tuple = (0, -1, *range(1, 1 + img_dim))
+    sum_dim_tuple = tuple(range(1, 1 + img_dim))
     class_idx_tensor = (idx_tensor.sum(dim=sum_dim_tuple) > 0).long()
     class_label_tensor = F.one_hot(class_idx_tensor, num_classes=num_classes)
     return class_label_tensor
