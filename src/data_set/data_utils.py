@@ -27,8 +27,8 @@ positional_transform = A.OneOf([
 ], p=1)
 
 noise_transform = A.OneOf([
-    A.Blur(blur_limit=(2, 2), p=1),
-    A.GaussNoise(var_limit=(0.01, 5), p=1),
+    # A.Blur(blur_limit=(2, 2), p=1),
+    A.GaussNoise(var_limit=(0.01, 0.1), p=1),
 ], p=1)
 
 elastic_tranform = A.ElasticTransform(always_apply=False, p=0.5,
@@ -36,7 +36,7 @@ elastic_tranform = A.ElasticTransform(always_apply=False, p=0.5,
                                       alpha_affine=2.009999990463257, interpolation=1, border_mode=1,
                                       value=(0, 0, 0), mask_value=None, approximate=False)
 
-brightness_value = 0.1
+brightness_value = 0.02
 brightness_contrast_transform = A.OneOf([
     A.RandomBrightnessContrast(
         brightness_limit=(-brightness_value, brightness_value),
