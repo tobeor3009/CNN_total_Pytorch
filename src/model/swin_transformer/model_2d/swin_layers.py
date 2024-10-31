@@ -27,11 +27,11 @@ class InstanceNormChannelLast(nn.Module):
 
         if self.affine:
             # Learnable affine parameters
-            self.gamma = nn.Parameter(torch.ones(num_features))
-            self.beta = nn.Parameter(torch.zeros(num_features))
+            self.weight = nn.Parameter(torch.ones(num_features))
+            self.bias = nn.Parameter(torch.zeros(num_features))
         else:
-            self.register_parameter('gamma', None)
-            self.register_parameter('beta', None)
+            self.register_parameter('weight', None)
+            self.register_parameter('bias', None)
 
     def forward(self, x):
         """
@@ -57,9 +57,9 @@ class InstanceNormChannelLast(nn.Module):
         # Apply affine transformation if enabled
         if self.affine:
             unsqeeze_tuple = tuple(1 for _ in range(1, x.ndim))
-            gamma = self.gamma.view(*unsqeeze_tuple, self.num_features)
-            beta = self.gamma.view(*unsqeeze_tuple, self.num_features)
-            x_normalized = x_normalized * gamma + beta
+            weight = self.weight.view(*unsqeeze_tuple, self.num_features)
+            bias = self.bias.view(*unsqeeze_tuple, self.num_features)
+            x_normalized = x_normalized * weight + bias
 
         return x_normalized
 class ChannelDropout(nn.Module):

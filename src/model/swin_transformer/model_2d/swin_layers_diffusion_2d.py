@@ -1236,14 +1236,19 @@ class BasicLayerV1(nn.Module):
             flops += self.downsample.flops()
         return flops
 
+    def check_hasattr_and_init(self, obj, param_name, init_value):
+        if hasattr(obj, param_name):
+            target_param = getattr(obj, param_name)
+            if isinstance(target_param, torch.nn.Parameter):
+                nn.init.constant_(target_param, init_value)
+
     def _init_respostnorm(self):
         for blk in self.blocks:
-            nn.init.constant_(blk.norm1.weight, 0)
-            nn.init.constant_(blk.norm2.weight, 0)
-            if hasattr(blk.norm1, "bias"):
-                nn.init.constant_(blk.norm1.bias, 0)
-            if hasattr(blk.norm2, "bias"):
-                nn.init.constant_(blk.norm2.bias, 0)
+            self.check_hasattr_and_init(blk.norm1, "weight", 1)
+            self.check_hasattr_and_init(blk.norm1, "bias", 1)
+            self.check_hasattr_and_init(blk.norm2, "weight", 0)
+            self.check_hasattr_and_init(blk.norm2, "bias", 0)
+
 
 
 class BasicLayerV2(nn.Module):
@@ -1362,14 +1367,18 @@ class BasicLayerV2(nn.Module):
             flops += self.downsample.flops()
         return flops
 
+    def check_hasattr_and_init(self, obj, param_name, init_value):
+        if hasattr(obj, param_name):
+            target_param = getattr(obj, param_name)
+            if isinstance(target_param, torch.nn.Parameter):
+                nn.init.constant_(target_param, init_value)
+
     def _init_respostnorm(self):
         for blk in self.blocks:
-            nn.init.constant_(blk.norm1.weight, 0)
-            nn.init.constant_(blk.norm2.weight, 0)
-            if hasattr(blk.norm1, "bias"):
-                nn.init.constant_(blk.norm1.bias, 0)
-            if hasattr(blk.norm2, "bias"):
-                nn.init.constant_(blk.norm2.bias, 0)
+            self.check_hasattr_and_init(blk.norm1, "weight", 1)
+            self.check_hasattr_and_init(blk.norm1, "bias", 1)
+            self.check_hasattr_and_init(blk.norm2, "weight", 0)
+            self.check_hasattr_and_init(blk.norm2, "bias", 0)
 
 class BaseBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,

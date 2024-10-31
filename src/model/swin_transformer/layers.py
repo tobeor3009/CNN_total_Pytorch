@@ -37,11 +37,11 @@ def get_act(act):
     elif act == "silu-beta":
         act = SwishBeta()
     elif act == "sigmoid":
-        act = torch.sigmoid
+        act = nn.Sigmoid()
     elif act == "tanh":
-        act = torch.tanh
+        act = nn.Tanh()
     elif act == "softmax":
-        act = partial(torch.softmax, dim=1)
+        act = nn.Softmax(dim=1)
     elif act is None:
         act = nn.Identity()
     else:

@@ -33,6 +33,7 @@ class SwinMultitask(nn.Module):
         elif norm_layer == "instance":
             self.model_norm_layer = InstanceNormChannelLast
         
+        self.norm_layer = norm_layer
         self.model_act_layer = act_layer
         patch_size = int(patch_size)
         
@@ -225,8 +226,8 @@ class SwinMultitask(nn.Module):
     def process_decode_layers(self, x, skip_layers, decode_layers,
                               decode_final_layer, decode_final_expanding, decode_out_conv,
                               skip_connect_list, emb_list):
-        for skip_layer, decode_layer in zip(skip_layers, decode_layers):
-            skip_x = skip_connect_list.pop()
+        for decode_idx, (skip_layer, decode_layer) in enumerate(zip(skip_layers, decode_layers), start=1):
+            skip_x = skip_connect_list[-decode_idx]
             x = skip_layer(x, skip_x)
             x = decode_layer(x, *emb_list)
 
@@ -247,7 +248,7 @@ class SwinMultitask(nn.Module):
                             "drop":self.drop_rate, "attn_drop":self.attn_drop_rate,
                             "drop_path":self.dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                             "norm_layer":self.model_norm_layer,
-                            "act_layer":self.model_act_layer,
+                            "act_layer":get_act(self.model_act_layer),
                             "pretrained_window_size":self.pretrained_window_sizes[i_layer],
                             "emb_dim_list":self.emb_dim_list,
                             "use_checkpoint":self.use_checkpoint[i_layer], "use_residual":self.use_residual
@@ -275,8 +276,8 @@ class SwinMultitask(nn.Module):
         feature_dim = self.feature_dim
         common_kwarg_dict = self.get_layer_config_dict(feature_dim, self.feature_hw, i_layer)
         mid_layer_1 = BasicLayerV2(**common_kwarg_dict)
-        mid_attn_norm_layer = "instance" if self.model_norm_layer == "instance" else "rms"
-        # TBD: self.attn_drop_rate 추가할지 고민 
+        mid_attn_norm_layer = "instance" if self.norm_layer == "instance" else "rms"
+        # TBD: self.attn_drop_rate 추가할지 고민
         mid_attn = Attention(dim=feature_dim, num_heads=self.num_heads[i_layer],
                             use_checkpoint=self.use_checkpoint[i_layer], norm_layer=mid_attn_norm_layer)
         mid_layer_2 = BasicLayerV2(**common_kwarg_dict)
