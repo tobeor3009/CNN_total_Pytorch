@@ -22,7 +22,7 @@ class SwinMultitask(nn.Module):
                 window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True, patch_norm=True,
                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.0,
                 use_checkpoint=False, pretrained_window_sizes=0,
-                get_class=False, get_seg=True, get_validity=False,
+                get_seg=True, get_class=False, get_validity=False,
                 use_residual=False):
         super().__init__()
         self.model_norm_layer = nn.LayerNorm
@@ -103,13 +103,13 @@ class SwinMultitask(nn.Module):
         self.encode_layers = self.get_encode_layers()
         self.mid_layer_1, self.mid_attn, self.mid_layer_2 = self.get_mid_layer()
         
-        if get_class:
-            self.class_head = self.get_class_head(num_classes, class_act)
         if get_seg:
             self.skip_layers, self.decode_layers = self.get_decode_layers()
             self.seg_final_layer, self.seg_final_expanding, self.out_conv = self.get_seg_final_layers()
             for bly in self.decode_layers:
                 bly._init_respostnorm()
+        if get_class:
+            self.class_head = self.get_class_head(num_classes, class_act)
         if get_validity:
             self.validity_dim = int(embed_dim * (2 ** self.num_layers))
             self.validity_head = self.get_validity_head(validity_shape, validity_act)
@@ -152,12 +152,12 @@ class SwinMultitask(nn.Module):
 
         x, skip_connect_list = self.process_encode_layers(x, emb_list)
         x = self.process_mid_layers(x, emb_list)
-        if self.get_class:
-            class_output = self.class_head(x)
-            output.append(class_output)
         if self.get_seg:
             seg_output = self.process_decode_layers(x, skip_connect_list, emb_list)
             output.append(seg_output)
+        if self.get_class:
+            class_output = self.class_head(x)
+            output.append(class_output)
         if self.get_validity:
             validitiy_output = self.validity_head(x)
             output.append(validitiy_output)

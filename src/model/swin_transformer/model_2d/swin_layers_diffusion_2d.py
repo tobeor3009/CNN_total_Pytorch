@@ -11,7 +11,7 @@ import numpy as np
 from ..layers import get_act, get_norm
 from .swin_layers import window_partition, window_reverse
 from .swin_layers import Mlp, WindowAttention
-from .swin_layers import DROPOUT_INPLACE
+from .swin_layers import DROPOUT_INPLACE, InstanceNormChannelLast
 from einops import rearrange, repeat
 from functools import partial
 from functools import wraps
@@ -387,16 +387,27 @@ class LinearAttention(nn.Module):
         return self.to_out(out)
     
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=32, flash=False, use_checkpoint=False, use_norm=True, dropout=0.0):
+    def __init__(self, dim, num_heads=4, dim_head=32, flash=False, use_checkpoint=False, 
+                 norm_layer="rms", use_norm=True, dropout=0.0):
         super().__init__()
+
+        norm_layer_list = ["rms", "instance"]
+        assert norm_layer in norm_layer_list, f"you can choose norm layer: {norm_layer_list}"
+        
         self.use_checkpoint = use_checkpoint
         self.num_heads = num_heads
         num_mem_kv = num_heads
         hidden_dim = dim_head * num_heads
         self.dim_head = dim_head
         self.scale = dim_head ** -0.5
-
-        self.norm = RMSNorm(dim, mode="seq") if use_norm else nn.Identity()
+        
+        if use_norm:
+            if norm_layer == "rms":
+                self.norm = RMSNorm(dim, mode="seq")
+            else:
+                self.norm = InstanceNormChannelLast(dim)
+        else:
+            self.norm = nn.Identity()
         self.attend = Attend(flash=flash, dropout=dropout)
         self.mem_kv = nn.Parameter(torch.randn(2, num_heads, num_mem_kv, dim_head))
         self.to_qkv = nn.Linear(dim, hidden_dim * 3, bias=False)
@@ -1123,7 +1134,7 @@ class BasicLayerV1(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0,
                  emb_dim_list=[], use_residual=False):
 
@@ -1155,7 +1166,7 @@ class BasicLayerV1(nn.Module):
                                  drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
-                                 norm_layer=norm_layer,
+                                 norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(depth)])
         # patch merging layer
@@ -1238,7 +1249,7 @@ class BasicLayerV1(nn.Module):
 class BasicLayerV2(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0,
                  emb_dim_list=[], use_residual=False):
 
@@ -1293,7 +1304,7 @@ class BasicLayerV2(nn.Module):
                                  drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
-                                 norm_layer=norm_layer,
+                                 norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(depth)])
 

@@ -6,9 +6,62 @@ from timm.models.layers import trunc_normal_
 from timm.models.layers import DropPath, to_2tuple
 import numpy as np
 from ..layers import get_act
+
 DEFAULT_ACT = get_act("leakyrelu")
 DROPOUT_INPLACE = False
 
+class InstanceNormChannelLast(nn.Module):
+    def __init__(self, num_features, eps=1e-5, affine=False, momentum=0.1):
+        """
+        Parameters:
+        - num_features: Number of features in the input tensor.
+        - eps: Small value added to the denominator for numerical stability.
+        - affine: If True, adds learnable affine parameters.
+        - momentum: Momentum for the running mean and variance.
+        """
+        super(InstanceNormChannelLast, self).__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.affine = affine
+        self.momentum = momentum
+
+        if self.affine:
+            # Learnable affine parameters
+            self.gamma = nn.Parameter(torch.ones(num_features))
+            self.beta = nn.Parameter(torch.zeros(num_features))
+        else:
+            self.register_parameter('gamma', None)
+            self.register_parameter('beta', None)
+
+    def forward(self, x):
+        """
+        Apply instance normalization to the input tensor.
+        
+        Parameters:
+        - x: Input tensor with shape (batch_size, height, width, num_features).
+        
+        Returns:
+        - Normalized tensor with the same shape as the input.
+        """
+        
+        
+        target_dim_tuple = tuple(range(1, x.ndim - 1))
+        
+        # Compute mean and variance across the spatial dimensions (height and width)
+        x_mean = x.mean(dim=target_dim_tuple, keepdim=True)
+        x_var = x.var(dim=target_dim_tuple, correction=0, keepdim=True)
+        x_std = torch.sqrt(x_var + self.eps)
+        # Normalize the input tensor
+        x_normalized = (x - x_mean) / x_std
+
+        # Apply affine transformation if enabled
+        if self.affine:
+            unsqeeze_tuple = tuple(1 for _ in range(1, x.ndim))
+            gamma = self.gamma.view(*unsqeeze_tuple, self.num_features)
+            beta = self.gamma.view(*unsqeeze_tuple, self.num_features)
+            x_normalized = x_normalized * gamma + beta
+
+        return x_normalized
 class ChannelDropout(nn.Module):
     def __init__(self, p=0.5, inplace=DROPOUT_INPLACE):
         super(ChannelDropout, self).__init__()
@@ -513,7 +566,7 @@ class BasicLayerV1(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0):
 
         super().__init__()
@@ -533,7 +586,7 @@ class BasicLayerV1(nn.Module):
                                  drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
-                                 norm_layer=norm_layer,
+                                 norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(depth)])
 
@@ -611,7 +664,7 @@ class BasicLayerV2(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0):
 
         super().__init__()
@@ -653,7 +706,7 @@ class BasicLayerV2(nn.Module):
                                  drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
-                                 norm_layer=norm_layer,
+                                 norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(depth)])
 
