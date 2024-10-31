@@ -1151,7 +1151,7 @@ class BasicLayerV1(nn.Module):
         emb_block_list = []
         for emb_dim in emb_dim_list:
             emb_block = nn.Sequential(
-                                        nn.SiLU(),
+                                        act_layer,
                                         nn.Linear(emb_dim, dim * 2)
                                     )
             emb_block_list.append(emb_block)
@@ -1293,7 +1293,7 @@ class BasicLayerV2(nn.Module):
         emb_block_list = []
         for emb_dim in emb_dim_list:
             emb_block = nn.Sequential(
-                                        nn.SiLU(),
+                                        act_layer,
                                         nn.Linear(emb_dim, dim * 2)
                                     )
             emb_block_list.append(emb_block)
