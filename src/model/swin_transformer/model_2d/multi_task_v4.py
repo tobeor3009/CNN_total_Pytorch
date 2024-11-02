@@ -6,7 +6,7 @@ from torch import nn
 from einops.layers.torch import Rearrange
 from .swin_layers import Output2D, get_act, InstanceNormChannelLast
 from .swin_layers_diffusion_2d import Attention, AttentionPool1d, SkipLinear, RMSNorm
-from .swin_layers_diffusion_3d import BasicLayerV1, BasicLayerV2
+from .swin_layers_diffusion_2d import BasicLayerV1, BasicLayerV2
 from .swin_layers_diffusion_2d import default, prob_mask_like
 from .swin_layers_diffusion_2d import PatchEmbed, PatchMerging, PatchExpanding, ConvBlock2D
 
