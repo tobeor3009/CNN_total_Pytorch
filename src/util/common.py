@@ -31,7 +31,7 @@ def set_dropout_probability(model, decay_dropout_ratio=0.95):
             new_p = previous_p * decay_dropout_ratio
             module.p = new_p
 
-def create_overlay_image(image_array, mask_array, alpha=0.5):
+def create_overlay_image(image_array, mask_array, alpha=0.9):
     # 원본 이미지를 3채널로 변환
     image_array_color = cv2.cvtColor(image_array, cv2.COLOR_GRAY2BGR)
     

@@ -10,6 +10,11 @@ from ..layers import get_act
 DEFAULT_ACT = get_act("leakyrelu")
 DROPOUT_INPLACE = False
 
+def check_hasattr_and_init(obj, param_name, init_value):
+    if hasattr(obj, param_name):
+        target_param = getattr(obj, param_name)
+        if isinstance(target_param, torch.nn.Parameter):
+            nn.init.constant_(target_param, init_value)
 class InstanceNormChannelLast(nn.Module):
     def __init__(self, num_features, eps=1e-5, affine=False, momentum=0.1):
         """
@@ -636,11 +641,10 @@ class BasicLayerV1(nn.Module):
 
     def _init_respostnorm(self):
         for blk in self.blocks:
-            nn.init.constant_(blk.norm1.bias, 0)
-            nn.init.constant_(blk.norm1.weight, 0)
-            nn.init.constant_(blk.norm2.bias, 0)
-            nn.init.constant_(blk.norm2.weight, 0)
-
+            check_hasattr_and_init(blk.norm1, "weight", 1)
+            check_hasattr_and_init(blk.norm1, "bias", 0)
+            check_hasattr_and_init(blk.norm2, "weight", 1)
+            check_hasattr_and_init(blk.norm2, "bias", 0)
 
 class BasicLayerV2(nn.Module):
     """ A basic Swin Transformer layer for one stage.
@@ -744,11 +748,10 @@ class BasicLayerV2(nn.Module):
 
     def _init_respostnorm(self):
         for blk in self.blocks:
-            nn.init.constant_(blk.norm1.bias, 0)
-            nn.init.constant_(blk.norm1.weight, 0)
-            nn.init.constant_(blk.norm2.bias, 0)
-            nn.init.constant_(blk.norm2.weight, 0)
-
+            check_hasattr_and_init(blk.norm1, "weight", 1)
+            check_hasattr_and_init(blk.norm1, "bias", 0)
+            check_hasattr_and_init(blk.norm2, "weight", 1)
+            check_hasattr_and_init(blk.norm2, "bias", 0)
 
 class PatchEmbed(nn.Module):
     r""" Image to Patch Embedding
@@ -866,29 +869,6 @@ class Output2D(nn.Module):
         conv_5x5 = self.conv_5x5(x)
         conv_3x3 = self.conv_3x3(x)
         output = torch.cat([conv_5x5, conv_3x3], dim=1)
-        output = self.concat_conv(output)
-        output = self.act(output)
-        return output
-    
-class Output3D(nn.Module):
-    def __init__(self, in_channels, out_channels, act=None):
-        super().__init__()
-        conv_out_channels = in_channels // 2
-        self.conv_5x5x5 = nn.Conv3d(in_channels=in_channels,
-                                  out_channels=conv_out_channels,
-                                  kernel_size=5, padding=2)
-        self.conv_3x3x3 = nn.Conv3d(in_channels=in_channels,
-                                  out_channels=conv_out_channels,
-                                  kernel_size=3, padding=1)
-        self.concat_conv = nn.Conv3d(in_channels=conv_out_channels * 2,
-                                        out_channels=out_channels,
-                                        kernel_size=3, padding=1)
-        self.act = get_act(act)
-
-    def forward(self, x):
-        conv_5x5x5 = self.conv_5x5x5(x)
-        conv_3x3x3 = self.conv_3x3x3(x)
-        output = torch.cat([conv_5x5x5, conv_3x3x3], dim=1)
         output = self.concat_conv(output)
         output = self.act(output)
         return output

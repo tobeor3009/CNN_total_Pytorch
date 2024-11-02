@@ -9,7 +9,7 @@ from torch.utils.checkpoint import checkpoint
 from timm.models.layers import DropPath, to_2tuple
 import numpy as np
 from ..layers import get_act, get_norm
-from .swin_layers import window_partition, window_reverse
+from .swin_layers import window_partition, window_reverse, check_hasattr_and_init
 from .swin_layers import Mlp, WindowAttention
 from .swin_layers import DROPOUT_INPLACE, InstanceNormChannelLast
 from einops import rearrange, repeat
@@ -18,6 +18,7 @@ from functools import wraps
 from packaging import version
 
 DEFAULT_ACT = get_act("silu")
+
 def exists(x):
     return x is not None
 
@@ -697,7 +698,7 @@ class SwinTransformerBlock(nn.Module):
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=DEFAULT_ACT, norm_layer=nn.LayerNorm, pretrained_window_size=0):
+                 norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, pretrained_window_size=0):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -1236,20 +1237,12 @@ class BasicLayerV1(nn.Module):
             flops += self.downsample.flops()
         return flops
 
-    def check_hasattr_and_init(self, obj, param_name, init_value):
-        if hasattr(obj, param_name):
-            target_param = getattr(obj, param_name)
-            if isinstance(target_param, torch.nn.Parameter):
-                nn.init.constant_(target_param, init_value)
-
     def _init_respostnorm(self):
         for blk in self.blocks:
-            self.check_hasattr_and_init(blk.norm1, "weight", 1)
-            self.check_hasattr_and_init(blk.norm1, "bias", 1)
-            self.check_hasattr_and_init(blk.norm2, "weight", 0)
-            self.check_hasattr_and_init(blk.norm2, "bias", 0)
-
-
+            check_hasattr_and_init(blk.norm1, "weight", 1)
+            check_hasattr_and_init(blk.norm1, "bias", 0)
+            check_hasattr_and_init(blk.norm2, "weight", 1)
+            check_hasattr_and_init(blk.norm2, "bias", 0)
 
 class BasicLayerV2(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
@@ -1367,18 +1360,12 @@ class BasicLayerV2(nn.Module):
             flops += self.downsample.flops()
         return flops
 
-    def check_hasattr_and_init(self, obj, param_name, init_value):
-        if hasattr(obj, param_name):
-            target_param = getattr(obj, param_name)
-            if isinstance(target_param, torch.nn.Parameter):
-                nn.init.constant_(target_param, init_value)
-
     def _init_respostnorm(self):
         for blk in self.blocks:
-            self.check_hasattr_and_init(blk.norm1, "weight", 1)
-            self.check_hasattr_and_init(blk.norm1, "bias", 1)
-            self.check_hasattr_and_init(blk.norm2, "weight", 0)
-            self.check_hasattr_and_init(blk.norm2, "bias", 0)
+            check_hasattr_and_init(blk.norm1, "weight", 1)
+            check_hasattr_and_init(blk.norm1, "bias", 0)
+            check_hasattr_and_init(blk.norm2, "weight", 1)
+            check_hasattr_and_init(blk.norm2, "bias", 0)
 
 class BaseBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,

@@ -4,11 +4,12 @@ import numpy as np
 from functools import partial
 from torch import nn
 from einops.layers.torch import Rearrange
-from .swin_layers import Output2D, get_act, InstanceNormChannelLast
-from .swin_layers_diffusion_2d import Attention, AttentionPool1d, SkipLinear, RMSNorm
-from .swin_layers_diffusion_3d import BasicLayerV1, BasicLayerV2
-from .swin_layers_diffusion_2d import default, prob_mask_like
-from .swin_layers_diffusion_2d import PatchEmbed, PatchMerging, PatchExpanding, ConvBlock2D
+from ..model_2d.swin_layers import get_act, InstanceNormChannelLast
+from .swin_layers import Output3D
+from ..model_2d.swin_layers_diffusion_2d import Attention, SkipLinear, AttentionPool1d, RMSNorm
+from ..model_2d.swin_layers_diffusion_2d import default, prob_mask_like
+from ..model_2d.swin_layers_diffusion_3d import BasicLayerV1, BasicLayerV2
+from ..model_2d.swin_layers_diffusion_3d import PatchEmbed, PatchMerging, PatchExpanding, ConvBlock3D
 
 from einops import rearrange, repeat
 
@@ -17,9 +18,9 @@ class SwinMultitask(nn.Module):
                  norm_layer="instance", act_layer="relu6",
                  seg_out_chans=2, seg_out_act="softmax",
                  num_classes=1000, class_act="softmax", recon_act="sigmoid",
-                 validity_shape=(1, 8, 8), validity_act=None,
+                 validity_shape=(1, 8, 8, 8), validity_act=None,
                 num_class_embeds=None, cond_drop_prob=0.5,
-                embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
+                embed_dim=96, depths=[2, 2, 2, 1], num_heads=[3, 6, 12, 24],
                 window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True, patch_norm=True,
                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.0,
                 use_checkpoint=False, pretrained_window_sizes=0,
@@ -312,7 +313,7 @@ class SwinMultitask(nn.Module):
                                                     dim_scale=self.patch_size,
                                                     norm_layer=self.model_norm_layer
                                                     )
-        out_conv = Output2D(self.embed_dim // 2, decode_out_chans, act=decode_out_act)
+        out_conv = Output3D(self.embed_dim // 2, decode_out_chans, act=decode_out_act)
         return seg_final_layer, seg_final_expanding, out_conv
     
     def get_class_head(self, num_classes, class_act):
@@ -335,7 +336,7 @@ class SwinMultitask(nn.Module):
         common_kwarg_dict = self.get_layer_config_dict(self.feature_dim, self.feature_hw, i_layer)
         validity_layer = BasicLayerV2(**common_kwarg_dict)
         validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
-        validity_out_conv = ConvBlock2D(self.validity_dim, validity_shape[0],
+        validity_out_conv = ConvBlock3D(self.validity_dim, validity_shape[0],
                                         kernel_size=1, act=validity_act, norm=nn.Identity)
         validity_head = nn.Sequential(
             validity_layer,
