@@ -333,12 +333,14 @@ class SwinMultitask(nn.Module):
         i_layer = 0
         h, w = self.feature_hw
         common_kwarg_dict = self.get_layer_config_dict(self.feature_dim, self.feature_hw, i_layer)
-        validity_layer = BasicLayerV2(**common_kwarg_dict)
+        validity_layer_1 = BasicLayerV2(**common_kwarg_dict)
+        validity_layer_2 = BasicLayerV2(**common_kwarg_dict)
         validity_mlp = Mlp(self.feature_dim, hidden_features=self.feature_dim // 2,
                            out_features=validity_shape[0], act_layer=get_act(self.model_act_layer))
         validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
         validity_head = nn.Sequential(
-            validity_layer,
+            validity_layer_1,
+            validity_layer_2,
             validity_mlp,
             Rearrange('b (h w) c -> b c h w', h=h, w=w),
             validity_avg_pool,
