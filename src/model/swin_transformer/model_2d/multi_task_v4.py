@@ -4,7 +4,7 @@ import numpy as np
 from functools import partial
 from torch import nn
 from einops.layers.torch import Rearrange
-from .swin_layers import Output2D, get_act, InstanceNormChannelLast
+from .swin_layers import Output2D, get_act, InstanceNormChannelLast, Mlp
 from .swin_layers_diffusion_2d import Attention, AttentionPool1d, SkipLinear, RMSNorm
 from .swin_layers_diffusion_2d import BasicLayerV1, BasicLayerV2
 from .swin_layers_diffusion_2d import default, prob_mask_like
@@ -334,13 +334,13 @@ class SwinMultitask(nn.Module):
         h, w = self.feature_hw
         common_kwarg_dict = self.get_layer_config_dict(self.feature_dim, self.feature_hw, i_layer)
         validity_layer = BasicLayerV2(**common_kwarg_dict)
+        validity_mlp = Mlp(self.feature_dim, hidden_features=self.feature_dim // 2, 
+                           out_features=self.validity_dim, act_layer=get_act(self.model_act_layer))
         validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
-        validity_out_conv = ConvBlock2D(self.validity_dim, validity_shape[0],
-                                        kernel_size=1, act=validity_act, norm=nn.Identity)
         validity_head = nn.Sequential(
             validity_layer,
+            validity_mlp,
             Rearrange('b (h w) c -> b c h w', h=h, w=w),
             validity_avg_pool,
-            validity_out_conv
         )
         return validity_head
