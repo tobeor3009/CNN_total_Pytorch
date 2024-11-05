@@ -151,12 +151,12 @@ def get_propotional_bce_focal_loss(y_pred, y_true):
     focal_loss = get_focal_loss(y_pred, y_true)
     return (propotional_loss + bce_loss + focal_loss) / 3
 
-def final_loss_fn(y_pred, y_true, region_loss):
+def final_loss_fn(y_pred, y_true, region_loss, per_image=False):
     C = y_true.shape[1]
     if C > 1:
         y_pred = y_pred[:, 1:]
         y_true = y_true[:, 1:]
-    return region_loss(y_pred, y_true)
+    return region_loss(y_pred, y_true, per_image=per_image)
 
 def get_loss_fn(loss_select, per_image=False):
     if loss_select == "dice":
