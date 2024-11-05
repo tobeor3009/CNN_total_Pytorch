@@ -103,60 +103,60 @@ def get_propotional_loss(y_pred, y_true, beta=0.3,
         return torch.mean(score_per_image)
 
 
-def get_dice_bce_loss(y_pred, y_true):
-    dice_loss = get_dice_loss(y_pred, y_true)
+def get_dice_bce_loss(y_pred, y_true, log=False, per_image=False):
+    dice_loss = get_dice_loss(y_pred, y_true, log=log, per_image=per_image)
     bce_loss = get_bce_loss(y_pred, y_true)
     return (dice_loss + bce_loss) / 2
 
-def get_tversky_bce_loss(y_pred, y_true):
-    tversky_loss = get_tversky_loss(y_pred, y_true)
+def get_tversky_bce_loss(y_pred, y_true, log=False, per_image=False):
+    tversky_loss = get_tversky_loss(y_pred, y_true, log=log, per_image=per_image)
     bce_loss = get_bce_loss(y_pred, y_true)
     return (tversky_loss + bce_loss) / 2
 
-def get_propotional_bce_loss(y_pred, y_true):
-    propotional_loss = get_propotional_loss(y_pred, y_true)
+def get_propotional_bce_loss(y_pred, y_true, log=False, per_image=False):
+    propotional_loss = get_propotional_loss(y_pred, y_true, log=log, per_image=per_image)
     bce_loss = get_bce_loss(y_pred, y_true)
     return (propotional_loss + bce_loss) / 2
 
-def get_dice_focal_loss(y_pred, y_true):
-    dice_loss = get_dice_loss(y_pred, y_true)
+def get_dice_focal_loss(y_pred, y_true, log=False, per_image=False):
+    dice_loss = get_dice_loss(y_pred, y_true, log=log, per_image=per_image)
     focal_loss = get_focal_loss(y_pred, y_true)
     return (dice_loss + focal_loss) / 2
 
-def get_tversky_focal_loss(y_pred, y_true):
-    tversky_loss = get_tversky_loss(y_pred, y_true)
+def get_tversky_focal_loss(y_pred, y_true, log=False, per_image=False):
+    tversky_loss = get_tversky_loss(y_pred, y_true, log=log, per_image=per_image)
     focal_loss = get_focal_loss(y_pred, y_true)
     return (tversky_loss + focal_loss) / 2
 
-def get_propotional_focal_loss(y_pred, y_true):
-    propotional_loss = get_propotional_loss(y_pred, y_true)
+def get_propotional_focal_loss(y_pred, y_true, log=False, per_image=False):
+    propotional_loss = get_propotional_loss(y_pred, y_true, log=log, per_image=per_image)
     focal_loss = get_focal_loss(y_pred, y_true)
     return (propotional_loss + focal_loss) / 2
 
-def get_dice_bce_focal_loss(y_pred, y_true):
-    dice_loss = get_dice_loss(y_pred, y_true)
+def get_dice_bce_focal_loss(y_pred, y_true, log=False, per_image=False):
+    dice_loss = get_dice_loss(y_pred, y_true, log=log, per_image=per_image)
     bce_loss = get_bce_loss(y_pred, y_true)
     focal_loss = get_focal_loss(y_pred, y_true)
     return (dice_loss + bce_loss + focal_loss) / 3
 
-def get_tversky_bce_focal_loss(y_pred, y_true):
-    tversky_loss = get_tversky_loss(y_pred, y_true)
+def get_tversky_bce_focal_loss(y_pred, y_true, log=False, per_image=False):
+    tversky_loss = get_tversky_loss(y_pred, y_true, log=log, per_image=per_image)
     bce_loss = get_bce_loss(y_pred, y_true)
     focal_loss = get_focal_loss(y_pred, y_true)
     return (tversky_loss + bce_loss + focal_loss) / 3
 
-def get_propotional_bce_focal_loss(y_pred, y_true):
-    propotional_loss = get_propotional_loss(y_pred, y_true)
+def get_propotional_bce_focal_loss(y_pred, y_true, log=False, per_image=False):
+    propotional_loss = get_propotional_loss(y_pred, y_true, log=log, per_image=per_image)
     bce_loss = get_bce_loss(y_pred, y_true)
     focal_loss = get_focal_loss(y_pred, y_true)
     return (propotional_loss + bce_loss + focal_loss) / 3
 
-def final_loss_fn(y_pred, y_true, region_loss, per_image=False):
+def final_loss_fn(y_pred, y_true, region_loss, log=False, per_image=False):
     C = y_true.shape[1]
     if C > 1:
         y_pred = y_pred[:, 1:]
         y_true = y_true[:, 1:]
-    return region_loss(y_pred, y_true, per_image=per_image)
+    return region_loss(y_pred, y_true, log=log, per_image=per_image)
 
 def get_loss_fn(loss_select, per_image=False):
     if loss_select == "dice":
