@@ -4,6 +4,9 @@ from functools import partial
 from .util import UnexpectedBehaviorException
 from ..util.fold_unfold import extract_patch_tensor
 
+DEFAULT_DATA_RANGE = 1.0
+DEFAULT_REDUCTION = "mean"
+
 def get_filter_fn(win_size, img_dim):
     if img_dim == 2:
         filter_fn = F.avg_pool2d
@@ -16,10 +19,10 @@ def structural_similarity_torch(
     im1,
     im2,
     win_size=None,
-    data_range=1.0,
+    data_range=DEFAULT_DATA_RANGE,
     full=False,
     filter_fn=None,
-    reduction='mean'
+    reduction=DEFAULT_REDUCTION
 ):
     batch_size, image_channel, *img_size_list = im1.shape
     img_dim = len(img_size_list)
@@ -87,7 +90,7 @@ def structural_similarity_torch(
         return mssim
 
 class SSIM(torch.nn.Module):
-    def __init__(self, win_size=None, data_range=1.0, full=False, reduction="mean"):
+    def __init__(self, win_size=None, data_range=DEFAULT_DATA_RANGE, full=False, reduction=DEFAULT_REDUCTION):
         super(SSIM, self).__init__()
         self.win_size = win_size
         self.data_range = data_range
@@ -103,7 +106,7 @@ def get_ssim(img1, img2, win_size=None, data_range=1.0, full=False, reduction="m
     return structural_similarity_torch(img1, img2, win_size=win_size,
                                        data_range=data_range, full=full, reduction=reduction)
 
-def peak_signal_noise_ratio_pytorch(image_true, image_test, data_range=None):
+def peak_signal_noise_ratio_pytorch(image_true, image_test, data_range=DEFAULT_DATA_RANGE, reduction=DEFAULT_REDUCTION):
     batch_size, image_channel, *img_size_list = image_true.shape
     img_dim = len(img_size_list)
     target_mean_dim_tuple = tuple(range(2, 2 + img_dim))
@@ -116,21 +119,25 @@ def peak_signal_noise_ratio_pytorch(image_true, image_test, data_range=None):
     err = (image_true - image_test) ** 2
     err = err.mean(target_mean_dim_tuple)
     psnr_score = 10 * torch.log10((data_range ** 2) / err)
-    return psnr_score.mean()
+    if reduction == "mean":
+        psnr_score = psnr_score.mean()
+    elif reduction == "none":
+        psnr_score = psnr_score.mean(1)
+    return psnr_score
 
 class PNSR(torch.nn.Module):
-    def __init__(self, data_range=1.0):
+    def __init__(self, data_range=DEFAULT_DATA_RANGE, reduction=DEFAULT_REDUCTION):
         super(SSIM, self).__init__()
         self.data_range = data_range
-
+        self.reduction = reduction
     def forward(self, img1, img2):
-        return peak_signal_noise_ratio_pytorch(img1, img2, self.data_range)
+        return peak_signal_noise_ratio_pytorch(img1, img2, data_range=self.data_range, reduction=self.reduction)
 
 
-def get_psnr(img1, img2, data_range=1.0):
-    return peak_signal_noise_ratio_pytorch(img1, img2, data_range)
+def get_psnr(img1, img2, data_range=DEFAULT_DATA_RANGE, reduction=DEFAULT_REDUCTION):
+    return peak_signal_noise_ratio_pytorch(img1, img2, data_range=data_range, reduction=reduction)
 
-def get_max_ssim_loss_fn(y_pred, y_true, image_to_patch_ratio=4):
+def get_max_ssim_loss_fn(y_pred, y_true, data_range=DEFAULT_DATA_RANGE, image_to_patch_ratio=4):
     batch_size, _, *image_size_list = y_pred.shape
     
     image_size = int(image_size_list[-1])
@@ -142,7 +149,7 @@ def get_max_ssim_loss_fn(y_pred, y_true, image_to_patch_ratio=4):
     y_pred_patch = extract_patch_tensor(y_pred, patch_size, stride, pad_size=0)
     y_true_patch = extract_patch_tensor(y_true, patch_size, stride, pad_size=0)
 
-    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, reduction="none")
+    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, data_range=data_range, reduction="none")
     ssim_score_patch = ssim_score_patch.view(batch_size, num_patch ** 2)
     ssim_min_k_score_patch = torch.topk(ssim_score_patch, num_patch, dim=1, largest=False).values
     # ssim_min_k_score_patch.shape = [B, num_patch]
@@ -150,3 +157,21 @@ def get_max_ssim_loss_fn(y_pred, y_true, image_to_patch_ratio=4):
     ssim_max_loss = ssim_max_k_loss_patch.mean()
     return ssim_max_loss
 
+def get_min_psnr_fn(y_pred, y_true, data_range=DEFAULT_DATA_RANGE, image_to_patch_ratio=4):
+    batch_size, _, *image_size_list = y_pred.shape
+    
+    image_size = int(image_size_list[-1])
+    patch_size = image_size // image_to_patch_ratio
+    stride = patch_size // 4
+    num_patch = int((image_size - patch_size) / stride) + 1
+    
+    # y_pred_patch.shape = [B * (num_patch ** 2), C, H, W]
+    y_pred_patch = extract_patch_tensor(y_pred, patch_size, stride, pad_size=0)
+    y_true_patch = extract_patch_tensor(y_true, patch_size, stride, pad_size=0)
+
+    psnr_score_patch = get_psnr(y_pred_patch, y_true_patch, data_range=data_range, reduction="none")
+    psnr_score_patch = psnr_score_patch.view(batch_size, num_patch ** 2)
+    psnr_min_k_score_patch = torch.topk(psnr_score_patch, num_patch, dim=1, largest=False).values
+    # ssim_min_k_score_patch.shape = [B, num_patch]
+    psnr_min_k_score = psnr_min_k_score_patch.mean()
+    return psnr_min_k_score
