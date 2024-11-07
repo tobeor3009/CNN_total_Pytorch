@@ -68,7 +68,7 @@ def get_tversky_loss(y_pred, y_true, beta=0.7,
     else:
         return torch.mean(dice_score_per_image)
 
-def get_propotional_loss(y_pred, y_true, beta=0.3,
+def get_propotional_loss(y_pred, y_true, beta=0.7,
                          log=False, per_image=False, smooth=SMOOTH):
     
     y_pred_rev, y_true_rev = get_rev(y_pred, y_true)

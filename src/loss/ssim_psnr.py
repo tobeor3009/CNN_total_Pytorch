@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from functools import partial
 from .util import UnexpectedBehaviorException
+from ..util.fold_unfold import extract_patch_tensor
 
 def get_filter_fn(win_size, img_dim):
     if img_dim == 2:
@@ -17,7 +18,8 @@ def structural_similarity_torch(
     win_size=None,
     data_range=1.0,
     full=False,
-    filter_fn=None
+    filter_fn=None,
+    reduction='mean'
 ):
     batch_size, image_channel, *img_size_list = im1.shape
     img_dim = len(img_size_list)
@@ -73,29 +75,33 @@ def structural_similarity_torch(
     image_crop_slice_tuple = tuple(crop_slice for _  in target_mean_dim_tuple)
     index_tuple = (all_slice, all_slice, *image_crop_slice_tuple)
     cropped_result = S[index_tuple]
-    
-    mssim = cropped_result.mean(target_mean_dim_tuple).mean()
-    
+
+    mssim = cropped_result.mean(target_mean_dim_tuple)
+    if reduction == "mean":
+        mssim = mssim.mean()
+    elif reduction == "none":
+        mssim = mssim.mean(1)
     if full:
         return mssim, S
     else:
         return mssim
 
 class SSIM(torch.nn.Module):
-    def __init__(self, win_size=None, data_range=1.0, full=False):
+    def __init__(self, win_size=None, data_range=1.0, full=False, reduction="mean"):
         super(SSIM, self).__init__()
         self.win_size = win_size
         self.data_range = data_range
         self.full = full
+        self.reduction = reduction
 
     def forward(self, img1, img2):
-        return structural_similarity_torch(img1, img2, self.win_size, 
-                                           self.data_range, self.full)
+        return structural_similarity_torch(img1, img2, win_size=self.win_size,
+                                           data_range=self.data_range, full=self.full, reduction=self.reduction)
 
 
-def get_ssim(img1, img2, win_size=None, data_range=1.0, full=False):
-    return structural_similarity_torch(img1, img2, win_size,
-                                       data_range, full)
+def get_ssim(img1, img2, win_size=None, data_range=1.0, full=False, reduction="mean"):
+    return structural_similarity_torch(img1, img2, win_size=win_size,
+                                       data_range=data_range, full=full, reduction=reduction)
 
 def peak_signal_noise_ratio_pytorch(image_true, image_test, data_range=None):
     batch_size, image_channel, *img_size_list = image_true.shape
@@ -123,3 +129,24 @@ class PNSR(torch.nn.Module):
 
 def get_psnr(img1, img2, data_range=1.0):
     return peak_signal_noise_ratio_pytorch(img1, img2, data_range)
+
+def get_max_ssim_loss_fn(y_pred, y_true, image_to_patch_ratio=4):
+    batch_size, _, *image_size_list = y_pred.shape
+    
+    image_size = int(image_size_list[-1])
+    patch_size = image_size // image_to_patch_ratio
+    stride = patch_size // 4
+    num_patch = int((image_size - patch_size) / stride) + 1
+    
+    # y_pred_patch.shape = [B * (num_patch ** 2), C, H, W]
+    y_pred_patch = extract_patch_tensor(y_pred, patch_size, stride, pad_size=0)
+    y_true_patch = extract_patch_tensor(y_true, patch_size, stride, pad_size=0)
+
+    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, reduction="none")
+    ssim_score_patch = ssim_score_patch.view(batch_size, num_patch ** 2)
+    ssim_min_k_score_patch = torch.topk(ssim_score_patch, num_patch, dim=1, largest=False).values
+    # ssim_min_k_score_patch.shape = [B, num_patch]
+    ssim_max_k_loss_patch = -ssim_min_k_score_patch
+    ssim_max_loss = ssim_max_k_loss_patch.mean()
+    return ssim_max_loss
+
