@@ -9,6 +9,7 @@ from ..util.fold_unfold import extract_patch_tensor
 
 DEFAULT_DATA_RANGE = 1.0
 DEFAULT_REDUCTION = "mean"
+SSIM_VERSION_LIST = ["pytorch", "skimages"]
 # code from: https://github.com/Po-Hsun-Su/pytorch-ssim/blob/master/pytorch_ssim/__init__.py
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size//2)**2/float(2*sigma**2)) for x in range(window_size)])
@@ -19,6 +20,14 @@ def create_window(window_size, channel, img_dim):
     _nD_window = _1D_window.mm(_1D_window.t()).float()[tuple(None for _ in range(img_dim))]
     window = Variable(_nD_window.expand(channel, 1, *(window_size for _ in range(img_dim))).contiguous())
     return window
+
+def get_conv_fn(window_size, channel, img_dim, device):
+    window = create_window(window_size, channel, img_dim).to(device)
+    if img_dim == 2:
+        conv_fn = F.conv2d
+    else:
+        conv_fn = F.conv3d
+    return partial(conv_fn, weight=window, padding=window_size // 2, groups=channel)
 
 def _ssim(img1, img2, window, window_size, channel, conv_fn, img_dim, data_range, reduction):
     
@@ -74,7 +83,7 @@ def structural_similarity_torch(
     win_size=None,
     data_range=DEFAULT_DATA_RANGE,
     full=False,
-    filter_fn=None,
+    filter_fn="avg",
     reduction=DEFAULT_REDUCTION
 ):
     batch_size, image_channel, *img_size_list = im1.shape
@@ -97,9 +106,11 @@ def structural_similarity_torch(
     C2 = (K2 * R) ** 2
     
     # Gaussian weights or uniform filter
-    if filter_fn is None:
+    if filter_fn == "avg":
         filter_fn = get_filter_fn(win_size, img_dim)
-
+    if filter_fn == "conv":
+        filter_fn = get_conv_fn(win_size, image_channel, img_dim, im1.device)
+        
     NP = win_size ** img_dim
     conv_norm = NP / (NP - 1)
     # Compute means
@@ -143,26 +154,29 @@ def structural_similarity_torch(
         return mssim
 
 class SSIM(torch.nn.Module):
-    def __init__(self, win_size=None, data_range=DEFAULT_DATA_RANGE, full=False, reduction=DEFAULT_REDUCTION):
+    def __init__(self, win_size=None, data_range=DEFAULT_DATA_RANGE, full=False, filter_fn="avg", reduction=DEFAULT_REDUCTION):
         super(SSIM, self).__init__()
         self.win_size = win_size
         self.data_range = data_range
         self.full = full
+        self.filter_fn = filter_fn
         self.reduction = reduction
 
     def forward(self, img1, img2):
         return structural_similarity_torch(img1, img2, win_size=self.win_size,
-                                           data_range=self.data_range, full=self.full, reduction=self.reduction)
+                                           data_range=self.data_range, full=self.full, 
+                                           filter_fn=self.filter_fn, reduction=self.reduction)
 
 
-def get_ssim(img1, img2, win_size=None, data_range=1.0, full=False, reduction="mean", version="pytorch"):
+def get_ssim(img1, img2, win_size=None, data_range=1.0, full=False, filter_fn="avg", reduction="mean", version="pytorch"):
     
+    assert version in SSIM_VERSION_LIST, f"support ssim version is {SSIM_VERSION_LIST}"
     if version == "pytorch":
+        return get_ssim_pytorch(img1, img2, window_size=win_size,
+                                data_range=data_range, reduction=reduction)
+    elif version == "skimages":
         return structural_similarity_torch(img1, img2, win_size=win_size,
-                                          data_range=data_range, full=full, reduction=reduction)
-    else:
-        return get_ssim_pytorch(img1, img2, win_size=win_size,
-                                data_range=data_range, full=full, reduction=reduction)
+                                          data_range=data_range, full=full, filter_fn=filter_fn, reduction=reduction)
 
 def peak_signal_noise_ratio_pytorch(image_true, image_test, data_range=DEFAULT_DATA_RANGE, reduction=DEFAULT_REDUCTION):
     batch_size, image_channel, *img_size_list = image_true.shape
@@ -207,7 +221,7 @@ def get_max_ssim_loss_fn(y_pred, y_true, data_range=DEFAULT_DATA_RANGE, image_to
     y_pred_patch = extract_patch_tensor(y_pred, patch_size, stride, pad_size=0)
     y_true_patch = extract_patch_tensor(y_true, patch_size, stride, pad_size=0)
 
-    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, data_range=data_range, reduction="none", version="pytorch")
+    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, data_range=data_range, reduction="none", filter_fn="conv", version="skimages")
     ssim_score_patch = ssim_score_patch.view(batch_size, num_patch ** 2)
     ssim_min_k_score_patch = torch.topk(ssim_score_patch, num_patch, dim=1, largest=False).values
     # ssim_min_k_score_patch.shape = [B, num_patch]
