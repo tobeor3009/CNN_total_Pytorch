@@ -1,11 +1,64 @@
+from math import exp
 import torch
 import torch.nn.functional as F
 from functools import partial
+from torch.autograd import Variable
+
 from .util import UnexpectedBehaviorException
 from ..util.fold_unfold import extract_patch_tensor
 
 DEFAULT_DATA_RANGE = 1.0
 DEFAULT_REDUCTION = "mean"
+# code from: https://github.com/Po-Hsun-Su/pytorch-ssim/blob/master/pytorch_ssim/__init__.py
+def gaussian(window_size, sigma):
+    gauss = torch.Tensor([exp(-(x - window_size//2)**2/float(2*sigma**2)) for x in range(window_size)])
+    return gauss/gauss.sum()
+
+def create_window(window_size, channel, img_dim):
+    _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
+    _nD_window = _1D_window.mm(_1D_window.t()).float()[tuple(None for _ in range(img_dim))]
+    window = Variable(_nD_window.expand(channel, 1, *(window_size for _ in range(img_dim))).contiguous())
+    return window
+
+def _ssim(img1, img2, window, window_size, channel, conv_fn, img_dim, data_range, reduction):
+    
+    target_mean_dim_tuple = tuple(range(2, 2 + img_dim))
+    mu1 = conv_fn(img1, window, padding = window_size//2, groups = channel)
+    mu2 = conv_fn(img2, window, padding = window_size//2, groups = channel)
+
+    mu1_sq = mu1.pow(2)
+    mu2_sq = mu2.pow(2)
+    mu1_mu2 = mu1*mu2
+
+    sigma1_sq = conv_fn(img1*img1, window, padding = window_size//2, groups = channel) - mu1_sq
+    sigma2_sq = conv_fn(img2*img2, window, padding = window_size//2, groups = channel) - mu2_sq
+    sigma12 = conv_fn(img1*img2, window, padding = window_size//2, groups = channel) - mu1_mu2
+
+    C1 = (0.01 * data_range) **2
+    C2 = (0.03 * data_range) **2
+
+    ssim_map = ((2*mu1_mu2 + C1)*(2*sigma12 + C2))/((mu1_sq + mu2_sq + C1)*(sigma1_sq + sigma2_sq + C2))
+    ssim_map = ssim_map.mean(target_mean_dim_tuple)
+    if reduction == "mean":
+        ssim_map = ssim_map.mean()
+    elif reduction == "none":
+        ssim_map = ssim_map.mean(1)
+    return ssim_map
+
+def get_ssim_pytorch(img1, img2, window_size = 7, data_range=DEFAULT_DATA_RANGE, reductcon=DEFAULT_REDUCTION):
+    (_, channel, *img_size_list) = img1.size()
+    img_dim = len(img_size_list)
+    if img_dim == 2:
+        conv_fn = F.conv2d
+    else:
+        conv_fn = F.conv3d
+    window = create_window(window_size, channel, img_dim)
+    
+    if img1.is_cuda:
+        window = window.cuda(img1.get_device())
+    window = window.type_as(img1)
+    
+    return _ssim(img1, img2, window, window_size, channel, conv_fn, img_dim, data_range, reductcon)
 
 def get_filter_fn(win_size, img_dim):
     if img_dim == 2:
@@ -102,9 +155,14 @@ class SSIM(torch.nn.Module):
                                            data_range=self.data_range, full=self.full, reduction=self.reduction)
 
 
-def get_ssim(img1, img2, win_size=None, data_range=1.0, full=False, reduction="mean"):
-    return structural_similarity_torch(img1, img2, win_size=win_size,
-                                       data_range=data_range, full=full, reduction=reduction)
+def get_ssim(img1, img2, win_size=None, data_range=1.0, full=False, reduction="mean", version="pytorch"):
+    
+    if version == "pytorch":
+        return structural_similarity_torch(img1, img2, win_size=win_size,
+                                          data_range=data_range, full=full, reduction=reduction)
+    else:
+        return get_ssim_pytorch(img1, img2, win_size=win_size,
+                                data_range=data_range, full=full, reduction=reduction)
 
 def peak_signal_noise_ratio_pytorch(image_true, image_test, data_range=DEFAULT_DATA_RANGE, reduction=DEFAULT_REDUCTION):
     batch_size, image_channel, *img_size_list = image_true.shape
@@ -149,7 +207,7 @@ def get_max_ssim_loss_fn(y_pred, y_true, data_range=DEFAULT_DATA_RANGE, image_to
     y_pred_patch = extract_patch_tensor(y_pred, patch_size, stride, pad_size=0)
     y_true_patch = extract_patch_tensor(y_true, patch_size, stride, pad_size=0)
 
-    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, data_range=data_range, reduction="none")
+    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, data_range=data_range, reduction="none", version="pytorch")
     ssim_score_patch = ssim_score_patch.view(batch_size, num_patch ** 2)
     ssim_min_k_score_patch = torch.topk(ssim_score_patch, num_patch, dim=1, largest=False).values
     # ssim_min_k_score_patch.shape = [B, num_patch]
