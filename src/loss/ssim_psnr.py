@@ -139,7 +139,7 @@ def structural_similarity_torch(
     all_slice = slice(None, None)
     crop_slice = slice(pad, -pad)
     image_crop_slice_tuple = tuple(crop_slice for _  in target_mean_dim_tuple)
-    index_tuple = (all_slice, all_slice, *image_crop_slice_tuple)
+    index_tuple = (all_slice, all_slice, *image_crop_slice_tuple[:-1])
     cropped_result = S[index_tuple]
 
     if reduction == "mean":
