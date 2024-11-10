@@ -276,8 +276,7 @@ class SwinMultitask(nn.Module):
         feature_dim = self.feature_dim
         common_kwarg_dict = self.get_layer_config_dict(feature_dim, self.feature_hw, i_layer)
         mid_layer_1 = BasicLayerV2(**common_kwarg_dict)
-        # mid_attn_norm_layer = "instance" if self.norm_layer == "instance" else "rms"
-        mid_attn_norm_layer = "rms"
+        mid_attn_norm_layer = "instance" if self.norm_layer == "instance" else "rms"
         # TBD: self.attn_drop_rate 추가할지 고민
         mid_attn = Attention(dim=feature_dim, num_heads=self.num_heads[i_layer],
                             use_checkpoint=self.use_checkpoint[i_layer], norm_layer=mid_attn_norm_layer)
