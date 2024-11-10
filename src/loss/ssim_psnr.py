@@ -54,7 +54,7 @@ def _ssim(img1, img2, window, window_size, channel, conv_fn, img_dim, data_range
         ssim_map = ssim_map.mean(1)
     return ssim_map
 
-def get_ssim_pytorch(img1, img2, window_size = 7, data_range=DEFAULT_DATA_RANGE, reductcon=DEFAULT_REDUCTION):
+def get_ssim_pytorch(img1, img2, window_size = 7, data_range=DEFAULT_DATA_RANGE, reduction=DEFAULT_REDUCTION):
     (_, channel, *img_size_list) = img1.size()
     img_dim = len(img_size_list)
     if img_dim == 2:
@@ -67,7 +67,7 @@ def get_ssim_pytorch(img1, img2, window_size = 7, data_range=DEFAULT_DATA_RANGE,
         window = window.cuda(img1.get_device())
     window = window.type_as(img1)
     
-    return _ssim(img1, img2, window, window_size, channel, conv_fn, img_dim, data_range, reductcon)
+    return _ssim(img1, img2, window, window_size, channel, conv_fn, img_dim, data_range, reduction)
 
 def get_filter_fn(win_size, img_dim):
     if img_dim == 2:
