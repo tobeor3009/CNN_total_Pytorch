@@ -14,7 +14,7 @@ from einops import rearrange, repeat
 
 class SwinMultitask(nn.Module):
     def __init__(self, img_size=512, patch_size=4, in_chans=1,
-                 norm_layer="instance", act_layer="relu6",
+                 norm_layer="instance", act_layer="silu",
                  seg_out_chans=2, seg_out_act="softmax",
                  num_classes=1000, class_act="softmax", recon_act="sigmoid",
                  validity_shape=(1, 8, 8), validity_act=None,
@@ -276,7 +276,8 @@ class SwinMultitask(nn.Module):
         feature_dim = self.feature_dim
         common_kwarg_dict = self.get_layer_config_dict(feature_dim, self.feature_hw, i_layer)
         mid_layer_1 = BasicLayerV2(**common_kwarg_dict)
-        mid_attn_norm_layer = "instance" if self.norm_layer == "instance" else "rms"
+        # mid_attn_norm_layer = "instance" if self.norm_layer == "instance" else "rms"
+        mid_attn_norm_layer = "rms"
         # TBD: self.attn_drop_rate 추가할지 고민
         mid_attn = Attention(dim=feature_dim, num_heads=self.num_heads[i_layer],
                             use_checkpoint=self.use_checkpoint[i_layer], norm_layer=mid_attn_norm_layer)

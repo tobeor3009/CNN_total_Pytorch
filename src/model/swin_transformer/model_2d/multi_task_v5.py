@@ -14,7 +14,7 @@ from einops import rearrange, repeat
 
 class SwinMultitask(nn.Module):
     def __init__(self, img_size=512, patch_size=4, in_chans=1,
-                 norm_layer="instance", act_layer="relu6",
+                 norm_layer="instance", act_layer="silu",
                  seg_out_chans=2, seg_out_act="softmax",
                  num_classes=1000, class_act="softmax", recon_act="sigmoid",
                  validity_shape=(1, 8, 8), validity_act=None,
