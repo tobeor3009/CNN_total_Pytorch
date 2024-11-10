@@ -31,7 +31,7 @@ def get_conv_fn(window_size, channel, img_dim, device):
 
 def _ssim(img1, img2, window, window_size, channel, conv_fn, img_dim, data_range, reduction):
     
-    target_mean_dim_tuple = tuple(range(2, 2 + img_dim))
+    target_mean_dim_tuple = tuple(range(1, 2 + img_dim))
     mu1 = conv_fn(img1, window, padding = window_size//2, groups = channel)
     mu2 = conv_fn(img2, window, padding = window_size//2, groups = channel)
 
@@ -47,11 +47,10 @@ def _ssim(img1, img2, window, window_size, channel, conv_fn, img_dim, data_range
     C2 = (0.03 * data_range) **2
 
     ssim_map = ((2*mu1_mu2 + C1)*(2*sigma12 + C2))/((mu1_sq + mu2_sq + C1)*(sigma1_sq + sigma2_sq + C2))
-    ssim_map = ssim_map.mean(target_mean_dim_tuple)
     if reduction == "mean":
         ssim_map = ssim_map.mean()
     elif reduction == "none":
-        ssim_map = ssim_map.mean(1)
+        ssim_map = ssim_map.mean(target_mean_dim_tuple)
     return ssim_map
 
 def get_ssim_pytorch(img1, img2, window_size = 7, data_range=DEFAULT_DATA_RANGE, reduction=DEFAULT_REDUCTION):
@@ -88,7 +87,7 @@ def structural_similarity_torch(
 ):
     batch_size, image_channel, *img_size_list = im1.shape
     img_dim = len(img_size_list)
-    target_mean_dim_tuple = tuple(range(2, 2 + img_dim))
+    target_mean_dim_tuple = tuple(range(1, 2 + img_dim))
 
     # Ensure the input tensors are float32
     im1 = im1.float()
@@ -143,11 +142,10 @@ def structural_similarity_torch(
     index_tuple = (all_slice, all_slice, *image_crop_slice_tuple)
     cropped_result = S[index_tuple]
 
-    mssim = cropped_result.mean(target_mean_dim_tuple)
     if reduction == "mean":
-        mssim = mssim.mean()
+        mssim = cropped_result.mean()
     elif reduction == "none":
-        mssim = mssim.mean(1)
+        mssim = cropped_result.mean(target_mean_dim_tuple)
     if full:
         return mssim, S
     else:
@@ -221,7 +219,7 @@ def get_max_ssim_loss_fn(y_pred, y_true, data_range=DEFAULT_DATA_RANGE, filter_f
     y_pred_patch = extract_patch_tensor(y_pred, patch_size, stride, pad_size=0)
     y_true_patch = extract_patch_tensor(y_true, patch_size, stride, pad_size=0)
 
-    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, data_range=data_range, reduction="none", 
+    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, data_range=data_range, reduction="none",
                                 filter_fn=filter_fn, version=version)
     ssim_score_patch = ssim_score_patch.view(batch_size, num_patch ** 2)
     ssim_min_k_score_patch = torch.topk(ssim_score_patch, num_patch, dim=1, largest=False).values
