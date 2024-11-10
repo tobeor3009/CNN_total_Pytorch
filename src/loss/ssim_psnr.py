@@ -209,7 +209,7 @@ class PNSR(torch.nn.Module):
 def get_psnr(img1, img2, data_range=DEFAULT_DATA_RANGE, reduction=DEFAULT_REDUCTION):
     return peak_signal_noise_ratio_pytorch(img1, img2, data_range=data_range, reduction=reduction)
 
-def get_max_ssim_loss_fn(y_pred, y_true, data_range=DEFAULT_DATA_RANGE, image_to_patch_ratio=4):
+def get_max_ssim_loss_fn(y_pred, y_true, data_range=DEFAULT_DATA_RANGE, filter_fn="avg", version="skimages", image_to_patch_ratio=4):
     batch_size, _, *image_size_list = y_pred.shape
     
     image_size = int(image_size_list[-1])
@@ -221,7 +221,8 @@ def get_max_ssim_loss_fn(y_pred, y_true, data_range=DEFAULT_DATA_RANGE, image_to
     y_pred_patch = extract_patch_tensor(y_pred, patch_size, stride, pad_size=0)
     y_true_patch = extract_patch_tensor(y_true, patch_size, stride, pad_size=0)
 
-    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, data_range=data_range, reduction="none", filter_fn="conv", version="skimages")
+    ssim_score_patch = get_ssim(y_pred_patch, y_true_patch, data_range=data_range, reduction="none", 
+                                filter_fn=filter_fn, version=version)
     ssim_score_patch = ssim_score_patch.view(batch_size, num_patch ** 2)
     ssim_min_k_score_patch = torch.topk(ssim_score_patch, num_patch, dim=1, largest=False).values
     # ssim_min_k_score_patch.shape = [B, num_patch]
