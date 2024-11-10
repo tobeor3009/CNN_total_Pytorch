@@ -154,7 +154,7 @@ def structural_similarity_torch(
         return mssim
 
 class SSIM(torch.nn.Module):
-    def __init__(self, win_size=None, data_range=DEFAULT_DATA_RANGE, full=False, filter_fn="avg", reduction=DEFAULT_REDUCTION):
+    def __init__(self, win_size=7, data_range=DEFAULT_DATA_RANGE, full=False, filter_fn="avg", reduction=DEFAULT_REDUCTION):
         super(SSIM, self).__init__()
         self.win_size = win_size
         self.data_range = data_range
@@ -168,7 +168,7 @@ class SSIM(torch.nn.Module):
                                            filter_fn=self.filter_fn, reduction=self.reduction)
 
 
-def get_ssim(img1, img2, win_size=None, data_range=1.0, full=False, filter_fn="avg", reduction="mean", version="pytorch"):
+def get_ssim(img1, img2, win_size=7, data_range=DEFAULT_DATA_RANGE, full=False, filter_fn="avg", reduction=DEFAULT_REDUCTION, version="pytorch"):
     
     assert version in SSIM_VERSION_LIST, f"support ssim version is {SSIM_VERSION_LIST}"
     if version == "pytorch":
