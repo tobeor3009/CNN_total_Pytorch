@@ -240,9 +240,9 @@ def get_min_psnr_fn(y_pred, y_true, data_range=DEFAULT_DATA_RANGE, image_to_patc
     y_pred_patch = extract_patch_tensor(y_pred, patch_size, stride, pad_size=0)
     y_true_patch = extract_patch_tensor(y_true, patch_size, stride, pad_size=0)
 
-    psnr_score_patch = get_psnr(y_pred_patch, y_true_patch, data_range=data_range, reduction="none")
-    psnr_score_patch = psnr_score_patch.view(batch_size, num_patch ** 2)
-    psnr_min_k_score_patch = torch.topk(psnr_score_patch, num_patch, dim=1, largest=False).values
+    psnr_loss_patch = -get_psnr(y_pred_patch, y_true_patch, data_range=data_range, reduction="none") / 50
+    psnr_loss_patch = psnr_loss_patch.view(batch_size, num_patch ** 2)
+    psnr_max_k_loss_patch = torch.topk(psnr_loss_patch, num_patch, dim=1, largest=True).values
     # ssim_min_k_score_patch.shape = [B, num_patch]
-    psnr_min_k_score = psnr_min_k_score_patch.mean()
-    return psnr_min_k_score
+    psnr_max_k_loss = psnr_max_k_loss_patch.mean()
+    return psnr_max_k_loss
