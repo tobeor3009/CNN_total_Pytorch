@@ -200,12 +200,12 @@ def compute_loss_metric(model, x, y, y_label,
         _, y_pred = torch.max(y_pred, dim=1)
         y_pred = onehot_and_permute(y_pred, num_classes)
         dice_score = get_dice_score(y_pred, y)
-        accuracy = accuracy_metric(y_label_pred, y_label)
         metric_dict = {
             "loss": average_across_gpus(loss),
             "dice_score": average_across_gpus(dice_score)
         }
         if get_class:
+            accuracy = accuracy_metric(y_label_pred, y_label)
             metric_dict["accuracy"] = average_across_gpus(accuracy)
         if get_recon:
             metric_dict["recon_diff"] = average_across_gpus(recon_loss)
