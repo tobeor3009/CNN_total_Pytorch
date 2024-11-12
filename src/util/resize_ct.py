@@ -50,6 +50,7 @@ def resize_dicom_series(image, resize_factor_list):
     return new_img
 
 def write_series_to_path(target_image, original_sample_path, target_path, slice_thickness):
+    reader = sitk.ImageSeriesReader()
     tags_to_copy = ["0010|0010", # Patient Name
                     "0010|0020", # Patient ID
                     "0010|0030", # Patient Birth Date

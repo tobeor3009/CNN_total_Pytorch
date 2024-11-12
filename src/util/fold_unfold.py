@@ -272,3 +272,35 @@ class PatchSplitModel(nn.Module):
         else:
             y_pred_patches = x
         return loss_fn(y_pred_patches, y_patches)
+    
+
+def get_max_loss_from_patch(y_pred_patch, y_true_patch, loss_fn, num_patch):
+    loss_patch = loss_fn(y_pred_patch, y_true_patch)
+    loss_patch = loss_patch.view(-1, num_patch ** 2)
+    max_loss_patch = torch.topk(loss_patch, num_patch, dim=1, largest=True).values
+    # max_loss_patch.shape = [B, num_patch, C, H, W]
+    max_loss = max_loss_patch.mean()
+    return max_loss
+
+
+def get_max_loss_fn(y_pred, y_true, loss_fn, image_to_patch_ratio=4):
+    _, _, *image_size_list = y_pred.shape
+    
+    image_size = int(image_size_list[-1])
+    patch_size = image_size // image_to_patch_ratio
+    stride = patch_size // 4
+    num_patch = int((image_size - patch_size) / stride) + 3
+    
+    # y_pred_patch.shape = [B * (num_patch ** 2), C, H, W]
+    y_pred_patch = extract_patch_tensor(y_pred, patch_size, stride, pad_size=stride)
+    y_true_patch = extract_patch_tensor(y_true, patch_size, stride, pad_size=stride)
+    
+    if isinstance(loss_fn, (tuple, list)):
+        max_loss_list = []
+        for loss_fn_each in loss_fn:
+            max_loss = get_max_loss_from_patch(y_pred_patch, y_true_patch, loss_fn_each, num_patch)
+            max_loss_list.append(max_loss)
+        return max_loss_list
+    else:
+        max_loss = get_max_loss_from_patch(y_pred_patch, y_true_patch, loss_fn, num_patch)
+        return max_loss
