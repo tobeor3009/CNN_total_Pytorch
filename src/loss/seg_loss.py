@@ -203,6 +203,10 @@ def get_recon_loss_follow_seg(y_recon_pred, y_recon_gt, y_seg_pred, per_image=Fa
     return per_image
 
 def get_thresholded_seg_mask(y_pred, y_true, mask_threshold=0.5):
+    seg_channel = y_true.size(1)
+    if seg_channel > 1:
+        y_pred = y_pred[:, 1:]
+        y_true = y_true[:, 1:]
     if mask_threshold is not None:
         y_pred = (y_pred >= mask_threshold).float()
     else:
@@ -211,10 +215,6 @@ def get_thresholded_seg_mask(y_pred, y_true, mask_threshold=0.5):
 
 def get_dice_score(y_pred, y_true, mask_threshold=0.5, per_image=False, per_channel=False):
     y_pred, y_true = get_thresholded_seg_mask(y_pred, y_true, mask_threshold=mask_threshold)
-    seg_channel = y_true.size(1)
-    if seg_channel > 1:
-        y_pred = y_pred[:, 1:]
-        y_true = y_true[:, 1:]
     dice_loss = get_dice_loss(y_pred, y_true, log=False, per_image=per_image)
     dice_score = 1 - dice_loss
     if (not per_channel) and per_image:
