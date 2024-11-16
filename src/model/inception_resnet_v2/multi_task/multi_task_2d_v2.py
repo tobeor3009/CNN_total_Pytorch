@@ -17,7 +17,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                  norm="instance", act=DEFAULT_ACT, dropout_proba=0.05,
                  seg_act="softmax", class_act="softmax", recon_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_recon=False, get_validity=False,
-                 use_class_head_simple=True, use_decode_pixelshuffle_only=False,
+                 use_class_head_simple=True, include_upsample=False,
                  use_decode_simpleoutput=True, use_seg_conv_transpose=True,
                  use_checkpoint=False
                  ):
@@ -67,7 +67,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             else:
                 seg_decode_mode = "upsample_pixelshuffle"
             self.seg_module_list = self.get_decode_layers(decode_init_channel,
-                                                        skip_connect_channel_list, use_decode_pixelshuffle_only,
+                                                        skip_connect_channel_list, include_upsample,
                                                         use_decode_simpleoutput, seg_channels, seg_act, seg_decode_mode)
         if self.get_class:
             if use_class_head_simple:
@@ -83,7 +83,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         if self.get_recon:
             recon_decode_mode = "upsample_pixelshuffle"
             self.recon_module_list = self.get_decode_layers(decode_init_channel,
-                                                            skip_connect_channel_list, True,
+                                                            skip_connect_channel_list, include_upsample,
                                                             use_decode_simpleoutput, input_channel,
                                                             recon_act, recon_decode_mode)
         if get_validity:
@@ -94,7 +94,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                                                                             decode_init_channel)
         
     def get_decode_layers(self, decode_init_channel,
-                          skip_connect_channel_list, use_decode_pixelshuffle_only,
+                          skip_connect_channel_list, include_upsample,
                           use_decode_simpleoutput, decode_channels, decode_act, decode_mode):
         conv_block_common_arg_dict = self.conv_block_common_arg_dict
         init_conv = ConvBlock2D(in_channels=self.feature_channel_num,
@@ -118,7 +118,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                               skip_channels=skip_channels,
                                             out_channels=decode_out_channels,
                                             kernel_size=2, use_highway=False,
-                                            use_pixelshuffle_only=use_decode_pixelshuffle_only,
+                                            include_upsample=include_upsample,
                                             **conv_block_common_arg_dict)
 
 

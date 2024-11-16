@@ -81,12 +81,12 @@ class MultiDecoder2D(nn.Module):
 class MultiDecoder2D_V2(nn.Module):
     def __init__(self, in_channels, skip_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, dropout_proba=0.0, kernel_size=2,
-                 use_highway=False, use_pixelshuffle_only=False, include_conv_transpose=True):
+                 use_highway=False, include_upsample=False, include_conv_transpose=True):
         super().__init__()
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size)
         self.use_highway = use_highway
-        self.use_pixelshuffle_only = use_pixelshuffle_only
+        self.include_upsample = include_upsample
         self.include_conv_transpose = include_conv_transpose
         conv_before_pixel_shuffle = nn.Conv2d(in_channels=in_channels,
                                               out_channels=in_channels *
@@ -104,7 +104,7 @@ class MultiDecoder2D_V2(nn.Module):
             conv_after_pixel_shuffle
         )
         middle_channels = out_channels
-        if not self.use_pixelshuffle_only:
+        if include_upsample:
             upsample_layer = nn.Upsample(scale_factor=kernel_size,
                                          mode='bilinear')
             conv_after_upsample = nn.Conv2d(in_channels=in_channels,
@@ -129,7 +129,7 @@ class MultiDecoder2D_V2(nn.Module):
                                 norm=norm, act=act, bias=True, dropout_proba=dropout_proba)
     def forward(self, x, skip):
         pixel_shuffle = self.pixel_shuffle(x)
-        if not self.use_pixelshuffle_only:
+        if self.include_upsample:
             upsample = self.upsample(x)
             out = torch.cat([pixel_shuffle, upsample], dim=1)
         else:
@@ -225,12 +225,12 @@ class MultiDecoder3D(nn.Module):
 class MultiDecoder3D_V2(nn.Module):
     def __init__(self, in_channels, skip_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, dropout_proba=0.0, kernel_size=2,
-                 use_highway=False, use_pixelshuffle_only=False, include_conv_transpose=True):
+                 use_highway=False, include_upsample=False, include_conv_transpose=True):
         super().__init__()
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size)
         self.use_highway = use_highway
-        self.use_pixelshuffle_only = use_pixelshuffle_only
+        self.include_upsample = include_upsample
         self.include_conv_transpose = include_conv_transpose
         conv_before_pixel_shuffle = nn.Conv3d(in_channels=in_channels,
                                               out_channels=(in_channels *
@@ -246,7 +246,7 @@ class MultiDecoder3D_V2(nn.Module):
             conv_after_pixel_shuffle
         )
         middle_channels = out_channels
-        if not self.use_pixelshuffle_only:
+        if include_upsample:
             upsample_layer = nn.Upsample(scale_factor=kernel_size,
                                          mode='trilinear')
             conv_after_upsample = nn.Conv3d(in_channels=in_channels,
@@ -271,7 +271,7 @@ class MultiDecoder3D_V2(nn.Module):
                                 norm=norm, act=act, bias=True, dropout_proba=dropout_proba)
     def forward(self, x, skip):
         pixel_shuffle = self.pixel_shuffle(x)
-        if not self.use_pixelshuffle_only:
+        if self.include_upsample:
             upsample = self.upsample(x)
             out = torch.cat([pixel_shuffle, upsample], dim=1)
         else:
