@@ -140,22 +140,23 @@ class InceptionResNetV2_2D(nn.Module):
                                       norm=norm, act=last_act)
 
     def process_stem(self, x):
-        skip_connect_index = 0
         stem = x
+        output_list = []
         for index, (layer_name, layer) in enumerate(self.stem.items()):
             stem = layer(stem)
             # layer_name in ["stem_layer_0", "stem_layer_1", "stem_layer_4", "stem_layer_7"]
             if self.include_skip_connection_tensor and (index in [1, 3, 6, 9]):
-                setattr(self, f"skip_connect_tensor_{skip_connect_index}", stem)
-                skip_connect_index += 1
-        return stem, skip_connect_index
+                output_list.append(stem)
+        return stem, output_list
 
     def forward(self, input_tensor):
-        stem, skip_connect_index = self.process_with_checkpoint(self.process_stem, input_tensor)
+        # stem, skip_connect_index = self.process_with_checkpoint(self.process_stem, input_tensor)
+        stem, output_list = self.process_with_checkpoint(self.process_stem, input_tensor)
         block_35_tensor = self.process_with_checkpoint(self.mixed_5b, stem)
         for block_35 in self.block_35_list:
             block_35_tensor = self.process_with_checkpoint(block_35, block_35_tensor)
         mixed_6a_tensor = self.process_with_checkpoint(self.mixed_6a, block_35_tensor)
+        output_list.append(mixed_6a_tensor)
         block_17_tensor = mixed_6a_tensor
         for block_17 in self.block_17_list:
             block_17_tensor = self.process_with_checkpoint(block_17, block_17_tensor)
@@ -164,10 +165,8 @@ class InceptionResNetV2_2D(nn.Module):
         for block_8 in self.block_8_list:
             block_8_tensor = self.process_with_checkpoint(block_8, block_8_tensor)
         output = self.process_with_checkpoint(self.final_conv, block_8_tensor)
-        if self.include_skip_connection_tensor:
-            setattr(self, f"skip_connect_tensor_{skip_connect_index}", mixed_6a_tensor)
-            setattr(self, f"skip_connect_tensor_{skip_connect_index + 1}", mixed_7a_tensor)
-        return output
+        output_list.append(output)
+        return output_list
 
 class InceptionResNetV2_3D(nn.Module):
     def __init__(self, n_input_channels, block_size=16,
@@ -309,22 +308,23 @@ class InceptionResNetV2_3D(nn.Module):
                                       norm=norm, act=last_act)
 
     def process_stem(self, x):
-        skip_connect_index = 0
         stem = x
+        output_list = []
         for index, (layer_name, layer) in enumerate(self.stem.items()):
             stem = layer(stem)
             # layer_name in ["stem_layer_0", "stem_layer_1", "stem_layer_4", "stem_layer_7"]
             if self.include_skip_connection_tensor and (index in [1, 3, 6, 9]):
-                setattr(self, f"skip_connect_tensor_{skip_connect_index}", stem)
-                skip_connect_index += 1
-        return stem, skip_connect_index
+                output_list.append(stem)
+        return stem, output_list
 
     def forward(self, input_tensor):
-        stem, skip_connect_index = self.process_with_checkpoint(self.process_stem, input_tensor)
+        # stem, skip_connect_index = self.process_with_checkpoint(self.process_stem, input_tensor)
+        stem, output_list = self.process_with_checkpoint(self.process_stem, input_tensor)
         block_35_tensor = self.process_with_checkpoint(self.mixed_5b, stem)
         for block_35 in self.block_35_list:
             block_35_tensor = self.process_with_checkpoint(block_35, block_35_tensor)
         mixed_6a_tensor = self.process_with_checkpoint(self.mixed_6a, block_35_tensor)
+        output_list.append(mixed_6a_tensor)
         block_17_tensor = mixed_6a_tensor
         for block_17 in self.block_17_list:
             block_17_tensor = self.process_with_checkpoint(block_17, block_17_tensor)
@@ -333,7 +333,5 @@ class InceptionResNetV2_3D(nn.Module):
         for block_8 in self.block_8_list:
             block_8_tensor = self.process_with_checkpoint(block_8, block_8_tensor)
         output = self.process_with_checkpoint(self.final_conv, block_8_tensor)
-        if self.include_skip_connection_tensor:
-            setattr(self, f"skip_connect_tensor_{skip_connect_index}", mixed_6a_tensor)
-            setattr(self, f"skip_connect_tensor_{skip_connect_index + 1}", mixed_7a_tensor)
-        return output
+        output_list.append(output)
+        return output_list

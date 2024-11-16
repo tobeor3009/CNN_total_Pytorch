@@ -191,7 +191,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             decoded = self.inject_cat_conv(decoded)
         return decoded
     
-    def forward_decode_block(self, encode_feature, inject_class,
+    def forward_decode_block(self, encode_feature, inject_class, skip_list,
                              init_conv, up_list, conv_list, output_conv):
         decoded = init_conv(encode_feature)
         decoded = self.forward_inject_class_tensor(decoded, inject_class)
@@ -199,7 +199,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         for decode_i in range(0, 5):
             decode_up = up_list[decode_i]
             decode_conv = conv_list[decode_i]
-            skip_connect_tensor = getattr(self.base_model, f"skip_connect_tensor_{4 - decode_i}")
+            skip_connect_tensor = skip_list[decode_i]
             decoded = self.process_with_checkpoint(decode_up, decoded, skip_connect_tensor)
             decoded = self.process_with_checkpoint(decode_conv, decoded)
         seg_output = self.process_with_checkpoint(output_conv, decoded)
@@ -207,9 +207,11 @@ class InceptionResNetV2MultiTask2D(nn.Module):
     
     def forward(self, input_tensor, inject_class=None):
         output = []
-        encode_feature = self.base_model(input_tensor)
+        encode_feature_list = self.base_model(input_tensor)
+        encode_feature = encode_feature_list.pop()
+        skip_list = encode_feature_list[::-1]
         if self.get_seg:
-            seg_output = self.forward_decode_block(encode_feature, inject_class,
+            seg_output = self.forward_decode_block(encode_feature, inject_class, skip_list,
                                                    *self.seg_module_list)
             output.append(seg_output)
 
@@ -218,7 +220,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             output.append(class_output)
 
         if self.get_recon:
-            recon_output = self.forward_decode_block(encode_feature, inject_class,
+            recon_output = self.forward_decode_block(encode_feature, inject_class, skip_list,
                                                    *self.recon_module_list)
             output.append(recon_output)
 
