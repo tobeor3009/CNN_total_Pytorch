@@ -32,9 +32,13 @@ class InceptionResNetV2_2D(nn.Module):
         }
         # Stem block
         self.stem = nn.ModuleDict({
-            'stem_layer_0': ConvBlock2D(n_input_channels, block_size * 2, 3,
+            'stem_layer_0_0': ConvBlock2D(n_input_channels, block_size * 2, 3,
                                         padding=padding_3x3, **conv_block_common_arg_dict),
-            'stem_layer_1': ConvBlock2D(block_size * 2, block_size * 2, 3,
+            'stem_layer_0_1': ConvBlock2D(block_size * 2, block_size * 2, 3,
+                                        padding=padding_3x3, **conv_block_common_arg_dict),
+            'stem_layer_1_0': ConvBlock2D(block_size * 2, block_size * 2, 3,
+                                         padding=padding_3x3, **conv_block_common_arg_dict),
+            'stem_layer_1_1': ConvBlock2D(block_size * 2, block_size * 2, 3,
                                         stride=2, padding=padding_3x3, **conv_block_common_arg_dict),
             'stem_layer_2': ConvBlock2D(block_size * 2, block_size * 2, 3,
                                         padding=padding_3x3, **conv_block_common_arg_dict),
@@ -139,7 +143,7 @@ class InceptionResNetV2_2D(nn.Module):
         for index, (layer_name, layer) in enumerate(self.stem.items()):
             stem = layer(stem)
             # layer_name in ["stem_layer_0", "stem_layer_1", "stem_layer_4", "stem_layer_7"]
-            if self.include_skip_connection_tensor and (index in [0, 1, 4, 7]):
+            if self.include_skip_connection_tensor and (index in [1, 3, 6, 9]):
                 setattr(self, f"skip_connect_tensor_{skip_connect_index}", stem)
                 skip_connect_index += 1
         mixed_5b = self.mixed_5b(stem)
@@ -177,9 +181,13 @@ class InceptionResNetV2_3D(nn.Module):
             z_stride = 2
         # Stem block
         self.stem = nn.ModuleDict({
-            'stem_layer_0': ConvBlock3D(n_input_channels, block_size * 2, 3,
+            'stem_layer_0_0': ConvBlock3D(n_input_channels, block_size * 2, 3,
                                         padding=padding_3x3, **conv_block_common_arg_dict),
-            'stem_layer_1': ConvBlock3D(block_size * 2, block_size * 2, 3,
+            'stem_layer_0_1': ConvBlock3D(block_size * 2, block_size * 2, 3,
+                                        padding=padding_3x3, **conv_block_common_arg_dict),
+            'stem_layer_1_0': ConvBlock3D(block_size * 2, block_size * 2, 3,
+                                        padding=padding_3x3, **conv_block_common_arg_dict),
+            'stem_layer_1_1': ConvBlock3D(block_size * 2, block_size * 2, 3,
                                         stride=z_stride, padding=padding_3x3, **conv_block_common_arg_dict),
             'stem_layer_2': ConvBlock3D(block_size * 2, block_size * 2, 3,
                                         padding=padding_3x3, norm=norm, act=act),
@@ -293,7 +301,7 @@ class InceptionResNetV2_3D(nn.Module):
         for index, (layer_name, layer) in enumerate(self.stem.items()):
             stem = layer(stem)
             # layer_name in ["stem_layer_0", "stem_layer_1", "stem_layer_4", "stem_layer_7"]
-            if self.include_skip_connection_tensor and (index in [0, 1, 4, 7]):
+            if self.include_skip_connection_tensor and (index in [1, 3, 6, 9]):
                 setattr(self, f"skip_connect_tensor_{skip_connect_index}", stem)
                 skip_connect_index += 1
         mixed_5b = self.mixed_5b(stem)
