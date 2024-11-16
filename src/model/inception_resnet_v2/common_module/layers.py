@@ -189,9 +189,9 @@ class ConvBlock2D(nn.Module):
         self.dropout_layer = nn.Dropout2d(p=dropout_proba, inplace=INPLACE)
     def forward(self, x):
         conv = self.conv(x)
+        conv = self.dropout_layer(conv)
         norm = self.norm_layer(conv)
-        act = self.act_layer(norm)
-        out = self.dropout_layer(act)
+        out = self.act_layer(norm)
         return out
 
 
@@ -216,9 +216,9 @@ class ConvBlock3D(nn.Module):
 
     def forward(self, x):
         conv = self.conv(x)
+        conv = self.dropout_layer(act)
         norm = self.norm_layer(conv)
-        act = self.act(norm)
-        out = self.dropout_layer(act)
+        out = self.act(norm)
         return out
 
 
