@@ -119,6 +119,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                             out_channels=decode_out_channels,
                                             kernel_size=2, use_highway=False,
                                             include_upsample=include_upsample,
+                                            include_conv_transpose=not include_upsample,
                                             **conv_block_common_arg_dict)
 
 
