@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import numpy as np
+from functools import partial
 from timm.models.layers import trunc_normal_
 from ..common_module.layers import get_act, get_norm
 from ..common_module.base_model_v2 import InceptionResNetV2_2D, get_skip_connect_channel_list
@@ -9,8 +10,7 @@ from ..common_module.layers import ConvBlock2D, Output2D, AttentionPool
 from ..common_module.layers_highway import MultiDecoder2D_V2, ConvTransposeDecoder2D_V2, HighwayOutput2D
 from .common_layer import ClassificationHeadSimple
 from .common_layer import ClassificationHead
-
-
+from src.model.train_util.common import process_with_checkpoint
 class InceptionResNetV2MultiTask2D(nn.Module):
     def __init__(self, input_shape, class_channel=None, seg_channels=None, validity_shape=(1, 8, 8), inject_class_channel=None,
                  block_size=16, include_cbam=False, decode_init_channel=None,
@@ -18,7 +18,8 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                  seg_act="softmax", class_act="softmax", recon_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_recon=False, get_validity=False,
                  use_class_head_simple=True, use_decode_pixelshuffle_only=False,
-                 use_decode_simpleoutput=True, use_seg_conv_transpose=True
+                 use_decode_simpleoutput=True, use_seg_conv_transpose=True,
+                 use_checkpoint=False
                  ):
         super().__init__()
 
@@ -29,6 +30,8 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         self.get_recon = get_recon
         self.get_validity = get_validity
         self.inject_class_channel = inject_class_channel
+        self.process_with_checkpoint = partial(process_with_checkpoint, use_checkpoint=use_checkpoint)
+
 
         self.act = act
         self.dropout_proba = dropout_proba
@@ -56,7 +59,8 @@ class InceptionResNetV2MultiTask2D(nn.Module):
 
         self.base_model = InceptionResNetV2_2D(n_input_channels=input_channel, block_size=block_size,
                                                padding="same", norm=norm, act=act, dropout_proba=dropout_proba,
-                                               include_cbam=include_cbam, include_skip_connection_tensor=True)
+                                               include_cbam=include_cbam, include_skip_connection_tensor=True,
+                                               use_checkpoint=use_checkpoint)
         if self.get_seg:
             if use_seg_conv_transpose:
                 seg_decode_mode = "conv_transpose"
@@ -88,7 +92,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             (self.inject_linear, self.inject_norm,
              self.inject_absolute_pos_embed, self.inject_cat_conv) = self.get_inject_layers(inject_class_channel,
                                                                                             decode_init_channel)
-
+        
     def get_decode_layers(self, decode_init_channel,
                           skip_connect_channel_list, use_decode_pixelshuffle_only,
                           use_decode_simpleoutput, decode_channels, decode_act, decode_mode):
@@ -195,9 +199,9 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             decode_up = up_list[decode_i]
             decode_conv = conv_list[decode_i]
             skip_connect_tensor = getattr(self.base_model, f"skip_connect_tensor_{4 - decode_i}")
-            decoded = decode_up(decoded, skip_connect_tensor)
-            decoded = decode_conv(decoded)
-        seg_output = output_conv(decoded)
+            decoded = self.process_with_checkpoint(decode_up, decoded, skip_connect_tensor)
+            decoded = self.process_with_checkpoint(decode_conv, decoded)
+        seg_output = self.process_with_checkpoint(output_conv, decoded)
         return seg_output
     
     def forward(self, input_tensor, inject_class=None):
@@ -209,7 +213,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             output.append(seg_output)
 
         if self.get_class:
-            class_output = self.classfication_head(encode_feature)
+            class_output = self.process_with_checkpoint(self.classfication_head, encode_feature)
             output.append(class_output)
 
         if self.get_recon:
@@ -218,7 +222,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             output.append(recon_output)
 
         if self.get_validity:
-            validity_output = self.validity_block(encode_feature)
+            validity_output = self.process_with_checkpoint(self.validity_block, encode_feature)
             output.append(validity_output)
 
         if len(output) == 1:

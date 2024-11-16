@@ -3,6 +3,8 @@ import torch
 import torch
 import random
 from src.util.fold_unfold import fold_nd
+from torch.utils.checkpoint import checkpoint
+
 def hook_fn(grad, mask, num_dims, patch_size, input_shape):
     """
     후킹 함수로, 그라디언트에 마스크를 적용하여 특정 패치의 그라디언트를 무시하도록 한다.
@@ -129,3 +131,10 @@ def clip_gradients(model, threshold=None, use_outliers=False):
                                             max_outlier_value)
     else:
         torch.nn.utils.clip_grad_value_(model.parameters(), threshold)
+
+def process_with_checkpoint(process_fn, x, *args, use_checkpoint=False):
+    if use_checkpoint:
+        return checkpoint(process_fn, x, *args,
+                            use_reentrant=False)
+    else:
+        return process_fn(x, *args)
