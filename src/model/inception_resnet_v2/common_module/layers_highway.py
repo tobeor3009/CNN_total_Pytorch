@@ -228,7 +228,7 @@ class MultiDecoder3D_V2(nn.Module):
                  use_highway=False, include_upsample=False, include_conv_transpose=True):
         super().__init__()
         if isinstance(kernel_size, int):
-            kernel_size = (kernel_size, kernel_size)
+            kernel_size = (kernel_size, kernel_size, kernel_size)
         self.use_highway = use_highway
         self.include_upsample = include_upsample
         self.include_conv_transpose = include_conv_transpose

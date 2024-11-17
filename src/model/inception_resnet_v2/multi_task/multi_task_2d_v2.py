@@ -105,8 +105,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         
         for decode_i in range(0, 5):
             skip_channels = skip_connect_channel_list[4 - decode_i]
-            decode_in_channels = int(decode_init_channel //
-                                        (2 ** decode_i))
+            decode_in_channels = int(decode_init_channel // (2 ** decode_i))
             decode_out_channels = decode_in_channels // 2
             if decode_mode == "conv_transpose":
                 decode_up = ConvTransposeDecoder2D_V2(in_channels=decode_in_channels,

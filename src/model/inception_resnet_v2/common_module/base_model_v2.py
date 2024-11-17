@@ -175,7 +175,7 @@ class InceptionResNetV2_3D(nn.Module):
                  include_skip_connection_tensor=False, use_checkpoint=False):
         super().__init__()
         self.include_skip_connection_tensor = include_skip_connection_tensor
-        self.process_with_checkpoint = partial(process_with_checkpoint, use_checkpoint)
+        self.process_with_checkpoint = partial(process_with_checkpoint, use_checkpoint=use_checkpoint)
 
         conv_block_common_arg_dict = {
             "norm": norm,

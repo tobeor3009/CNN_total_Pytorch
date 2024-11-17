@@ -2,15 +2,16 @@ import torch
 import math
 from torch import nn
 import numpy as np
+from functools import partial
 from timm.models.layers import trunc_normal_
 from ..common_module.base_model_v2 import InceptionResNetV2_3D, get_skip_connect_channel_list
 from ..common_module.layers import get_act, get_norm
 from ..common_module.layers import space_to_depth_3d, DEFAULT_ACT
 from ..common_module.layers import ConvBlock3D, Output3D
-from ..common_module.layers_highway import MultiDecoder3D, HighwayOutput3D
+from ..common_module.layers_highway import MultiDecoder3D_V2, ConvTransposeDecoder3D_V2, HighwayOutput3D
 from .common_layer import ClassificationHeadSimple
 from .common_layer import ClassificationHead
-
+from src.model.train_util.common import process_with_checkpoint
 
 class InceptionResNetV2MultiTask3D(nn.Module):
     def __init__(self, input_shape, class_channel=None, seg_channels=None, validity_shape=(1, 8, 8, 8),
@@ -19,9 +20,9 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                  skip_connect=True, norm="batch", act=DEFAULT_ACT, dropout_proba=0.05,
                  seg_act="sigmoid", class_act="softmax", recon_act="sigmoid", validity_act="sigmoid",
                  get_seg=True, get_class=True, get_recon=False, get_validity=False,
-                 use_class_head_simple=True,
-                 use_decode_pixelshuffle_only=False, use_decode_simpleoutput=True,
-                 use_seg_conv_transpose=True
+                 use_class_head_simple=True, include_upsample=False,
+                 use_decode_simpleoutput=True, use_seg_conv_transpose=True,
+                 use_checkpoint=False
                  ):
         super().__init__()
 
@@ -32,6 +33,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
         self.get_recon = get_recon
         self.get_validity = get_validity
         self.inject_class_channel = inject_class_channel
+        self.process_with_checkpoint = partial(process_with_checkpoint, use_checkpoint=use_checkpoint)
 
         self.act = act
         self.dropout_proba = dropout_proba
@@ -58,12 +60,17 @@ class InceptionResNetV2MultiTask3D(nn.Module):
 
         self.base_model = InceptionResNetV2_3D(n_input_channels=input_channel, block_size=block_size,
                                                padding="same", norm=norm, act=act, dropout_proba=dropout_proba,
-                                               z_channel_preserve=z_channel_preserve, include_skip_connection_tensor=skip_connect)
+                                               z_channel_preserve=z_channel_preserve, include_skip_connection_tensor=skip_connect,
+                                               use_checkpoint=use_checkpoint)
         if self.get_seg:
-            self.seg_module_list = self.get_decode_layers(input_shape, decode_init_channel,
-                                   skip_connect_channel_list, z_channel_preserve,
-                                   use_decode_pixelshuffle_only, use_decode_simpleoutput,
-                                   seg_channels, seg_act)
+            if use_seg_conv_transpose:
+                seg_decode_mode = "conv_transpose"
+            else:
+                seg_decode_mode = "upsample_pixelshuffle"
+            self.seg_module_list = self.get_decode_layers(decode_init_channel,
+                                   skip_connect_channel_list, z_channel_preserve, 
+                                   include_upsample, use_decode_simpleoutput,
+                                   seg_channels, seg_act, seg_decode_mode)
         if self.get_class:
             if use_class_head_simple:
                 self.classfication_head = ClassificationHeadSimple(feature_channel_num,
@@ -76,10 +83,11 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                                                              class_channel,
                                                              dropout_proba, class_act)
         if self.get_recon:
-            self.recon_module_list = self.get_decode_layers(input_shape, decode_init_channel,
-                                                            skip_connect_channel_list, z_channel_preserve,
-                                                            True, use_decode_simpleoutput, 
-                                                            input_channel, recon_act)
+            recon_decode_mode = "upsample_pixelshuffle"
+            self.recon_module_list = self.get_decode_layers(decode_init_channel,
+                                                            skip_connect_channel_list, z_channel_preserve, 
+                                                            include_upsample, use_decode_simpleoutput,
+                                                            input_channel, recon_act, recon_decode_mode)
         
         if get_validity:
             self.validity_block = self.get_validity_block(validity_shape, validity_act)
@@ -88,42 +96,39 @@ class InceptionResNetV2MultiTask3D(nn.Module):
             (self.inject_linear, self.inject_norm,
              self.inject_absolute_pos_embed, self.inject_cat_conv) = self.get_inject_layers(inject_class_channel,
                                                                                             decode_init_channel)
-    def get_decode_layers(self, input_shape, decode_init_channel,
-                          skip_connect_channel_list, z_channel_preserve,
-                          use_decode_pixelshuffle_only, use_decode_simpleoutput,
-                          seg_channels, seg_act):
+    def get_decode_layers(self, decode_init_channel,
+                          skip_connect_channel_list, z_channel_preserve, include_upsample,
+                          use_decode_simpleoutput, seg_channels, seg_act, decode_mode):
         conv_block_common_arg_dict = self.conv_block_common_arg_dict
         init_conv = ConvBlock3D(in_channels=self.feature_channel_num,
                                 out_channels=decode_init_channel, kernel_size=1, 
                                 **conv_block_common_arg_dict)
-        skip_conv_list = nn.ModuleList()
-        conv_list = nn.ModuleList()
         up_list = nn.ModuleList()
+        conv_list = nn.ModuleList()
 
         for decode_i in range(0, 5):
-            decode_shape = input_shape[1:] // (2 ** (5 - decode_i))
-            decode_in_channels = int(decode_init_channel //
-                                        (2 ** decode_i))
+            decode_in_channels = int(decode_init_channel // (2 ** decode_i))
             decode_out_channels = int(decode_in_channels // 2)
-            if self.skip_connect:
-                skip_channel = skip_connect_channel_list[4 - decode_i]
-                decode_skip_conv = ConvBlock3D(in_channels=skip_channel,
-                                                out_channels=decode_in_channels, kernel_size=1,
-                                                **conv_block_common_arg_dict)
-                decode_in_channels *= 2
-                skip_conv_list.append(decode_skip_conv)
-            decode_conv = ConvBlock3D(in_channels=decode_in_channels,
-                                      out_channels=decode_out_channels, kernel_size=3,
-                                      **conv_block_common_arg_dict)
+            skip_channels = skip_connect_channel_list[4 - decode_i]
             decode_kernel_size = (1, 2, 2) if z_channel_preserve else 2
-            decode_up = MultiDecoder3D(input_zhw=decode_shape,
-                                        in_channels=decode_out_channels,
-                                        out_channels=decode_out_channels,
-                                        kernel_size=decode_kernel_size,
-                                        use_highway=False, use_pixelshuffle_only=use_decode_pixelshuffle_only,
-                                        **conv_block_common_arg_dict)
-            conv_list.append(decode_conv)
+            if decode_mode == "conv_transpose":
+                decode_up = ConvTransposeDecoder3D_V2(in_channels=decode_in_channels,
+                                                      skip_channels=skip_channels,
+                                                      out_channels=decode_out_channels, kernel_size=decode_kernel_size,
+                                                      **conv_block_common_arg_dict)
+            elif decode_mode == "upsample_pixelshuffle":
+                decode_up = MultiDecoder3D_V2(in_channels=decode_in_channels,
+                                              skip_channels=skip_channels,
+                                            out_channels=decode_out_channels,
+                                            kernel_size=decode_kernel_size, use_highway=False,
+                                            include_upsample=include_upsample,
+                                            include_conv_transpose=not include_upsample,
+                                            **conv_block_common_arg_dict)
+            decode_conv = ConvBlock3D(in_channels=decode_out_channels,
+                                      out_channels=decode_out_channels, 
+                                      kernel_size=3, **conv_block_common_arg_dict)
             up_list.append(decode_up)
+            conv_list.append(decode_conv)
             if use_decode_simpleoutput:
                 output_conv = Output3D(in_channels=decode_out_channels,
                                                 out_channels=seg_channels,
@@ -132,7 +137,7 @@ class InceptionResNetV2MultiTask3D(nn.Module):
                 output_conv = HighwayOutput3D(in_channels=decode_out_channels,
                                                        out_channels=seg_channels,
                                                        act=seg_act, use_highway=False)
-        return nn.ModuleList([init_conv, skip_conv_list, conv_list, up_list, output_conv])
+        return nn.ModuleList([init_conv, up_list, conv_list, output_conv])
     
     def get_inject_layers(self, inject_class_channel, decode_init_channel):
         inject_linear = nn.Linear(inject_class_channel,
@@ -187,44 +192,41 @@ class InceptionResNetV2MultiTask3D(nn.Module):
             decoded = self.inject_cat_conv(decoded)
         return decoded
     
-    def forward_decode_block(self, encode_feature, inject_class,
-                             init_conv, skip_conv_list, conv_list, 
-                             up_list, output_conv):
+    def forward_decode_block(self, encode_feature, inject_class, skip_list,
+                             init_conv, up_list, conv_list, output_conv):
         decoded = init_conv(encode_feature)
         decoded = self.forward_inject_class_tensor(decoded, inject_class)
         
         for decode_i in range(0, 5):
-            if self.skip_connect:
-                skip_connect_tensor = getattr(self.base_model, f"skip_connect_tensor_{4 - decode_i}")
-                skip_conv = skip_conv_list[decode_i]
-                skip_connect_tensor = skip_conv(skip_connect_tensor)
-                decoded = torch.cat([decoded, skip_connect_tensor], axis=1)
-            decode_conv = conv_list[decode_i]
             decode_up = up_list[decode_i]
-            decoded = decode_conv(decoded)
-            decoded = decode_up(decoded)
-        seg_output = output_conv(decoded)
+            decode_conv = conv_list[decode_i]
+            skip_connect_tensor = skip_list[decode_i]
+            decoded = self.process_with_checkpoint(decode_up, decoded, skip_connect_tensor)
+            decoded = self.process_with_checkpoint(decode_conv, decoded)
+        seg_output = self.process_with_checkpoint(output_conv, decoded)
         return seg_output
-
+    
     def forward(self, input_tensor, inject_class=None):
         output = []
-        encode_feature = self.base_model(input_tensor)
+        encode_feature_list = self.base_model(input_tensor)
+        encode_feature = encode_feature_list.pop()
+        skip_list = encode_feature_list[::-1]
         if self.get_seg:
-            seg_output = self.forward_decode_block(encode_feature, inject_class,
+            seg_output = self.forward_decode_block(encode_feature, inject_class, skip_list,
                                                    *self.seg_module_list)
             output.append(seg_output)
 
         if self.get_class:
-            class_output = self.classfication_head(encode_feature)
+            class_output = self.process_with_checkpoint(self.classfication_head, encode_feature)
             output.append(class_output)
 
         if self.get_recon:
-            recon_output = self.forward_decode_block(encode_feature, inject_class,
+            recon_output = self.forward_decode_block(encode_feature, inject_class, skip_list,
                                                    *self.recon_module_list)
             output.append(recon_output)
 
         if self.get_validity:
-            validity_output = self.validity_block(encode_feature)
+            validity_output = self.process_with_checkpoint(self.validity_block, encode_feature)
             output.append(validity_output)
 
         if len(output) == 1:

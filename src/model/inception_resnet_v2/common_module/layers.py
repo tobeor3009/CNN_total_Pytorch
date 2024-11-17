@@ -216,7 +216,7 @@ class ConvBlock3D(nn.Module):
 
     def forward(self, x):
         conv = self.conv(x)
-        conv = self.dropout_layer(act)
+        conv = self.dropout_layer(conv)
         norm = self.norm_layer(conv)
         out = self.act(norm)
         return out
