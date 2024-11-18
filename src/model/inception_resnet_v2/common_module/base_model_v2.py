@@ -17,7 +17,7 @@ def get_skip_connect_channel_list(block_size, mini=False):
 class InceptionResNetV2_2D(nn.Module):
     def __init__(self, n_input_channels, block_size=16,
                  padding='valid', norm="batch", act=DEFAULT_ACT, last_act=DEFAULT_ACT, dropout_proba=0.0,
-                 last_channel_ratio=1, include_cbam=False, 
+                 last_channel_ratio=1, include_cbam=False,
                  include_skip_connection_tensor=False, use_checkpoint=False):
         super().__init__()
         self.include_skip_connection_tensor = include_skip_connection_tensor

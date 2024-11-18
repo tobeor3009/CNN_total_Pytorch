@@ -6,7 +6,7 @@ from timm.models.layers import trunc_normal_
 from ..common_module.layers import get_act, get_norm
 from ..common_module.base_model_v2 import InceptionResNetV2_2D, get_skip_connect_channel_list
 from ..common_module.layers import DEFAULT_ACT
-from ..common_module.layers import ConvBlock2D, Output2D, AttentionPool
+from ..common_module.layers import ConvBlock2D, Output2D_V2
 from ..common_module.layers_highway import MultiDecoder2D_V2, ConvTransposeDecoder2D_V2, HighwayOutput2D
 from .common_layer import ClassificationHeadSimple
 from .common_layer import ClassificationHead
@@ -129,7 +129,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
             conv_list.append(decode_conv)
 
         if use_decode_simpleoutput:
-            output_conv = Output2D(in_channels=decode_out_channels,
+            output_conv = Output2D_V2(in_channels=decode_out_channels,
                                     out_channels=decode_channels,
                                     act=decode_act)
         else:
