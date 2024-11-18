@@ -420,12 +420,12 @@ class Output2D_V2(nn.Module):
     def __init__(self, in_channels, out_channels, act="tanh"):
         super().__init__()
         self.conv_3x3 = nn.Conv2d(in_channels=in_channels,
-                                  out_channels=out_channels,
+                                  out_channels=in_channels,
                                   kernel_size=3, padding=1)
         self.conv_5x5 = nn.Conv2d(in_channels=in_channels,
-                                  out_channels=out_channels,
+                                  out_channels=in_channels,
                                   kernel_size=5, padding=2)
-        self.concat_conv = ConvBlock2D(in_channels=out_channels * 2,
+        self.concat_conv = ConvBlock2D(in_channels=in_channels * 2,
                                        out_channels=out_channels,
                                       kernel_size=3, stride=1, padding=1,
                                       norm=None, act=act, bias=False, dropout_proba=0)
@@ -460,12 +460,12 @@ class Output3D_V2(nn.Module):
     def __init__(self, in_channels, out_channels, act="tanh"):
         super().__init__()
         self.conv_5x5x5 = nn.Conv3d(in_channels=in_channels,
-                                    out_channels=out_channels,
+                                    out_channels=in_channels,
                                     kernel_size=5, padding=2)
         self.conv_3x3x3 = nn.Conv3d(in_channels=in_channels,
-                                    out_channels=out_channels,
+                                    out_channels=in_channels,
                                     kernel_size=3, padding=1)
-        self.concat_conv = ConvBlock3D(in_channels=out_channels * 2,
+        self.concat_conv = ConvBlock3D(in_channels=in_channels * 2,
                                        out_channels=out_channels,
                                       kernel_size=3, stride=1, padding=1,
                                       norm=None, act=act, bias=False, dropout_proba=0)
