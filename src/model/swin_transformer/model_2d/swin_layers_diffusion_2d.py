@@ -1367,6 +1367,129 @@ class BasicLayerV2(nn.Module):
             check_hasattr_and_init(blk.norm2, "weight", 1)
             check_hasattr_and_init(blk.norm2, "bias", 0)
 
+class BasicDecodeLayer(nn.Module):
+    def __init__(self, dim, skip_dim, input_resolution, depth, num_heads, window_size,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, upsample=None,
+                 use_checkpoint=False, pretrained_window_size=0,
+                 emb_dim_list=[], use_residual=False):
+
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.depth = depth
+        self.depth = depth
+        self.use_checkpoint = use_checkpoint
+        self.use_residual = use_residual
+        
+        if use_residual:
+            assert depth == 2, "residual depth must be 2"
+        # patch merging layer
+        assert upsample is not None
+        self.upsample = upsample(input_resolution,
+                                    dim=dim, norm_layer=norm_layer)
+        self.blocks_before_skip = nn.ModuleList([
+            SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                                 num_heads=num_heads, window_size=window_size,
+                                 shift_size=window_size // 2,
+                                 mlp_ratio=mlp_ratio,
+                                 qkv_bias=qkv_bias,
+                                 drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
+                                 drop_path=drop_path[i] if isinstance(
+                                     drop_path, list) else drop_path,
+                                 norm_layer=norm_layer, act_layer=act_layer,
+                                 pretrained_window_size=pretrained_window_size)
+            for i in range(depth)])
+        dim //= 2
+        num_heads = max(num_heads // 2, 1)
+        window_size *= 2
+        input_resolution = [input_resolution[0] * 2,
+                            input_resolution[1] * 2]
+
+        emb_block_list = []
+        for emb_dim in emb_dim_list:
+            emb_block = nn.Sequential(
+                                        act_layer,
+                                        nn.Linear(emb_dim, dim * 2)
+                                    )
+            emb_block_list.append(emb_block)
+        self.emb_block_list = nn.ModuleList(emb_block_list)
+        
+        # build blocks
+        self.mlp_after_skip = Mlp(in_features=dim + skip_dim, 
+                                  out_features=dim,
+                                  act_layer=act_layer, drop=drop)
+        self.blocks_after_skip = nn.ModuleList([
+            SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                                 num_heads=num_heads, window_size=window_size,
+                                 shift_size=window_size // 2,
+                                 mlp_ratio=mlp_ratio,
+                                 qkv_bias=qkv_bias,
+                                 drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
+                                 drop_path=drop_path[i] if isinstance(
+                                     drop_path, list) else drop_path,
+                                 norm_layer=norm_layer, act_layer=act_layer,
+                                 pretrained_window_size=pretrained_window_size)
+            for i in range(depth)])
+        
+    def forward(self, x, skip, *args):
+        scale_shift_list = []
+        for emb_block, emb in zip(self.emb_block_list, args):
+            emb = emb_block(emb)
+            if emb.ndim == 2:
+                emb = emb.unsqueeze(1)
+            scale_shift = emb.chunk(2, dim=2)
+            scale_shift_list.append(scale_shift)
+        x = self.process_block(self.blocks_before_skip, x, scale_shift_list)
+        if self.use_checkpoint:
+            x = checkpoint(self.upsample, x,
+                            use_reentrant=False)
+        else:
+            x = self.upsample(x)
+        x = torch.cat([x, skip], dim=-1)
+        x = self.mlp_after_skip(x)
+        x = self.process_block(self.blocks_after_skip, x, scale_shift_list)
+        return x
+    
+    def process_block(self, blk_list, x, scale_shift_list):
+        if self.use_residual:
+            shortcut = x
+            if self.use_checkpoint:
+                x = checkpoint(blk_list[0], x, scale_shift_list,
+                            use_reentrant=False)
+                x = checkpoint(blk_list[1], x,
+                            use_reentrant=False)
+            else:
+                x = blk_list[0](x, scale_shift_list)
+                x = blk_list[1](x, scale_shift_list)
+            x = x + shortcut
+        else:
+            for blk in blk_list:
+                if self.use_checkpoint:
+                    x = checkpoint(blk, x, scale_shift_list,
+                                use_reentrant=False)
+                else:
+                    x = blk(x, scale_shift_list)
+        return x
+    
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
+
+    def flops(self):
+        flops = 0
+        for blk in self.blocks:
+            flops += blk.flops()
+        if self.downsample is not None:
+            flops += self.downsample.flops()
+        return flops
+
+    def _init_respostnorm(self):
+        for blk in self.blocks_before_skip + self.blocks_after_skip:
+            check_hasattr_and_init(blk.norm1, "weight", 1)
+            check_hasattr_and_init(blk.norm1, "bias", 0)
+            check_hasattr_and_init(blk.norm2, "weight", 1)
+            check_hasattr_and_init(blk.norm2, "bias", 0)
+
 class BaseBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
