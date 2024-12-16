@@ -853,7 +853,7 @@ class PatchEmbedding(nn.Module):
 class Output2D(nn.Module):
     def __init__(self, in_channels, out_channels, act=None):
         super().__init__()
-        conv_out_channels = in_channels // 2
+        conv_out_channels = in_channels
         self.conv_5x5 = nn.Conv2d(in_channels=in_channels,
                                   out_channels=conv_out_channels,
                                   kernel_size=5, padding=2)

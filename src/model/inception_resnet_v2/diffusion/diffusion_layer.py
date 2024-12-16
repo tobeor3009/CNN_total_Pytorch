@@ -281,7 +281,7 @@ class BaseBlock2D(nn.Module):
         self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups, bias=bias)
-        if not bias:
+        if (not bias) and (norm is not None):
             self.norm_layer = norm(out_channels)
         else:
             self.norm_layer = nn.Identity()
@@ -396,7 +396,7 @@ class ConvBlock2D(nn.Module):
         self.emb_block_list = nn.ModuleList(emb_block_list)
 
         self.block_1 = BaseBlock2D(in_channels, out_channels, kernel_size,
-                                    stride, padding, norm, groups, act, bias, 
+                                    stride, padding, norm, groups, act, bias,
                                     dropout_proba=dropout_proba)
         if attn_info is None:
             self.attn = nn.Identity()
@@ -568,13 +568,14 @@ class MultiDecoder2D(nn.Module):
 
 class MultiDecoder2D_V2(nn.Module):
     def __init__(self, in_channels, skip_channels, out_channels,
-                 norm="layer", act=DEFAULT_ACT, kernel_size=2,
+                 norm="layer", act=DEFAULT_ACT, kernel_size=2, drop_prob=0.0,
                  emb_dim_list=None, emb_type_list=None, attn_info=None, use_checkpoint=False):
         super().__init__()
 
         self.use_checkpoint = use_checkpoint
         conv_common_kwarg_dict = {
             "kernel_size": 3, "stride": 1, "padding": 1,
+            "dropout_proba": drop_prob,
             "norm": norm, "act": act,
             "emb_dim_list": emb_dim_list,
             "emb_type_list": emb_type_list,
@@ -626,15 +627,23 @@ class Output2D(nn.Module):
     def __init__(self, in_channels, out_channels, act=None):
         super().__init__()
         conv_out_channels = in_channels
+        conv_common_kwarg_dict = {
+            "kernel_size": 3, "stride": 1, "padding": 1,
+            "norm": None, "act": act, "bias": False, "dropout_proba": 0.0,
+            "emb_dim_list": [],
+            "emb_type_list": [],
+            "attn_info": None,
+            "use_checkpoint": False
+        }
         self.conv_5x5 = nn.Conv2d(in_channels=in_channels,
                                   out_channels=conv_out_channels,
                                   kernel_size=5, padding=2)
         self.conv_3x3 = nn.Conv2d(in_channels=in_channels,
                                   out_channels=conv_out_channels,
                                   kernel_size=3, padding=1)
-        self.concat_conv = nn.Conv2d(in_channels=conv_out_channels * 2,
-                                        out_channels=out_channels,
-                                        kernel_size=3, padding=1)
+        self.concat_conv = ConvBlock2D(in_channels=conv_out_channels * 2,
+                                       out_channels=out_channels,
+                                      **conv_common_kwarg_dict)
         self.act = get_act(act)
 
     def forward(self, x):

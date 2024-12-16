@@ -166,7 +166,7 @@ class SSIM(torch.nn.Module):
                                            filter_fn=self.filter_fn, reduction=self.reduction)
 
 
-def get_ssim(img1, img2, win_size=7, data_range=DEFAULT_DATA_RANGE, full=False, filter_fn="avg", reduction=DEFAULT_REDUCTION, version="pytorch"):
+def get_ssim(img1, img2, win_size=7, data_range=DEFAULT_DATA_RANGE, full=False, filter_fn="avg", reduction=DEFAULT_REDUCTION, version="skimages"):
     
     assert version in SSIM_VERSION_LIST, f"support ssim version is {SSIM_VERSION_LIST}"
     if version == "pytorch":

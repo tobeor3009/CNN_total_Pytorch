@@ -20,7 +20,7 @@ def get_skip_connect_channel_list(block_size, mini=False):
 class InceptionResNetV2_UNet(nn.Module):
     def __init__(self, in_channel, cond_channel, out_channel, img_size, block_size=16,
                  emb_channel=1024, decode_init_channel=None,
-                 norm=RMSNorm, act="silu", last_act=None, num_class_embeds=None, cond_drop_prob=0.5,
+                 norm=RMSNorm, act="silu", last_act=None, num_class_embeds=None, drop_prob=0.0, cond_drop_prob=0.5,
                  last_channel_ratio=1, self_condition=False, use_checkpoint=[True, False, False, False, False],
                  attn_info_list=[False, False, False, False, True], num_head_list=[2, 4, 8, 8, 16],
                  block_depth_info="mini"):
@@ -66,6 +66,7 @@ class InceptionResNetV2_UNet(nn.Module):
         self.use_checkpoint = use_checkpoint
         self.attn_info_list = attn_info_list
         self.num_head_list = num_head_list
+        self.drop_prob = drop_prob
         self.cond_drop_prob = cond_drop_prob
         self.block_scale_list = [0.17, 0.1, 0.2]
         self.act_layer = get_act(act)
@@ -86,7 +87,7 @@ class InceptionResNetV2_UNet(nn.Module):
         self.time_mlp = nn.Sequential(
             sinu_pos_emb,
             nn.Linear(fourier_dim, time_emb_dim),
-            nn.SiLU(),
+            get_act(act),
             nn.Linear(time_emb_dim, time_emb_dim)
         )
         self.num_class_embeds = num_class_embeds
@@ -100,7 +101,7 @@ class InceptionResNetV2_UNet(nn.Module):
             
             self.class_mlp = nn.Sequential(
                 nn.Linear(class_emb_dim, class_emb_dim),
-                nn.SiLU(),
+                get_act(act),
                 nn.Linear(class_emb_dim, class_emb_dim)
             )
             emb_dim_list = [time_emb_dim, emb_channel, time_emb_dim]
@@ -161,7 +162,7 @@ class InceptionResNetV2_UNet(nn.Module):
             decode_emb_dim_list = emb_dim_list + [decode_out_channel]
             
             decoder_layer = MultiDecoder2D_V2(decode_in_channel, skip_channel, decode_out_channel,
-                                                norm=norm, act=act, kernel_size=2,
+                                                norm=norm, act=act, kernel_size=2, drop_prob=drop_prob,
                                                 emb_dim_list=decode_emb_dim_list, attn_info=attn_info,
                                                 use_checkpoint=use_checkpoint[4 - decode_idx])
             decoder_layer_list.append(decoder_layer)
@@ -334,7 +335,8 @@ class InceptionResNetV2_UNet(nn.Module):
             "act": self.act,
             "emb_dim_list": emb_dim_list,
             "emb_type_list": emb_type_list,
-            "use_checkpoint": self.use_checkpoint[layer_idx]
+            "use_checkpoint": self.use_checkpoint[layer_idx],
+            "dropout_proba": self.drop_prob
         }
 
         mixed_5b_branch_0_0 = ConvBlock2D(block_size * 12, block_size * 6, 1, **common_arg_dict)
@@ -369,7 +371,8 @@ class InceptionResNetV2_UNet(nn.Module):
             "act": self.act,
             "emb_dim_list": emb_dim_list,
             "emb_type_list": emb_type_list,
-            "use_checkpoint": self.use_checkpoint[layer_idx]
+            "use_checkpoint": self.use_checkpoint[layer_idx],
+            "dropout_proba": self.drop_prob
         }
 
         mixed_6a_branch_0_0 = ConvBlock2D(block_size * 20, block_size * 24, 3,
@@ -399,7 +402,8 @@ class InceptionResNetV2_UNet(nn.Module):
             "act": self.act,
             "emb_dim_list": emb_dim_list,
             "emb_type_list": emb_type_list,
-            "use_checkpoint": self.use_checkpoint[layer_idx]
+            "use_checkpoint": self.use_checkpoint[layer_idx],
+            "dropout_proba": self.drop_prob
         }
         mixed_7a_branch_0_1 = ConvBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
         mixed_7a_branch_0_2 = ConvBlock2D(block_size * 16, block_size * 24, 3,
@@ -444,7 +448,8 @@ class InceptionResNetV2_UNet(nn.Module):
             "act": self.act,
             "emb_dim_list": emb_dim_list,
             "emb_type_list": emb_type_list,
-            "use_checkpoint": self.use_checkpoint[layer_idx]
+            "use_checkpoint": self.use_checkpoint[layer_idx],
+            "dropout_proba": self.drop_prob
         }
 
         if get_attn_info:
@@ -486,7 +491,8 @@ class InceptionResNetV2_UNet(nn.Module):
             "act": self.act,
             "emb_dim_list": emb_dim_list,
             "emb_type_list": emb_type_list,
-            "use_checkpoint": self.use_checkpoint[layer_idx]
+            "use_checkpoint": self.use_checkpoint[layer_idx],
+            "dropout_proba": self.drop_prob
         }
         if get_attn_info:
             if self.use_inception_block_attn:
@@ -522,7 +528,8 @@ class InceptionResNetV2_UNet(nn.Module):
             "act": self.act,
             "emb_dim_list": emb_dim_list,
             "emb_type_list": emb_type_list,
-            "use_checkpoint": self.use_checkpoint[layer_idx]
+            "use_checkpoint": self.use_checkpoint[layer_idx],
+            "dropout_proba": self.drop_prob
         }
         if get_attn_info:
             if self.use_inception_block_attn:
@@ -550,7 +557,7 @@ class InceptionResNetV2_UNet(nn.Module):
 
 
 class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
-    def __init__(self, in_channel, img_size, block_size=16, emb_channel=1024,
+    def __init__(self, in_channel, img_size, block_size=16, emb_channel=1024, drop_prob=0.0,
                  norm="group", act="silu", last_channel_ratio=1,
                  use_checkpoint=False, attn_info_list=[None, False, False, False, True], num_head_list=[2, 4, 8, 8, 16],
                  block_depth_info="mini"):
@@ -580,6 +587,7 @@ class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
         self.use_checkpoint = use_checkpoint
         self.attn_info_list = attn_info_list
         self.num_head_list = num_head_list
+        self.drop_prob = drop_prob
         self.block_scale_list = [0.17, 0.1, 0.2]
         self.act_layer = get_act(act)
         ##################################
@@ -612,14 +620,17 @@ class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
                                       use_checkpoint=use_checkpoint)
         self.pool_layer = AttentionPool(feature_num=np.prod(feature_map_size),
                                         embed_dim=block_size * 96 * last_channel_ratio,
-                                        num_heads=8, output_dim=emb_channel * 2)
+                                        num_heads=8, output_dim=emb_channel)
         # self.pool_layer = nn.Sequential(
         #     nn.AdaptiveAvgPool2d((1, 1)),
         #     nn.Flatten(start_dim=1)
         # ) 
 
-        self.out = nn.Sequential(nn.SiLU(), nn.Dropout(0.05), nn.Linear(emb_channel * 2, emb_channel),
-                                 nn.SiLU(), nn.Dropout(0.05), nn.Linear(emb_channel, emb_channel))
+        self.out = nn.Sequential(
+            nn.Linear(emb_channel, emb_channel), nn.Dropout(drop_prob),
+            nn.Linear(emb_channel, emb_channel), nn.Dropout(drop_prob),
+            nn.Linear(emb_channel, emb_channel)
+        )
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
