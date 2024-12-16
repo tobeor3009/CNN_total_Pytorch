@@ -179,29 +179,39 @@ class RMSNorm(nn.Module):
         return F.normalize(x, dim=self.normalize_dim) * self.weight * self.scale
     
 class LinearAttention(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=None):
+    def __init__(self, dim, num_heads=4, dim_head=32, num_mem_kv=4, norm=LayerNorm, use_checkpoint=False):
         super().__init__()
         self.num_heads = num_heads
+        self.use_checkpoint = use_checkpoint
+
         if dim_head is None:
             dim_head = dim
-        self.dim_head = dim_head
+        self.hidden_dim = dim_head * num_heads
         self.scale = (dim_head / num_heads) ** -0.5
-        self.prenorm = LayerNorm(dim)
-        self.to_qkv = nn.Conv2d(dim, dim_head * 3, 1, bias=False, groups=num_heads)
-        # self.to_q = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
-        # self.to_k = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
-        # self.to_v = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
+        self.prenorm = norm(dim)
+        self.mem_kv = nn.Parameter(torch.randn(2, num_heads, dim_head, num_mem_kv))
+        self.to_qkv = nn.Conv2d(dim, self.hidden_dim * 3, 1, bias=False)
         self.to_out = nn.Sequential(
-            nn.Conv2d(dim_head, dim, 1),
+            nn.Conv2d(self.hidden_dim, dim, 1),
             LayerNorm(dim)
         )
-
+        
     def forward(self, x):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x)
+        
+    def _forward_impl(self, x):
         b, c, h, w = x.shape
 
         x = self.prenorm(x)
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), qkv)
+
+        mk, mv = map(lambda t: repeat(t, 'h c n -> b h c n', b = b), self.mem_kv)
+        k, v = map(partial(torch.cat, dim = -1), ((mk, k), (mv, v)))
 
         q = q.softmax(dim = -2)
         k = k.softmax(dim = -1)
@@ -214,34 +224,39 @@ class LinearAttention(nn.Module):
         return self.to_out(out) + x
 
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=None):
+    def __init__(self, dim, num_heads=4, dim_head=32, num_mem_kv=4, flash=False, norm=LayerNorm, use_checkpoint=False):
         super().__init__()
         self.num_heads = num_heads
+        self.use_checkpoint = use_checkpoint
         if dim_head is None:
             dim_head = dim
 
-        self.dim_head = dim_head
-        self.scale = (dim_head / num_heads) ** -0.5
-
-        self.prenorm = LayerNorm(dim)
-        self.to_qkv = nn.Conv2d(dim, dim_head * 3, 1, bias=False)
-        # self.to_q = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
-        # self.to_k = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
-        # self.to_v = nn.Conv2d(dim, dim_head, 1, bias=False, groups=num_heads)
-        self.to_out = nn.Conv2d(dim_head, dim, 1)
+        self.hidden_dim = dim_head * num_heads
+        self.prenorm = norm(dim)
+        self.attend = Attend(flash = flash)
+        self.mem_kv = nn.Parameter(torch.randn(2, num_heads, num_mem_kv, dim_head))
+        self.to_qkv = nn.Conv2d(dim, self.hidden_dim * 3, 1, bias=False)
+        self.to_out = nn.Conv2d(self.hidden_dim, dim, 1)
 
     def forward(self, x):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x)
+        
+    def _forward_impl(self, x):
         b, c, h, w = x.shape
 
         x = self.prenorm(x)
 
         qkv = self.to_qkv(x).chunk(3, dim=1)
-        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), qkv)
-        q = q * self.scale
-        sim = einsum('b h d i, b h d j -> b h i j', q, k)
-        attn = sim.softmax(dim = -1)
-        out = einsum('b h i j, b h d j -> b h i d', attn, v)
+        
+        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h (x y) c', h = self.num_heads), qkv)
+        mk, mv = map(lambda t: repeat(t, 'h n d -> b h n d', b = b), self.mem_kv)
+        k, v = map(partial(torch.cat, dim = -2), ((mk, k), (mv, v)))
 
+        out = self.attend(q, k, v)
         out = rearrange(out, 'b h (x y) d -> b (h d) x y', x = h, y = w)
         return self.to_out(out) + x
     
@@ -403,9 +418,9 @@ class ConvBlock2D(nn.Module):
         elif attn_info["full_attn"] is None:
             self.attn = nn.Identity()
         elif attn_info["full_attn"] is True:
-            self.attn = Attention(out_channels, attn_info["num_heads"])
+            self.attn = Attention(out_channels, attn_info["num_heads"], attn_info["dim_head"])
         else:
-            self.attn = LinearAttention(out_channels, attn_info["num_heads"])
+            self.attn = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"])
 
     def forward(self, x, *args):
         if self.use_checkpoint:
