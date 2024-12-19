@@ -74,10 +74,10 @@ def get_propotional_loss(y_pred, y_true, beta=0.7,
     y_pred_rev, y_true_rev = get_rev(y_pred, y_true)
     num_dims = len(y_true.shape)
     axis = tuple(range(2, num_dims))
-    
+
     alpha = 1 - beta
     prevalence = torch.mean(y_true, dim=axis)
-    prevalence = 2 * torch.sigmoid(1e4 * prevalence) - 1
+    prevalence = 2 * torch.sigmoid(1e3 * prevalence) - 1
     negative_ratio = 1 - prevalence
     positive_ratio = prevalence
 
