@@ -287,6 +287,23 @@ class LearnedSinusoidalPosEmb(nn.Module):
         fouriered = torch.cat((x, fouriered), dim = -1)
         return fouriered
 
+def get_scale_shift_list(emb_block_list, emb_args):
+    scale_shift_list = []
+    for emb_block, emb in zip(emb_block_list, emb_args):
+        emb = emb_block(emb)
+        if emb.ndim == 2:
+            emb = rearrange(emb, 'b c -> b c 1 1')
+        scale_shift = emb.chunk(2, dim=1)
+        scale_shift_list.append(scale_shift)
+    return scale_shift_list
+
+def apply_embedding(x, scale_shift_list, scale_bias=1):
+    if exists(scale_shift_list):
+        for scale_shift in scale_shift_list:
+            scale, shift = scale_shift
+            x = x * (scale_bias + scale) + shift
+    return x    
+
 class BaseBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
@@ -302,16 +319,14 @@ class BaseBlock2D(nn.Module):
             self.norm_layer = nn.Identity()
         self.act_layer = get_act(act)
         self.dropout_layer = nn.Dropout2d(p=dropout_proba, inplace=INPLACE)
+    
     def forward(self, x, scale_shift_list=None):
-        conv = self.conv(x)
-        conv = self.dropout_layer(conv)
-        norm = self.norm_layer(conv)
-        if exists(scale_shift_list):
-            for scale_shift in scale_shift_list:
-                scale, shift = scale_shift
-                norm = norm * (scale + 1) + shift
-        act = self.act_layer(norm)
-        return act
+        norm = self.norm_layer(x)
+        drop = self.dropout_layer(norm)
+        act = self.act_layer(drop)
+        conv = self.conv(act)
+        conv = apply_embedding(conv, scale_shift_list)
+        return conv
 
 #attn_info.keys = ["emb_type_list", "num_heads", "full_attn"]
 class ResNetBlock2D(nn.Module):
@@ -339,9 +354,9 @@ class ResNetBlock2D(nn.Module):
         self.emb_block_list = nn.ModuleList(emb_block_list)
 
         self.block_1 = BaseBlock2D(in_channels, out_channels, kernel_size,
-                                    stride, padding, norm, groups, act, bias, dropout_proba=dropout_proba)
-        self.block_2 = BaseBlock2D(out_channels, out_channels, kernel_size,
                                     1, padding, norm, groups, act, bias, dropout_proba=dropout_proba)
+        self.block_2 = BaseBlock2D(out_channels, out_channels, kernel_size,
+                                    stride, padding, norm, groups, act, bias, dropout_proba=dropout_proba)
 
         if in_channels != out_channels or stride != 1:
             self.residiual_conv = nn.Conv2d(in_channels, out_channels, 1, stride, bias=False)
@@ -365,17 +380,11 @@ class ResNetBlock2D(nn.Module):
         else:
             return self._forward_impl(x, *args)
 
-    def _forward_impl(self, x, *args):
+    def _forward_impl(self, x, *emb_args):
         skip_x = x
-        scale_shift_list = []
-        for emb_block, emb in zip(self.emb_block_list, args):
-            emb = emb_block(emb)
-            if emb.ndim == 2:
-                emb = rearrange(emb, 'b c -> b c 1 1')
-            scale_shift = emb.chunk(2, dim=1)
-            scale_shift_list.append(scale_shift)
-        x = self.block_1(x, scale_shift_list)
-        x = self.block_2(x)
+        scale_shift_list = get_scale_shift_list(self.emb_block_list, emb_args)
+        x = self.block_1(x)
+        x = self.block_2(x, scale_shift_list)
         x = x + self.residiual_conv(skip_x)
         x = self.attn(x)
         return x
@@ -429,14 +438,8 @@ class ConvBlock2D(nn.Module):
         else:
             return self._forward_impl(x, *args)
 
-    def _forward_impl(self, x, *args):
-        scale_shift_list = []
-        for emb_block, emb in zip(self.emb_block_list, args):
-            emb = emb_block(emb)
-            if emb.ndim == 2:
-                emb = rearrange(emb, 'b c -> b c 1 1')
-            scale_shift = emb.chunk(2, dim=1)
-            scale_shift_list.append(scale_shift)
+    def _forward_impl(self, x, *emb_args):
+        scale_shift_list = get_scale_shift_list(self.emb_block_list, emb_args)
         x = self.block_1(x, scale_shift_list)
         x = self.attn(x)
         return x
@@ -635,7 +638,7 @@ class MultiDecoder2D_V2(nn.Module):
         out = torch.cat([pixel_shuffle, conv_transpose], dim=1)
         out = self.concat_conv(out, *args)
         out = torch.cat([out, skip], dim=1)
-        out = self.skip_conv(out)
+        out = self.skip_conv(out, *args)
         return out
 
 class Output2D(nn.Module):
