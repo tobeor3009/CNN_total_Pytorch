@@ -26,7 +26,7 @@ class AutoEncoder(nn.Module):
             assert latent_net is not None, "diffusion_model.latent_net need to be set when you training latent_net"
         elif train_mode == "ddpm":
             encoder = getattr(diffusion_model, "encoder", None)
-            assert encoder is None, "diffusion_model.encoder need to be None whtn you training ddpm"
+            assert encoder is None, "diffusion_model.encoder need to be None when you training ddpm"
         else:
             raise NotImplementedError(f"{train_mode} is not in {train_mode_list}")
         
@@ -166,7 +166,7 @@ class AutoEncoder(nn.Module):
                 with torch.no_grad():
                         encoded_feature = self.encode(x_start)
             t, weight = self.T_sampler.sample(len(encoded_feature), torch_device)
-            result_dict = self.latent_sampler.training_losses(model=self.diffusion_model.latent_net, 
+            result_dict = self.latent_sampler.training_losses(model=self.diffusion_model.latent_net,
                                                                 x_start=encoded_feature, t=t)
         else:
             raise NotImplementedError()
