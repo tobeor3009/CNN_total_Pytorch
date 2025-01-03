@@ -13,7 +13,7 @@ from einops import rearrange, repeat
 from ..common_module.cbam import CBAM
 from ..common_module.layers import get_act, get_norm, DEFAULT_ACT, INPLACE
 from ..common_module.layers import ConcatBlock
-
+from .diff_ae.nn import zero_module, conv_nd
 conv_transpose_kwarg_dict = {
     "kernel_size":3,
     "padding":1,
@@ -52,6 +52,21 @@ def once(fn):
         called = True
         return fn(x)
     return inner
+
+def _z_normalize(x, target_dim_tuple, eps=1e-5):
+    x_mean = x.mean(dim=target_dim_tuple, keepdim=True)
+    x_var = x.var(dim=target_dim_tuple, correction=0, keepdim=True)
+    x_std = torch.sqrt(x_var + eps)
+    x_normalized = (x - x_mean) / x_std
+    return x_normalized
+
+def feature_z_normalize(x, eps=1e-5):
+    target_dim_tuple = tuple(range(1, x.ndim))
+    return _z_normalize(x, target_dim_tuple, eps=eps)
+
+def z_normalize(x, eps=1e-5):
+    target_dim_tuple = tuple(range(2, x.ndim))
+    return _z_normalize(x, target_dim_tuple, eps=eps)
 
 class WrapGroupNorm(nn.GroupNorm):
     
@@ -179,7 +194,7 @@ class RMSNorm(nn.Module):
         return F.normalize(x, dim=self.normalize_dim) * self.weight * self.scale
     
 class LinearAttention(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=32, num_mem_kv=4, norm=LayerNorm, use_checkpoint=False):
+    def __init__(self, dim, num_heads=4, dim_head=32, num_mem_kv=4, use_checkpoint=False):
         super().__init__()
         self.num_heads = num_heads
         self.use_checkpoint = use_checkpoint
@@ -188,7 +203,6 @@ class LinearAttention(nn.Module):
             dim_head = dim
         self.hidden_dim = dim_head * num_heads
         self.scale = (dim_head / num_heads) ** -0.5
-        self.prenorm = norm(dim)
         self.mem_kv = nn.Parameter(torch.randn(2, num_heads, dim_head, num_mem_kv))
         self.to_qkv = nn.Conv2d(dim, self.hidden_dim * 3, 1, bias=False)
         self.to_out = nn.Sequential(
@@ -206,7 +220,7 @@ class LinearAttention(nn.Module):
     def _forward_impl(self, x):
         b, c, h, w = x.shape
 
-        x = self.prenorm(x)
+        x = z_normalize(x)
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), qkv)
 
@@ -224,7 +238,7 @@ class LinearAttention(nn.Module):
         return self.to_out(out) + x
 
 class Attention(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=32, num_mem_kv=4, flash=False, norm=LayerNorm, use_checkpoint=False):
+    def __init__(self, dim, num_heads=4, dim_head=32, num_mem_kv=4, flash=False, use_checkpoint=False):
         super().__init__()
         self.num_heads = num_heads
         self.use_checkpoint = use_checkpoint
@@ -232,7 +246,6 @@ class Attention(nn.Module):
             dim_head = dim
 
         self.hidden_dim = dim_head * num_heads
-        self.prenorm = norm(dim)
         self.attend = Attend(flash = flash)
         self.mem_kv = nn.Parameter(torch.randn(2, num_heads, num_mem_kv, dim_head))
         self.to_qkv = nn.Conv2d(dim, self.hidden_dim * 3, 1, bias=False)
@@ -248,8 +261,7 @@ class Attention(nn.Module):
     def _forward_impl(self, x):
         b, c, h, w = x.shape
 
-        x = self.prenorm(x)
-
+        x = z_normalize(x)
         qkv = self.to_qkv(x).chunk(3, dim=1)
         
         q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h (x y) c', h = self.num_heads), qkv)
@@ -259,6 +271,115 @@ class Attention(nn.Module):
         out = self.attend(q, k, v)
         out = rearrange(out, 'b h (x y) d -> b (h d) x y', x = h, y = w)
         return self.to_out(out) + x
+
+class QKVAttentionLegacy(nn.Module):
+    """
+    A module which performs QKV attention. Matches legacy QKVAttention + input/ouput heads shaping
+    """
+    def __init__(self, n_heads):
+        super().__init__()
+        self.n_heads = n_heads
+
+    def forward(self, qkv):
+        """
+        Apply QKV attention.
+
+        :param qkv: an [N x (H * 3 * C) x T] tensor of Qs, Ks, and Vs.
+        :return: an [N x (H * C) x T] tensor after attention.
+        """
+        bs, width, length = qkv.shape
+        assert width % (3 * self.n_heads) == 0
+        ch = width // (3 * self.n_heads)
+        q, k, v = qkv.reshape(bs * self.n_heads, ch * 3, length).split(ch,
+                                                                       dim=1)
+        scale = 1 / math.sqrt(math.sqrt(ch))
+        weight = torch.einsum(
+            "bct,bcs->bts", q * scale,
+            k * scale)  # More stable with f16 than dividing afterwards
+        weight = torch.softmax(weight.float(), dim=-1).type(weight.dtype)
+        a = torch.einsum("bts,bcs->bct", weight, v)
+        return a.reshape(bs, -1, length)
+
+class QKVAttention(nn.Module):
+    """
+    A module which performs QKV attention and splits in a different order.
+    """
+    def __init__(self, n_heads):
+        super().__init__()
+        self.n_heads = n_heads
+
+    def forward(self, qkv):
+        """
+        Apply QKV attention.
+
+        :param qkv: an [N x (3 * H * C) x T] tensor of Qs, Ks, and Vs.
+        :return: an [N x (H * C) x T] tensor after attention.
+        """
+        bs, width, length = qkv.shape
+        assert width % (3 * self.n_heads) == 0
+        ch = width // (3 * self.n_heads)
+        q, k, v = qkv.chunk(3, dim=1)
+        scale = 1 / math.sqrt(math.sqrt(ch))
+        weight = torch.einsum(
+            "bct,bcs->bts",
+            (q * scale).view(bs * self.n_heads, ch, length),
+            (k * scale).view(bs * self.n_heads, ch, length),
+        )  # More stable with f16 than dividing afterwards
+        weight = torch.softmax(weight.float(), dim=-1).type(weight.dtype)
+        a = torch.einsum("bts,bcs->bct", weight,
+                      v.reshape(bs * self.n_heads, ch, length))
+        return a.reshape(bs, -1, length)
+
+class AttentionBlock(nn.Module):
+    """
+    An attention block that allows spatial positions to attend to each other.
+
+    Originally ported from here, but adapted to the N-d case.
+    https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
+    """
+    def __init__(
+        self,
+        channels,
+        num_heads=1,
+        num_head_channels=-1,
+        use_checkpoint=False,
+        use_new_attention_order=False,
+    ):  
+        super().__init__()
+        self.channels = channels
+        if num_head_channels == -1:
+            self.num_heads = num_heads
+        else:
+            assert (
+                channels % num_head_channels == 0
+            ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
+            self.num_heads = channels // num_head_channels
+        self.use_checkpoint = use_checkpoint
+        self.qkv = conv_nd(1, channels, channels * 3, 1)
+        if use_new_attention_order:
+            # split qkv before split heads
+            self.attention = QKVAttention(self.num_heads)
+        else:
+            # split heads before split qkv
+            self.attention = QKVAttentionLegacy(self.num_heads)
+
+        self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
+
+    def forward(self, x, *args):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x, *args,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x, *args)
+
+    def _forward_impl(self, x, *args):
+        b, c, *spatial = x.shape
+        x = x.reshape(b, c, -1)
+        x = z_normalize(x)
+        qkv = self.qkv(x)
+        h = self.attention(qkv)
+        h = self.proj_out(h)
+        return (x + h).reshape(b, c, *spatial)
     
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
@@ -368,25 +489,46 @@ class ResNetBlock2D(nn.Module):
         elif attn_info["full_attn"] is None:
             self.attn = nn.Identity()
         elif attn_info["full_attn"] is True:
-            self.attn = Attention(out_channels, attn_info["num_heads"])
+            self.attn = AttentionBlock(out_channels, attn_info["num_heads"], use_checkpoint=use_checkpoint)
         else:
-            self.attn = LinearAttention(out_channels, attn_info["num_heads"])
+            self.attn = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"], use_checkpoint=use_checkpoint)
 
 
     def forward(self, x, *args):
         if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x, *args,
+            conv_output = checkpoint(self._forward_conv, x, *args,
                               use_reentrant=False)
         else:
-            return self._forward_impl(x, *args)
-
-    def _forward_impl(self, x, *emb_args):
+            conv_output = self._forward_conv(x, *args)
+        attn_output = self._forward_attn(conv_output)
+        return attn_output
+    
+    def _forward_conv(self, x, *emb_args):
         skip_x = x
         scale_shift_list = get_scale_shift_list(self.emb_block_list, emb_args)
         x = self.block_1(x)
         x = self.block_2(x, scale_shift_list)
         x = x + self.residiual_conv(skip_x)
+        return x
+
+    def _forward_attn(self, x):
         x = self.attn(x)
+        return x
+
+class ResNetBlock2DSkip(ResNetBlock2D):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x, skip, *args):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x, skip, *args,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x, *args)
+
+    def _forward_impl(self, x, skip, *emb_args):
+        x = torch.cat([x, skip], dim=1)
+        x = super().forward(x, *emb_args)
         return x
 
 class ConvBlock2D(nn.Module):
@@ -427,7 +569,7 @@ class ConvBlock2D(nn.Module):
         elif attn_info["full_attn"] is None:
             self.attn = nn.Identity()
         elif attn_info["full_attn"] is True:
-            self.attn = Attention(out_channels, attn_info["num_heads"], attn_info["dim_head"])
+            self.attn = AttentionBlock(out_channels, attn_info["num_heads"])
         else:
             self.attn = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"])
 
@@ -585,7 +727,7 @@ class MultiDecoder2D(nn.Module):
         return out
 
 class MultiDecoder2D_V2(nn.Module):
-    def __init__(self, in_channels, skip_channels, out_channels,
+    def __init__(self, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2, drop_prob=0.0,
                  emb_dim_list=None, emb_type_list=None, attn_info=None, use_checkpoint=False):
         super().__init__()
@@ -622,23 +764,19 @@ class MultiDecoder2D_V2(nn.Module):
                                                 **conv_transpose_kwarg_dict)
         self.concat_conv = ConvBlock2D(in_channels=out_channels * 2,
                                        out_channels=out_channels, **conv_common_kwarg_dict)
-        self.skip_conv = ConvBlock2D(in_channels=out_channels + skip_channels,
-                                       out_channels=out_channels, **conv_common_kwarg_dict)
-    def forward(self, x, skip, *args):
+    def forward(self, x, *args):
         if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x, skip, *args,
+            return checkpoint(self._forward_impl, x, *args,
                               use_reentrant=False)
         else:
-            return self._forward_impl(x, skip, *args)
+            return self._forward_impl(x, *args)
         
-    def _forward_impl(self, x, skip, *args):
+    def _forward_impl(self, x, *args):
         pixel_shuffle = self.pixel_shuffle(x)
         conv_transpose = self.conv_transpose(x)
 
         out = torch.cat([pixel_shuffle, conv_transpose], dim=1)
         out = self.concat_conv(out, *args)
-        out = torch.cat([out, skip], dim=1)
-        out = self.skip_conv(out, *args)
         return out
 
 class Output2D(nn.Module):

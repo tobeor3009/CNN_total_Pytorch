@@ -4,32 +4,17 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn import init
-from nn import timestep_embedding
+from .nn import timestep_embedding
 from ..diffusion_layer import default
-from ..diffusion_layer import ResNetBlock2D, ResNetBlock2D, MultiDecoder2D_V2, Output2D, RMSNorm
-from ..diffusion_layer import LinearAttention, Attention, MaxPool2d, AvgPool2d, MultiInputSequential
+from ..diffusion_layer import ConvBlock2D, ResNetBlock2D, ResNetBlock2DSkip, MultiDecoder2D_V2, Output2D, RMSNorm
+from ..diffusion_layer import LinearAttention, Attention, AttentionBlock, MaxPool2d, AvgPool2d, MultiInputSequential
 from ..diffusion_layer import default, prob_mask_like, LearnedSinusoidalPosEmb, SinusoidalPosEmb
+from ..diffusion_layer import feature_z_normalize, z_normalize
 
 from ...common_module.layers import get_act, get_norm, AttentionPool
 from einops import rearrange, repeat
-
 class Return(NamedTuple):
     pred: torch.Tensor
-
-def _z_normalize(x, target_dim_tuple, eps=1e-5):
-    x_mean = x.mean(dim=target_dim_tuple, keepdim=True)
-    x_var = x.var(dim=target_dim_tuple, correction=0, keepdim=True)
-    x_std = torch.sqrt(x_var + eps)
-    x_normalized = (x - x_mean) / x_std    
-    return x_normalized
-
-def feature_z_normalize(x, eps=1e-5):
-    target_dim_tuple = tuple(range(1, x.ndim))
-    return _z_normalize(x, target_dim_tuple, eps=eps)
-
-def z_normalize(x, eps=1e-5):
-    target_dim_tuple = tuple(range(2, x.ndim))
-    return _z_normalize(x, target_dim_tuple, eps=eps)
 
 def get_skip_connect_channel_list(block_size, mini=False):
     if mini:
@@ -51,7 +36,7 @@ def get_time_emb_dim(block_size):
 class InceptionResNetV2_UNet(nn.Module):
     def __init__(self, in_channel, cond_channel, out_channel, img_size, block_size=16,
                  emb_channel=1024, decode_init_channel=None,
-                 norm=RMSNorm, act="silu", last_act=None, num_class_embeds=None, drop_prob=0.0, cond_drop_prob=0.5,
+                 norm="instance", act="silu", last_act=None, num_class_embeds=None, drop_prob=0.0, cond_drop_prob=0.5,
                  self_condition=False, use_checkpoint=[True, False, False, False, False],
                  attn_info_list=[False, False, False, False, True], attn_dim_head=32, num_head_list=[2, 4, 8, 8, 16],
                  block_depth_info="mini", include_encoder=None, include_latent_net=None):
@@ -88,7 +73,7 @@ class InceptionResNetV2_UNet(nn.Module):
         self.padding_3x3 = 1
         self.in_channel = in_channel
         self.block_size = block_size
-        self.norm = RMSNorm
+        self.norm = nn.InstanceNorm2d
         self.act = act
         if isinstance(use_checkpoint, bool):
             use_checkpoint = [use_checkpoint for _ in attn_info_list]
@@ -154,28 +139,7 @@ class InceptionResNetV2_UNet(nn.Module):
         self.out_channel = out_channel
         self.last_act = last_act
         self.set_encoder()
-        
-        decoder_layer_list = []
-        skip_channel_list = get_skip_connect_channel_list(block_size)
-        for decode_idx, skip_channel in enumerate(skip_channel_list):
-            skip_channel = skip_channel_list[4 - decode_idx]
-            decode_out_channel = decode_init_channel // (2 ** (decode_idx + 1))
-
-            if decode_idx == 0:
-                decode_in_channel = block_size * 96
-            else:
-                decode_in_channel = decode_init_channel // (2 ** decode_idx)
-
-            attn_info = self.get_attn_info(attn_info_list[4 - decode_idx], num_head_list[4 - decode_idx])
-            decode_emb_dim_list = emb_dim_list + [decode_out_channel]
-            
-            decoder_layer = MultiDecoder2D_V2(decode_in_channel, skip_channel, decode_out_channel,
-                                                norm=norm, act=act, kernel_size=2, drop_prob=drop_prob,
-                                                emb_dim_list=decode_emb_dim_list, attn_info=attn_info,
-                                                use_checkpoint=use_checkpoint[4 - decode_idx])
-            decoder_layer_list.append(decoder_layer)
-        self.decoder_layer_list = nn.ModuleList(decoder_layer_list)
-        self.decode_final_conv = Output2D(decode_out_channel, out_channel, act=last_act)
+        self.set_decoder()
 
         if self.include_encoder:
             self.encoder = InceptionResNetV2_Encoder(in_channel=cond_channel, img_size=img_size, block_size=block_size,
@@ -204,7 +168,7 @@ class InceptionResNetV2_UNet(nn.Module):
             x = torch.cat((x_self_cond, x), dim=1)
         
         if cond is None and self.include_encoder:
-            assert x.shape == x_start
+            assert x.shape == x_start.shape, f"x.shape: {x.shape}, x_start.shape: {x_start.shape}"
             latent_feature = self.encoder(x_start)
         else:
             latent_feature = cond
@@ -291,9 +255,12 @@ class InceptionResNetV2_UNet(nn.Module):
     def decode_forward(self, encode_feature, skip_connect_list, *args):
         decode_feature = encode_feature
         for decode_idx, (decode_layer, decode_layer_up) in enumerate(zip(self.decoder_layer_list, self.decoder_layer_up_list)):
-            skip = skip_connect_list[decode_idx]
-            decode_feature = decode_layer(decode_feature, skip, *args)
-            decode_feature = decode_layer_up(decode_feature, skip, *args)
+            if decode_idx > 0:
+                skip = skip_connect_list[decode_idx - 1]
+                decode_feature = decode_layer(decode_feature, skip, *args)
+            else:
+                decode_feature = decode_layer(decode_feature, *args)
+            decode_feature = decode_layer_up(decode_feature, *args)
         decode_feature = self.decode_final_conv(decode_feature)
         return decode_feature
 
@@ -358,7 +325,7 @@ class InceptionResNetV2_UNet(nn.Module):
         decoder_layer_up_list = []
         skip_channel_list = get_skip_connect_channel_list(self.block_size)
         for decode_idx, skip_channel in enumerate(skip_channel_list):
-            skip_channel = skip_channel_list[4 - decode_idx]
+            attn_info = self.get_attn_info(attn_info_list[4 - decode_idx], num_head_list[4 - decode_idx])
             decode_out_channel = decode_init_channel // (2 ** (decode_idx + 1))
 
             if decode_idx == 0:
@@ -366,13 +333,20 @@ class InceptionResNetV2_UNet(nn.Module):
             else:
                 decode_in_channel = decode_init_channel // (2 ** decode_idx)
 
-            attn_info = self.get_attn_info(attn_info_list[4 - decode_idx], num_head_list[4 - decode_idx])
-            decoder_layer = ResNetBlock2D(decode_in_channel, decode_out_channel, 3, stride=1,
-                                        attn_info=attn_info, use_checkpoint=use_checkpoint[4 - decode_idx],
-                                        **common_kwarg_dict),
-            decoder_layer_up = MultiDecoder2D_V2(decode_out_channel, skip_channel, decode_out_channel,
+
+            if decode_idx > 0:
+                skip_channel = skip_channel_list[4 - decode_idx + 1]
+                decoder_layer = ResNetBlock2DSkip(decode_in_channel + skip_channel, decode_out_channel, 3, stride=1,
+                                            attn_info=attn_info, use_checkpoint=use_checkpoint[4 - decode_idx],
+                                            **common_kwarg_dict)
+            else:
+                decoder_layer = ResNetBlock2D(decode_in_channel, decode_out_channel, 3, stride=1,
+                                            attn_info=attn_info, use_checkpoint=use_checkpoint[4 - decode_idx],
+                                            **common_kwarg_dict)
+
+            decoder_layer_up = MultiDecoder2D_V2(decode_out_channel, decode_out_channel,
                                                 kernel_size=2, drop_prob=self.drop_prob,
-                                                attn_info=attn_info, use_checkpoint=use_checkpoint[4 - decode_idx],
+                                                attn_info=None, use_checkpoint=use_checkpoint[4 - decode_idx],
                                                 **common_kwarg_dict)
             decoder_layer_list.append(decoder_layer)
             decoder_layer_up_list.append(decoder_layer_up)
@@ -390,11 +364,11 @@ class InceptionResNetV2_UNet(nn.Module):
     
     def get_attn_layer(self, dim, num_heads, dim_head, use_full_attn, use_checkpoint):
         if use_full_attn:
-            attn_class = Attention
+            return AttentionBlock(channels=dim, num_heads=num_heads,
+                                  use_checkpoint=use_checkpoint)
         else:
-            attn_class = LinearAttention
-        return attn_class(dim=dim, num_heads=num_heads, dim_head=dim_head,
-                          norm=self.norm, use_checkpoint=use_checkpoint)
+            return LinearAttention(dim=dim, num_heads=num_heads, dim_head=dim_head,
+                                   use_checkpoint=use_checkpoint)
 
     def get_encode_stem(self, emb_dim_list, emb_type_list):
         in_channel = self.in_channel
@@ -410,16 +384,16 @@ class InceptionResNetV2_UNet(nn.Module):
         }
         return nn.ModuleDict({
             'stem_layer_0_0': ResNetBlock2D(in_channel, block_size * 2, 3, stride=1,
-                                        attn_info=None,
+                                        attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         **common_kwarg_dict),
             'stem_layer_0_1': ResNetBlock2D(block_size * 2, block_size * 2, 3, stride=1,
-                                        attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
-                                        **common_kwarg_dict),
-            'stem_layer_1_0': ResNetBlock2D(block_size * 2, block_size * 2, 3, stride=1,
                                         attn_info=None,
                                         **common_kwarg_dict),
-            'stem_layer_1_1': ResNetBlock2D(block_size * 2, block_size * 2, 3, stride=2, padding=self.padding_3x3,
+            'stem_layer_1_0': ResNetBlock2D(block_size * 2, block_size * 2, 3, stride=1,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
+                                        **common_kwarg_dict),
+            'stem_layer_1_1': ResNetBlock2D(block_size * 2, block_size * 2, 3, stride=2, padding=self.padding_3x3,
+                                        attn_info=None,
                                         **common_kwarg_dict),
             'stem_layer_2': ResNetBlock2D(block_size * 2, block_size * 2, 3,
                                         attn_info=None,
@@ -450,14 +424,14 @@ class InceptionResNetV2_UNet(nn.Module):
             "dropout_proba": self.drop_prob
         }
 
-        mixed_5b_branch_0_0 = ResNetBlock2D(block_size * 12, block_size * 6, 1, **common_arg_dict)
-        mixed_5b_branch_1_0 = ResNetBlock2D(block_size * 12, block_size * 3, 1, **common_arg_dict)
-        mixed_5b_branch_1_1 = ResNetBlock2D(block_size * 3, block_size * 4, 5, **common_arg_dict)
-        mixed_5b_branch_2_0 = ResNetBlock2D(block_size * 12, block_size * 4, 1, **common_arg_dict)
-        mixed_5b_branch_2_1 = ResNetBlock2D(block_size * 4, block_size * 6, 3, **common_arg_dict)
-        mixed_5b_branch_2_2 = ResNetBlock2D(block_size * 6, block_size * 6, 3, **common_arg_dict)
+        mixed_5b_branch_0_0 = ConvBlock2D(block_size * 12, block_size * 6, 1, **common_arg_dict)
+        mixed_5b_branch_1_0 = ConvBlock2D(block_size * 12, block_size * 3, 1, **common_arg_dict)
+        mixed_5b_branch_1_1 = ConvBlock2D(block_size * 3, block_size * 4, 5, **common_arg_dict)
+        mixed_5b_branch_2_0 = ConvBlock2D(block_size * 12, block_size * 4, 1, **common_arg_dict)
+        mixed_5b_branch_2_1 = ConvBlock2D(block_size * 4, block_size * 6, 3, **common_arg_dict)
+        mixed_5b_branch_2_2 = ConvBlock2D(block_size * 6, block_size * 6, 3, **common_arg_dict)
         mixed_5b_branch_pool_0 = AvgPool2d(3, stride=1, padding=1)
-        mixed_5b_branch_pool_1 = ResNetBlock2D(block_size * 12, block_size * 4, 1, **common_arg_dict)
+        mixed_5b_branch_pool_1 = ConvBlock2D(block_size * 12, block_size * 4, 1, **common_arg_dict)
         mixed_5b = nn.ModuleDict({
             "mixed_5b_branch_0": nn.ModuleList([mixed_5b_branch_0_0]),
             "mixed_5b_branch_1": nn.ModuleList([mixed_5b_branch_1_0, 
@@ -487,11 +461,11 @@ class InceptionResNetV2_UNet(nn.Module):
             "dropout_proba": self.drop_prob
         }
 
-        mixed_6a_branch_0_0 = ResNetBlock2D(block_size * 20, block_size * 24, 3,
+        mixed_6a_branch_0_0 = ConvBlock2D(block_size * 20, block_size * 24, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
-        mixed_6a_branch_1_1 = ResNetBlock2D(block_size * 20, block_size * 16, 1, **common_arg_dict)
-        mixed_6a_branch_1_2 = ResNetBlock2D(block_size * 16, block_size * 16, 3, **common_arg_dict)
-        mixed_6a_branch_1_3 = ResNetBlock2D(block_size * 16, block_size * 24, 3,
+        mixed_6a_branch_1_1 = ConvBlock2D(block_size * 20, block_size * 16, 1, **common_arg_dict)
+        mixed_6a_branch_1_2 = ConvBlock2D(block_size * 16, block_size * 16, 3, **common_arg_dict)
+        mixed_6a_branch_1_3 = ConvBlock2D(block_size * 16, block_size * 24, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
         mixed_6a_branch_pool_0 = MaxPool2d(3, stride=2, padding=padding_3x3)
         mixed_6a = nn.ModuleDict({
@@ -517,15 +491,15 @@ class InceptionResNetV2_UNet(nn.Module):
             "use_checkpoint": self.use_checkpoint[layer_idx],
             "dropout_proba": self.drop_prob
         }
-        mixed_7a_branch_0_1 = ResNetBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
-        mixed_7a_branch_0_2 = ResNetBlock2D(block_size * 16, block_size * 24, 3,
+        mixed_7a_branch_0_1 = ConvBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
+        mixed_7a_branch_0_2 = ConvBlock2D(block_size * 16, block_size * 24, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
-        mixed_7a_branch_1_1 = ResNetBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
-        mixed_7a_branch_1_2 = ResNetBlock2D(block_size * 16, block_size * 18, 3,
+        mixed_7a_branch_1_1 = ConvBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
+        mixed_7a_branch_1_2 = ConvBlock2D(block_size * 16, block_size * 18, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
-        mixed_7a_branch_2_1 = ResNetBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
-        mixed_7a_branch_2_2 = ResNetBlock2D(block_size * 16, block_size * 18, 3, **common_arg_dict)
-        mixed_7a_branch_2_3 = ResNetBlock2D(block_size * 18, block_size * 20, 3,
+        mixed_7a_branch_2_1 = ConvBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
+        mixed_7a_branch_2_2 = ConvBlock2D(block_size * 16, block_size * 18, 3, **common_arg_dict)
+        mixed_7a_branch_2_3 = ConvBlock2D(block_size * 18, block_size * 20, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
         mixed_7a_branch_pool_0 = MaxPool2d(3, stride=2, padding=padding_3x3)
         mixed_7a = nn.ModuleDict({
@@ -565,14 +539,14 @@ class InceptionResNetV2_UNet(nn.Module):
             "dropout_proba": self.drop_prob
         }
 
-        branch_0_0 = ResNetBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
-        branch_1_0 = ResNetBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
-        branch_1_1 = ResNetBlock2D(block_size * 2, block_size * 2, 3, **common_arg_dict)
-        branch_2_0 = ResNetBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
-        branch_2_1 = ResNetBlock2D(block_size * 2, block_size * 3, 3, **common_arg_dict)
-        branch_2_2 = ResNetBlock2D(block_size * 3, block_size * 4, 3, **common_arg_dict)
+        branch_0_0 = ConvBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
+        branch_1_0 = ConvBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
+        branch_1_1 = ConvBlock2D(block_size * 2, block_size * 2, 3, **common_arg_dict)
+        branch_2_0 = ConvBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
+        branch_2_1 = ConvBlock2D(block_size * 2, block_size * 3, 3, **common_arg_dict)
+        branch_2_2 = ConvBlock2D(block_size * 3, block_size * 4, 3, **common_arg_dict)
 
-        up = ResNetBlock2D(mixed_channel, in_channels, 1,
+        up = ConvBlock2D(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=self.use_checkpoint[layer_idx])
@@ -600,11 +574,11 @@ class InceptionResNetV2_UNet(nn.Module):
             "use_checkpoint": self.use_checkpoint[layer_idx],
             "dropout_proba": self.drop_prob
         }
-        branch_0_0 = ResNetBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
-        branch_1_0 = ResNetBlock2D(in_channels, block_size * 8, 1, **common_arg_dict)
-        branch_1_1 = ResNetBlock2D(block_size * 8, block_size * 10, [1, 7], **common_arg_dict)
-        branch_1_2 = ResNetBlock2D(block_size * 10, block_size * 12, [7, 1], **common_arg_dict)
-        up = ResNetBlock2D(mixed_channel, in_channels, 1,
+        branch_0_0 = ConvBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
+        branch_1_0 = ConvBlock2D(in_channels, block_size * 8, 1, **common_arg_dict)
+        branch_1_1 = ConvBlock2D(block_size * 8, block_size * 10, [1, 7], **common_arg_dict)
+        branch_1_2 = ConvBlock2D(block_size * 10, block_size * 12, [7, 1], **common_arg_dict)
+        up = ConvBlock2D(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=self.use_checkpoint[layer_idx])
@@ -630,11 +604,11 @@ class InceptionResNetV2_UNet(nn.Module):
             "use_checkpoint": self.use_checkpoint[layer_idx],
             "dropout_proba": self.drop_prob
         }
-        branch_0_0 = ResNetBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
-        branch_1_0 = ResNetBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
-        branch_1_1 = ResNetBlock2D(block_size * 12, block_size * 14, [1, 3], **common_arg_dict)
-        branch_1_2 = ResNetBlock2D(block_size * 14, block_size * 16, [3, 1], **common_arg_dict)
-        up = ResNetBlock2D(mixed_channel, in_channels, 1,
+        branch_0_0 = ConvBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
+        branch_1_0 = ConvBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
+        branch_1_1 = ConvBlock2D(block_size * 12, block_size * 14, [1, 3], **common_arg_dict)
+        branch_1_2 = ConvBlock2D(block_size * 14, block_size * 16, [3, 1], **common_arg_dict)
+        up = ConvBlock2D(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=self.use_checkpoint[layer_idx])
@@ -694,7 +668,7 @@ class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
         ##################################
         self.set_encoder()
         self.pool_layer = nn.Sequential(
-            get_norm(self.norm),
+            self.norm(self.feature_channel),
             get_act(self.act),
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(start_dim=1),

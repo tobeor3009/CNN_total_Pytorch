@@ -36,7 +36,7 @@ def render_condition(
     cond=None,
     train_mode=None
 ):
-    if train_mode == "autoencoder":
+    if train_mode in ["autoencoder", "ddpm"]:
         if cond is None:
             cond = model.encode(x_start)
         return sampler.sample(model=model,

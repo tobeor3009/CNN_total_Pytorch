@@ -103,7 +103,6 @@ def average_across_gpus(torch_scalar):
     dist.reduce(torch_scalar, dst=0, op=dist.ReduceOp.AVG)
     return torch_scalar.item()
 
-
 def load_deepspeed_model_to_torch_model(torch_model, weight_path):
     # map_location cpu is for reduction gpu memory usage
     state_dict = torch.load(weight_path, map_location=torch.device("cpu"))

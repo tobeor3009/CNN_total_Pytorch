@@ -2,6 +2,7 @@ import math
 import torch
 from torch import nn
 from torch.amp import autocast
+from torch.nn import functional as F 
 from .resample import UniformSampler
 from .diffusion_sampler import GaussianSampler
 from .renderer import render_uncondition, render_condition
@@ -31,7 +32,7 @@ class AutoEncoder(nn.Module):
                  latent_gen_type="ddim", latent_model_mean_type="eps", latent_model_var_type="fixed_large", latent_model_loss_type="l1",
                  latent_clip_sample=False, latent_znormalize=True,
                  fp16=False, train_pred_xstart_detach=True):
-        
+        super().__init__()
         train_mode_list = ["autoencoder", "latent_net", "ddpm"]
         if train_mode == "autoencoder":
             encoder = getattr(diffusion_model, "encoder", None)
@@ -50,7 +51,7 @@ class AutoEncoder(nn.Module):
         ##########################
         self.train_mode = train_mode
         self.diffusion_model = diffusion_model
-        self.img_size = getattr(diffusion_model, img_size, None) or img_size
+        self.img_size = getattr(diffusion_model, "img_size", None) or img_size
         self.img_dim = img_dim
         self.in_channel = diffusion_model.in_channel
         self.cond_channel = diffusion_model.cond_channel
@@ -139,7 +140,8 @@ class AutoEncoder(nn.Module):
         if cond is not None:
             pred_img = render_condition(self.diffusion_model,
                                         noise, sampler,
-                                        cond=cond)
+                                        cond=cond,
+                                        train_mode=self.train_mode)
         else:
             pred_img = render_uncondition(self.diffusion_model,
                                           noise, sampler, latent_sampler,
@@ -150,7 +152,7 @@ class AutoEncoder(nn.Module):
         return pred_img
 
     def encode(self, x):
-        assert self.model_type == "autoencoder"
+        assert getattr(self.diffusion_model, "encoder", None) is not None
         cond = self.diffusion_model.encoder.forward(x)
         return cond
     
@@ -165,17 +167,32 @@ class AutoEncoder(nn.Module):
         return out['sample']
 
     # Check: remove kwarg ema_model
-    def forward(self, noise=None, x_start=None):
-        with autocast(False):
-            gen = self.eval_sampler.sample(model=self.diffusion_model,
-                                           noise=noise,
-                                           x_start=x_start)
-            return gen
+    def get_loss(self, x_start=None, encoded_feature=None):
+        x_start_device = getattr(x_start, "device", None)
+        encoded_feature_device = getattr(x_start, "device", None)
+        torch_device = x_start_device or encoded_feature_device
+        # with autocast(device_type=torch_device, enabled=False):
+        if self.train_mode in ["autoencoder", "ddpm"]:
+            assert encoded_feature is None
+            t, weight = self.T_sampler.sample(len(x_start), torch_device)
+            result_dict = self.sampler.training_losses(model=self.diffusion_model,
+                                                        x_start=x_start, t=t)
+        elif self.train_mode == "latent_net":
+            if encoded_feature is None:
+                with torch.no_grad():
+                        encoded_feature = self.encode(x_start)
+            t, weight = self.T_sampler.sample(len(encoded_feature), torch_device)
+            result_dict = self.latent_sampler.training_losses(model=self.diffusion_model.latent_net, 
+                                                                x_start=encoded_feature, t=t)
+        else:
+            raise NotImplementedError()
+        
+        return result_dict['loss']
         
     def manipulate(self, x, class_idx, cls_model, manipulate_weight):
         class_mlp_weight = cls_model.classifier.weight
         style_ch = class_mlp_weight.shape[1]
-        target_class_weight = cls_model.classifier.weight[class_idx][None, :], dim=1
+        target_class_weight = F.normalize(cls_model.classifier.weight[class_idx][None, :], dim=1)
         target_dim_tuple = tuple(range(1, target_class_weight))
         target_class_weight, *_ = _z_normalize(target_class_weight, target_dim_tuple, eps=1e-5)
         cond = self.encode(x)

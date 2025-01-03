@@ -1,8 +1,8 @@
 from typing import NamedTuple
-
+from torch.amp import autocast
 import numpy as np
 import torch
-from choices import ModelType, GenerativeType
+from .choices import ModelType, GenerativeType
 from .nn import mean_flat
 
 def space_timesteps(num_timesteps, section_counts):
@@ -106,7 +106,7 @@ def get_spaced_diffusion_betas(alphas_cumprod, use_timesteps):
             # getting the new betas of the new timesteps
             new_betas.append(1 - alpha_cumprod / last_alpha_cumprod)
             last_alpha_cumprod = alpha_cumprod
-    new_betas = np.array(new_betas)
+    new_betas = np.array(new_betas, dtype=np.float64)
     return new_betas, timestep_map
 
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps, use_timesteps, spaced):
@@ -124,16 +124,16 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps, use_timestep
         scale = 1000 / num_diffusion_timesteps
         beta_start = scale * 0.0001
         beta_end = scale * 0.02
-        betas = np.linspace(beta_start, beta_end, num_diffusion_timesteps) 
+        betas = np.linspace(beta_start, beta_end, num_diffusion_timesteps)
     elif schedule_name == "cosine":
         betas = betas_for_alpha_bar(num_diffusion_timesteps,
-                                    lambda t: torch.cos((t + 0.008) / 1.008 * torch.pi / 2)**2) 
+                                    lambda t: torch.cos((t + 0.008) / 1.008 * torch.pi / 2)**2)
     elif schedule_name[:5] == "const":
         const_coef = float(schedule_name[5:])
         betas = get_const_betas(const_coef)
     else:
         raise NotImplementedError(f"unknown beta schedule: {schedule_name}")
-    betas = betas.astype("float64")
+    betas = betas.astype(np.float64)
     if spaced:
         alphas = 1 - betas
         alphas_cumprod = np.cumprod(alphas, axis=0)
@@ -259,17 +259,21 @@ class GaussianSampler():
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
         self.alphas_cumprod_next = np.append(self.alphas_cumprod[1:], 0.0)
         assert self.alphas_cumprod_prev.shape == (self.num_timesteps, )
+
         # calculations for diffusion q(x_t | x_{t-1}) and others
         self.sqrt_alphas_cumprod = np.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = np.sqrt(1.0 - self.alphas_cumprod)
         self.log_one_minus_alphas_cumprod = np.log(1.0 - self.alphas_cumprod)
         self.sqrt_recip_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod)
         self.sqrt_recipm1_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod - 1)
+
         # calculations for posterior q(x_{t-1} | x_t, x_0)
-        self.posterior_variance = (betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod))
+        self.posterior_variance = (betas * (1.0 - self.alphas_cumprod_prev) /
+                                   (1.0 - self.alphas_cumprod))
         # log calculation clipped because the posterior variance is 0 at the
         # beginning of the diffusion chain.
-        self.posterior_log_variance_clipped = np.log(np.append(self.posterior_variance[1], self.posterior_variance[1:]))
+        self.posterior_log_variance_clipped = np.log(
+            np.append(self.posterior_variance[1], self.posterior_variance[1:]))
         self.posterior_mean_coef1 = (betas *
                                      np.sqrt(self.alphas_cumprod_prev) /
                                      (1.0 - self.alphas_cumprod))
@@ -301,12 +305,12 @@ class GaussianSampler():
 
         terms = {'x_t': x_t}
 
-        with torch.amp.autocast(self.fp16):
-            # x_t is static wrt. to the diffusion process
-            model_forward = model.forward(x=x_t.detach(),
-                                            t=self._scale_timesteps(t),
-                                            x_start=x_start.detach(),
-                                            **model_kwargs)
+        # with autocast(device_type=x_start.device, enabled=self.fp16):
+        # x_t is static wrt. to the diffusion process
+        model_forward = model.forward(x=x_t.detach(),
+                                        t=self._scale_timesteps(t),
+                                        x_start=x_start.detach(),
+                                        **model_kwargs)
         model_output = model_forward.pred
 
         _model_output = model_output
@@ -323,7 +327,7 @@ class GaussianSampler():
 
         # model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
 
-        if self.model_mean_type == "noise":
+        if self.model_mean_type == "eps":
             target = noise
         else:
             raise NotImplementedError()
@@ -470,10 +474,10 @@ class GaussianSampler():
 
         B, C = x.shape[:2]
         assert t.shape == (B, )
-        with torch.amp.autocast(self.fp16):
-            model_forward = model.forward(x=x,
-                                          t=self._scale_timesteps(t),
-                                          **model_kwargs)
+        # with torch.amp.autocast(self.fp16):
+        model_forward = model.forward(x=x,
+                                        t=self._scale_timesteps(t),
+                                        **model_kwargs)
         model_output = model_forward.pred
 
         # for fixedlarge, we set the initial (log-)variance like so
