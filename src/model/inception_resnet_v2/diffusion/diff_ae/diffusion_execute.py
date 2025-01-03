@@ -150,6 +150,8 @@ class AutoEncoder(nn.Module):
                                                model_kwargs={'cond': cond})
         return out['sample']
 
+    def forward(self, x_start=None, encoded_feature=None):
+        return self.get_loss(x_start=x_start, encoded_feature=encoded_feature)
     # Check: remove kwarg ema_model
     def get_loss(self, x_start=None, encoded_feature=None):
         x_start_device = getattr(x_start, "device", None)
