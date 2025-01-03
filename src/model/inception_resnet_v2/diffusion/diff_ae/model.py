@@ -30,7 +30,7 @@ def get_encode_feature_channel(block_size, last_channel_ratio):
 def get_time_emb_dim(block_size):
     emb_dim = block_size * 16
     time_emb_dim_init = emb_dim // 2
-    time_emb_dim = emb_dim * 4
+    time_emb_dim = emb_dim * 2
     return emb_dim, time_emb_dim_init, time_emb_dim
 
 class InceptionResNetV2_UNet(nn.Module):
