@@ -6,7 +6,7 @@ from torch import nn
 from torch.nn import init
 from .nn import timestep_embedding
 from ..diffusion_layer import default
-from ..diffusion_layer import ConvBlock2D, ResNetBlock2D, ResNetBlock2DSkip, MultiDecoder2D_V2, Output2D, RMSNorm
+from ..diffusion_layer import ResNetBlock2D, ResNetBlock2D, ResNetBlock2DSkip, MultiDecoder2D_V2, Output2D, RMSNorm
 from ..diffusion_layer import LinearAttention, Attention, AttentionBlock, MaxPool2d, AvgPool2d, MultiInputSequential
 from ..diffusion_layer import default, prob_mask_like, LearnedSinusoidalPosEmb, SinusoidalPosEmb
 from ..diffusion_layer import feature_z_normalize, z_normalize
@@ -424,14 +424,14 @@ class InceptionResNetV2_UNet(nn.Module):
             "dropout_proba": self.drop_prob
         }
 
-        mixed_5b_branch_0_0 = ConvBlock2D(block_size * 12, block_size * 6, 1, **common_arg_dict)
-        mixed_5b_branch_1_0 = ConvBlock2D(block_size * 12, block_size * 3, 1, **common_arg_dict)
-        mixed_5b_branch_1_1 = ConvBlock2D(block_size * 3, block_size * 4, 5, **common_arg_dict)
-        mixed_5b_branch_2_0 = ConvBlock2D(block_size * 12, block_size * 4, 1, **common_arg_dict)
-        mixed_5b_branch_2_1 = ConvBlock2D(block_size * 4, block_size * 6, 3, **common_arg_dict)
-        mixed_5b_branch_2_2 = ConvBlock2D(block_size * 6, block_size * 6, 3, **common_arg_dict)
+        mixed_5b_branch_0_0 = ResNetBlock2D(block_size * 12, block_size * 6, 1, **common_arg_dict)
+        mixed_5b_branch_1_0 = ResNetBlock2D(block_size * 12, block_size * 3, 1, **common_arg_dict)
+        mixed_5b_branch_1_1 = ResNetBlock2D(block_size * 3, block_size * 4, 5, **common_arg_dict)
+        mixed_5b_branch_2_0 = ResNetBlock2D(block_size * 12, block_size * 4, 1, **common_arg_dict)
+        mixed_5b_branch_2_1 = ResNetBlock2D(block_size * 4, block_size * 6, 3, **common_arg_dict)
+        mixed_5b_branch_2_2 = ResNetBlock2D(block_size * 6, block_size * 6, 3, **common_arg_dict)
         mixed_5b_branch_pool_0 = AvgPool2d(3, stride=1, padding=1)
-        mixed_5b_branch_pool_1 = ConvBlock2D(block_size * 12, block_size * 4, 1, **common_arg_dict)
+        mixed_5b_branch_pool_1 = ResNetBlock2D(block_size * 12, block_size * 4, 1, **common_arg_dict)
         mixed_5b = nn.ModuleDict({
             "mixed_5b_branch_0": nn.ModuleList([mixed_5b_branch_0_0]),
             "mixed_5b_branch_1": nn.ModuleList([mixed_5b_branch_1_0, 
@@ -461,11 +461,11 @@ class InceptionResNetV2_UNet(nn.Module):
             "dropout_proba": self.drop_prob
         }
 
-        mixed_6a_branch_0_0 = ConvBlock2D(block_size * 20, block_size * 24, 3,
+        mixed_6a_branch_0_0 = ResNetBlock2D(block_size * 20, block_size * 24, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
-        mixed_6a_branch_1_1 = ConvBlock2D(block_size * 20, block_size * 16, 1, **common_arg_dict)
-        mixed_6a_branch_1_2 = ConvBlock2D(block_size * 16, block_size * 16, 3, **common_arg_dict)
-        mixed_6a_branch_1_3 = ConvBlock2D(block_size * 16, block_size * 24, 3,
+        mixed_6a_branch_1_1 = ResNetBlock2D(block_size * 20, block_size * 16, 1, **common_arg_dict)
+        mixed_6a_branch_1_2 = ResNetBlock2D(block_size * 16, block_size * 16, 3, **common_arg_dict)
+        mixed_6a_branch_1_3 = ResNetBlock2D(block_size * 16, block_size * 24, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
         mixed_6a_branch_pool_0 = MaxPool2d(3, stride=2, padding=padding_3x3)
         mixed_6a = nn.ModuleDict({
@@ -491,15 +491,15 @@ class InceptionResNetV2_UNet(nn.Module):
             "use_checkpoint": self.use_checkpoint[layer_idx],
             "dropout_proba": self.drop_prob
         }
-        mixed_7a_branch_0_1 = ConvBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
-        mixed_7a_branch_0_2 = ConvBlock2D(block_size * 16, block_size * 24, 3,
+        mixed_7a_branch_0_1 = ResNetBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
+        mixed_7a_branch_0_2 = ResNetBlock2D(block_size * 16, block_size * 24, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
-        mixed_7a_branch_1_1 = ConvBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
-        mixed_7a_branch_1_2 = ConvBlock2D(block_size * 16, block_size * 18, 3,
+        mixed_7a_branch_1_1 = ResNetBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
+        mixed_7a_branch_1_2 = ResNetBlock2D(block_size * 16, block_size * 18, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
-        mixed_7a_branch_2_1 = ConvBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
-        mixed_7a_branch_2_2 = ConvBlock2D(block_size * 16, block_size * 18, 3, **common_arg_dict)
-        mixed_7a_branch_2_3 = ConvBlock2D(block_size * 18, block_size * 20, 3,
+        mixed_7a_branch_2_1 = ResNetBlock2D(block_size * 68, block_size * 16, 1, **common_arg_dict)
+        mixed_7a_branch_2_2 = ResNetBlock2D(block_size * 16, block_size * 18, 3, **common_arg_dict)
+        mixed_7a_branch_2_3 = ResNetBlock2D(block_size * 18, block_size * 20, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
         mixed_7a_branch_pool_0 = MaxPool2d(3, stride=2, padding=padding_3x3)
         mixed_7a = nn.ModuleDict({
@@ -539,14 +539,14 @@ class InceptionResNetV2_UNet(nn.Module):
             "dropout_proba": self.drop_prob
         }
 
-        branch_0_0 = ConvBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
-        branch_1_0 = ConvBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
-        branch_1_1 = ConvBlock2D(block_size * 2, block_size * 2, 3, **common_arg_dict)
-        branch_2_0 = ConvBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
-        branch_2_1 = ConvBlock2D(block_size * 2, block_size * 3, 3, **common_arg_dict)
-        branch_2_2 = ConvBlock2D(block_size * 3, block_size * 4, 3, **common_arg_dict)
+        branch_0_0 = ResNetBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
+        branch_1_0 = ResNetBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
+        branch_1_1 = ResNetBlock2D(block_size * 2, block_size * 2, 3, **common_arg_dict)
+        branch_2_0 = ResNetBlock2D(in_channels, block_size * 2, 1, **common_arg_dict)
+        branch_2_1 = ResNetBlock2D(block_size * 2, block_size * 3, 3, **common_arg_dict)
+        branch_2_2 = ResNetBlock2D(block_size * 3, block_size * 4, 3, **common_arg_dict)
 
-        up = ConvBlock2D(mixed_channel, in_channels, 1,
+        up = ResNetBlock2D(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=self.use_checkpoint[layer_idx])
@@ -574,11 +574,11 @@ class InceptionResNetV2_UNet(nn.Module):
             "use_checkpoint": self.use_checkpoint[layer_idx],
             "dropout_proba": self.drop_prob
         }
-        branch_0_0 = ConvBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
-        branch_1_0 = ConvBlock2D(in_channels, block_size * 8, 1, **common_arg_dict)
-        branch_1_1 = ConvBlock2D(block_size * 8, block_size * 10, [1, 7], **common_arg_dict)
-        branch_1_2 = ConvBlock2D(block_size * 10, block_size * 12, [7, 1], **common_arg_dict)
-        up = ConvBlock2D(mixed_channel, in_channels, 1,
+        branch_0_0 = ResNetBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
+        branch_1_0 = ResNetBlock2D(in_channels, block_size * 8, 1, **common_arg_dict)
+        branch_1_1 = ResNetBlock2D(block_size * 8, block_size * 10, [1, 7], **common_arg_dict)
+        branch_1_2 = ResNetBlock2D(block_size * 10, block_size * 12, [7, 1], **common_arg_dict)
+        up = ResNetBlock2D(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=self.use_checkpoint[layer_idx])
@@ -604,11 +604,11 @@ class InceptionResNetV2_UNet(nn.Module):
             "use_checkpoint": self.use_checkpoint[layer_idx],
             "dropout_proba": self.drop_prob
         }
-        branch_0_0 = ConvBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
-        branch_1_0 = ConvBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
-        branch_1_1 = ConvBlock2D(block_size * 12, block_size * 14, [1, 3], **common_arg_dict)
-        branch_1_2 = ConvBlock2D(block_size * 14, block_size * 16, [3, 1], **common_arg_dict)
-        up = ConvBlock2D(mixed_channel, in_channels, 1,
+        branch_0_0 = ResNetBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
+        branch_1_0 = ResNetBlock2D(in_channels, block_size * 12, 1, **common_arg_dict)
+        branch_1_1 = ResNetBlock2D(block_size * 12, block_size * 14, [1, 3], **common_arg_dict)
+        branch_1_2 = ResNetBlock2D(block_size * 14, block_size * 16, [3, 1], **common_arg_dict)
+        up = ResNetBlock2D(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=self.use_checkpoint[layer_idx])
