@@ -138,3 +138,20 @@ def process_with_checkpoint(process_fn, x, *args, use_checkpoint=False):
                             use_reentrant=False)
     else:
         return process_fn(x, *args)
+    
+def _z_normalize(x, target_dim_tuple, eps=1e-5):
+    x_mean = x.mean(dim=target_dim_tuple, keepdim=True)
+    x_var = x.var(dim=target_dim_tuple, correction=0, keepdim=True)
+    x_std = torch.sqrt(x_var + eps)
+    x_normalized = (x - x_mean) / x_std
+    return x_normalized, x_mean, x_std
+
+def feature_z_normalize(x, eps=1e-5):
+    target_dim_tuple = tuple(range(1, x.ndim))
+    x_normalized, x_mean, x_std = _z_normalize(x, target_dim_tuple, eps=eps)
+    return x_normalized, x_mean, x_std
+
+def z_normalize(x, eps=1e-5):
+    target_dim_tuple = tuple(range(2, x.ndim))
+    x_normalized, x_mean, x_std = _z_normalize(x, target_dim_tuple, eps=eps)
+    return x_normalized, x_mean, x_std

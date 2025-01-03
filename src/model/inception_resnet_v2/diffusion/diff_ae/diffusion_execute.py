@@ -6,23 +6,7 @@ from torch.nn import functional as F
 from .resample import UniformSampler
 from .diffusion_sampler import GaussianSampler
 from .renderer import render_uncondition, render_condition
-
-def _z_normalize(x, target_dim_tuple, eps=1e-5):
-    x_mean = x.mean(dim=target_dim_tuple, keepdim=True)
-    x_var = x.var(dim=target_dim_tuple, correction=0, keepdim=True)
-    x_std = torch.sqrt(x_var + eps)
-    x_normalized = (x - x_mean) / x_std    
-    return x_normalized, x_mean, x_std
-
-def feature_z_normalize(x, eps=1e-5):
-    target_dim_tuple = tuple(range(1, x.ndim))
-    x_normalized, x_mean, x_std = _z_normalize(x, target_dim_tuple, eps=eps)
-    return x_normalized, x_mean, x_std
-
-def z_normalize(x, eps=1e-5):
-    target_dim_tuple = tuple(range(2, x.ndim))
-    x_normalized, x_mean, x_std = _z_normalize(x, target_dim_tuple, eps=eps)
-    return x_normalized, x_mean, x_std
+from src.model.train_util.common import _z_normalize, feature_z_normalize, z_normalize
 
 class AutoEncoder(nn.Module):
     def __init__(self, diffusion_model, train_mode, sample_size=1, img_size=512, img_dim=2,
