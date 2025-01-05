@@ -524,7 +524,7 @@ class ResNetBlock2DSkip(ResNetBlock2D):
             return checkpoint(self._forward_impl, x, skip, *args,
                               use_reentrant=False)
         else:
-            return self._forward_impl(x, *args)
+            return self._forward_impl(x, skip, *args)
 
     def _forward_impl(self, x, skip, *emb_args):
         x = torch.cat([x, skip], dim=1)
