@@ -73,7 +73,7 @@ class InceptionResNetV2_UNet(nn.Module):
         self.padding_3x3 = 1
         self.in_channel = in_channel
         self.block_size = block_size
-        self.norm = nn.InstanceNorm2d
+        self.norm = norm
         self.act = act
         if isinstance(use_checkpoint, bool):
             use_checkpoint = [use_checkpoint for _ in attn_info_list]
