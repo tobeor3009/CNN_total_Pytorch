@@ -8,7 +8,7 @@ from .nn import timestep_embedding
 from ..diffusion_layer import default
 from ..diffusion_layer import ConvBlock2D, ResNetBlock2D, ResNetBlock2DSkip, MultiDecoder2D_V2, Output2D, RMSNorm
 from ..diffusion_layer import LinearAttention, Attention, AttentionBlock, MaxPool2d, AvgPool2d, MultiInputSequential
-from ..diffusion_layer import default, prob_mask_like, LearnedSinusoidalPosEmb, SinusoidalPosEmb
+from ..diffusion_layer import default, prob_mask_like, LearnedSinusoidalPosEmb, SinusoidalPosEmb, GroupNorm32
 from ..diffusion_layer import feature_z_normalize, z_normalize
 
 from ...common_module.layers import get_act, get_norm, AttentionPool
@@ -36,7 +36,7 @@ def get_time_emb_dim(block_size):
 class InceptionResNetV2_UNet(nn.Module):
     def __init__(self, in_channel, cond_channel, out_channel, img_size, block_size=16,
                  emb_channel=1024, decode_init_channel=None,
-                 norm="instance", act="silu", last_act=None, num_class_embeds=None, drop_prob=0.0, cond_drop_prob=0.5,
+                 norm=GroupNorm32, act="silu", last_act=None, num_class_embeds=None, drop_prob=0.0, cond_drop_prob=0.5,
                  self_condition=False, use_checkpoint=[True, False, False, False, False],
                  attn_info_list=[False, False, False, False, True], attn_dim_head=32, num_head_list=[2, 4, 8, 8, 16],
                  block_depth_info="mini", include_encoder=None, include_latent_net=None):
@@ -624,7 +624,7 @@ class InceptionResNetV2_UNet(nn.Module):
 
 class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
     def __init__(self, in_channel, img_size, block_size=16, emb_channel=1024, drop_prob=0.0,
-                 norm="group", act="silu", last_channel_ratio=1,
+                 norm=GroupNorm32, act="silu", last_channel_ratio=1,
                  use_checkpoint=False, attn_info_list=[None, False, False, False, True],
                  attn_dim_head=32, num_head_list=[2, 4, 8, 8, 16],
                  block_depth_info="mini"):
@@ -776,7 +776,7 @@ class Classifier(nn.Module):
 
     def forward(self, encode_feature):
         if self.z_normalize:
-            encode_feature = z_normalize(encode_feature)
+            encode_feature = feature_z_normalize(encode_feature)
         # loss calculated by F.binary_cross_entropy_with_logits(pred, gt) witch non activation for pred
         class_raw_logit = self.classifier(encode_feature)
         return class_raw_logit
