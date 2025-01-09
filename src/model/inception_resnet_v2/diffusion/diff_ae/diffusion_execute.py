@@ -12,7 +12,7 @@ class AutoEncoder(nn.Module):
     def __init__(self, diffusion_model, train_mode, sample_size=1, img_size=512, img_dim=2,
                  T=1000, T_eval=1000, T_sampler="uniform",
                  beta_scheduler="linear", spaced=True, rescale_timesteps=False,
-                 gen_type="ddpm", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large", model_loss_type="mse",
+                 gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large", model_loss_type="mse",
                  latent_gen_type="ddim", latent_model_mean_type="eps", latent_model_var_type="fixed_large", latent_model_loss_type="l1",
                  latent_clip_sample=False, latent_znormalize=True,
                  fp16=False, train_pred_xstart_detach=True):

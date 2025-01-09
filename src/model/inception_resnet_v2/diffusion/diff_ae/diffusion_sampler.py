@@ -221,7 +221,7 @@ class DummyReturn(NamedTuple):
 class GaussianSampler():
     def __init__(self,
                  T=1000, beta_scheduler="linear", spaced=True, rescale_timesteps=False,
-                 gen_type="ddpm", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large",
+                 gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large",
                  loss_type="l1", fp16=False, train_pred_xstart_detach=True):
         #########################################################
         if gen_type == "ddpm":

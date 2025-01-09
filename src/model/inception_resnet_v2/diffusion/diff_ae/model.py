@@ -402,10 +402,10 @@ class InceptionResNetV2_UNet(nn.Module):
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[1], self.attn_dim_head[1]),
                                         **common_kwarg_dict),
             'stem_layer_4': MaxPool2d(3, stride=2, padding=self.padding_3x3),
-            'stem_layer_5': ResNetBlock2D(block_size * 4, block_size * 5, 1,
+            'stem_layer_5': ResNetBlock2D(block_size * 4, block_size * 8, 1,
                                         attn_info=None,
                                         **common_kwarg_dict),
-            'stem_layer_6': ResNetBlock2D(block_size * 5, block_size * 12, 3,
+            'stem_layer_6': ResNetBlock2D(block_size * 8, block_size * 12, 3,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[2], self.attn_dim_head[2]),
                                         **common_kwarg_dict),
             'stem_layer_7': MaxPool2d(3, stride=2, padding=self.padding_3x3)

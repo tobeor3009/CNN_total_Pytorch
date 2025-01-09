@@ -425,6 +425,18 @@ def apply_embedding(x, scale_shift_list, scale_bias=1):
             x = x * (scale_bias + scale) + shift
     return x    
 
+class GroupNorm32(nn.GroupNorm):
+    def __init__(self, num_channels: int, *args, **kwargs) -> None:
+        if num_channels % 3 == 0:
+            num_groups = min(24, num_channels)
+        elif num_channels % 5 == 0:
+            num_groups = min(40, num_channels)
+        elif num_channels % 7 == 0:
+            num_groups = min(28, num_channels)
+        else:
+            num_groups = min(32, num_channels)
+        super().__init__(num_groups, num_channels, *args, **kwargs)
+
 class BaseBlock2D(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
@@ -435,7 +447,7 @@ class BaseBlock2D(nn.Module):
                               kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups, bias=bias)
         if (not bias) and (norm is not None):
-            self.norm_layer = norm(out_channels)
+            self.norm_layer = norm(in_channels)
         else:
             self.norm_layer = nn.Identity()
         self.act_layer = get_act(act)

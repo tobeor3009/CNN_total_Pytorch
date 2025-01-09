@@ -157,7 +157,7 @@ def compute_single_weights(patch_size, img_dim):
         z_coords, y_coords, x_coords = np.indices(patch_size_tuple)
         distances = np.sqrt((z_coords - center_z) ** 2 + (x_coords - center_x) ** 2 + (y_coords - center_y) ** 2)
     
-    max_distance = (patch_size / 2) ** (img_dim * 1.25)
+    max_distance = (patch_size / 2) ** (img_dim * 1.5)
     distances = 1 - (distances / max_distance).clip(0, 1)
     return torch.tensor(distances, dtype=torch.float32)
 
