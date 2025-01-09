@@ -451,7 +451,7 @@ class BaseBlock2D(nn.Module):
         else:
             self.norm_layer = nn.Identity()
         self.act_layer = get_act(act)
-        self.dropout_layer = nn.Dropout2d(p=dropout_proba, inplace=INPLACE)
+        self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=INPLACE)
     
     def forward(self, x, scale_shift_list=None):
         norm = self.norm_layer(x)
