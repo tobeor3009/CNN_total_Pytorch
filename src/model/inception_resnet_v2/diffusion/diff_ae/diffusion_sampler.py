@@ -135,7 +135,7 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps, use_timestep
         raise NotImplementedError(f"unknown beta schedule: {schedule_name}")
     betas = betas.astype(np.float64)
     if spaced:
-        alphas = 1 - betas
+        alphas = 1.0 - betas
         alphas_cumprod = np.cumprod(alphas, axis=0)
         betas, timestep_map = get_spaced_diffusion_betas(alphas_cumprod, use_timesteps)
     else:
@@ -220,14 +220,14 @@ class DummyReturn(NamedTuple):
 
 class GaussianSampler():
     def __init__(self,
-                 T=1000, beta_scheduler="linear", spaced=True, rescale_timesteps=False,
+                 T=1000, T_eval=20, beta_scheduler="linear", spaced=True, rescale_timesteps=False,
                  gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large",
                  loss_type="l1", fp16=False, train_pred_xstart_detach=True):
         #########################################################
         if gen_type == "ddpm":
-            section_counts = [T]
+            section_counts = [T_eval]
         elif gen_type == "ddim":
-            section_counts = f'ddim{T}'
+            section_counts = f'ddim{T_eval}'
         else:
             raise NotImplementedError()
         ##################
@@ -249,7 +249,7 @@ class GaussianSampler():
         assert isinstance(self.train_pred_xstart_detach, bool)
         ###################################################################################
         betas, self.timestep_map = get_named_beta_schedule(beta_scheduler, T, self.use_timesteps, spaced)
-        self.betas = betas
+        self.betas = np.array(betas, dtype=np.float64)
         assert len(betas.shape) == 1, "betas must be 1-D"
         assert (betas > 0).all() and (betas <= 1).all()
         self.num_timesteps = int(betas.shape[0])

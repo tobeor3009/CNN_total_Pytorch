@@ -10,7 +10,7 @@ from src.model.train_util.common import _z_normalize, feature_z_normalize, z_nor
 
 class AutoEncoder(nn.Module):
     def __init__(self, diffusion_model, train_mode, sample_size=1, img_size=512, img_dim=2,
-                 T=1000, T_eval=1000, T_sampler="uniform",
+                 T=1000, T_eval=20, T_sampler="uniform",
                  beta_scheduler="linear", spaced=True, rescale_timesteps=False,
                  gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large", model_loss_type="mse",
                  latent_gen_type="ddim", latent_model_mean_type="eps", latent_model_var_type="fixed_large", latent_model_loss_type="l1",
@@ -62,8 +62,9 @@ class AutoEncoder(nn.Module):
              "fp16": fp16,
              "train_pred_xstart_detach": train_pred_xstart_detach
         }
-        self.sampler = self.get_sampler(T, self.common_sampler_kwarg_dict)
-        self.eval_sampler = self.get_sampler(T_eval, self.common_sampler_kwarg_dict)
+        self.sampler = self.get_sampler(T=self.T, T_eval=self.T)
+        self.eval_sampler = self.get_sampler(T=self.T, T_eval=self.T_eval)
+
         self.common_latent_sampler_kwarg_dict = {
             "beta_scheduler": beta_scheduler,
             "spaced": spaced,
@@ -76,10 +77,9 @@ class AutoEncoder(nn.Module):
             "fp16": fp16,
             "train_pred_xstart_detach": train_pred_xstart_detach
         }
-
         if train_mode == "latent_net":
-            self.latent_sampler = self.get_sampler(T, self.common_latent_sampler_kwarg_dict)
-            self.eval_latent_sampler = self.get_sampler(T_eval, self.common_latent_sampler_kwarg_dict)
+            self.latent_sampler = self.get_latent_sampler(T=self.T, T_eval=self.T)
+            self.eval_latent_sampler = self.get_latent_sampler(T=self.T, T_eval=self.T_eval)
 
         # initial variables for consistent sampling
         self.register_buffer('x_T', self.get_noise(sample_size))
@@ -88,16 +88,19 @@ class AutoEncoder(nn.Module):
         image_size_shape = tuple(self.img_size for _ in range(self.img_dim))
         return torch.randn(batch_size, self.in_channel, *image_size_shape)
     
-    def get_sampler(self, T, common_sampler_kwarg_dict):
-        return GaussianSampler(T=T, **common_sampler_kwarg_dict)
+    def get_sampler(self, T, T_eval):
+        return GaussianSampler(T=T, T_eval=T_eval, **self.common_sampler_kwarg_dict)
+    
+    def get_latent_sampler(self, T, T_eval):
+        return GaussianSampler(T=T, T_eval=T_eval, **self.common_latent_sampler_kwarg_dict)
     
     def sample(self, N, device, T=None, T_latent=None):
         if T is None:
             sampler = self.eval_sampler
             latent_sampler = self.latent_sampler
         else:
-            sampler = self.get_sampler(T, self.common_sampler_kwarg_dict)
-            latent_sampler = self.get_sampler(T_latent, self.common_latent_sampler_kwarg_dict)
+            sampler = self.get_sampler(T=self.T, T_eval=T)
+            latent_sampler = self.get_latent_sampler(T=self.T, T_eval=T_latent)
 
         noise = self.get_noise(N).to(device=device)
         
@@ -118,8 +121,8 @@ class AutoEncoder(nn.Module):
             sampler = self.eval_sampler
             latent_sampler = self.eval_latent_sampler
         else:
-            sampler = self.get_sampler(T, self.common_sampler_kwarg_dict)
-            latent_sampler = self.get_sampler(T, self.common_latent_sampler_kwarg_dict)
+            sampler = self.get_sampler(T=self.T, T_eval=T)
+            latent_sampler = self.get_latent_sampler(T=self.T, T_eval=T)
 
         if cond is not None:
             pred_img = render_condition(self.diffusion_model,
@@ -144,7 +147,7 @@ class AutoEncoder(nn.Module):
         if T is None:
             sampler = self.eval_sampler
         else:
-            sampler = self.get_sampler(T, self.common_sampler_kwarg_dict)
+            sampler = self.get_sampler(T=self.T, T_eval=T)
         out = sampler.ddim_reverse_sample_loop(self.diffusion_model,
                                                x,
                                                model_kwargs={'cond': cond})
