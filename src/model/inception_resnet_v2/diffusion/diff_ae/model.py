@@ -158,9 +158,14 @@ class InceptionResNetV2_UNet(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
                 
-    def forward(self, x, t,
+    def forward(self, x, t, t_cond=None,
                 x_start=None, cond=None,
                 x_self_cond=None, class_labels=None, cond_drop_prob=None):
+        
+        # autoencoder original source not used t_cond varaiable
+        if t_cond is None:
+            t_cond = t
+
         cond_drop_prob = default(cond_drop_prob, self.cond_drop_prob)
         batch, device = x.size(0), x.device
         if self.self_condition:

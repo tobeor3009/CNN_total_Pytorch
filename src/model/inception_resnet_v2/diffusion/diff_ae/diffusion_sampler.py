@@ -106,6 +106,7 @@ def get_spaced_diffusion_betas(alphas_cumprod, use_timesteps):
             # getting the new betas of the new timesteps
             new_betas.append(1 - alpha_cumprod / last_alpha_cumprod)
             last_alpha_cumprod = alpha_cumprod
+            timestep_map.append(i)
     new_betas = np.array(new_betas, dtype=np.float64)
     return new_betas, timestep_map
 
@@ -218,6 +219,45 @@ class DummyModel(torch.nn.Module):
 class DummyReturn(NamedTuple):
     pred: torch.Tensor
 
+class _WrappedModel:
+    """
+    converting the supplied t's to the old t's scales.
+    """
+    def __init__(self, model, timestep_map, rescale_timesteps,
+                 original_num_steps):
+        self.model = model
+        self.timestep_map = timestep_map
+        self.rescale_timesteps = rescale_timesteps
+        self.original_num_steps = original_num_steps
+
+    def forward(self, x, t, t_cond=None, **kwargs):
+        """
+        Args:
+            t: t's with differrent ranges (can be << T due to smaller eval T) need to be converted to the original t's
+            t_cond: the same as t but can be of different values
+        """
+        map_tensor = torch.tensor(self.timestep_map,
+                                device=t.device,
+                                dtype=t.dtype)
+        def do(t):
+            new_ts = map_tensor[t]
+            if self.rescale_timesteps:
+                new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
+            return new_ts
+
+        if t_cond is not None:
+            # support t_cond
+            t_cond = do(t_cond)
+
+        return self.model(x=x, t=do(t), t_cond=t_cond, **kwargs)
+
+    def __getattr__(self, name):
+        # allow for calling the model's methods
+        if hasattr(self.model, name):
+            func = getattr(self.model, name)
+            return func
+        raise AttributeError(name)
+
 class GaussianSampler():
     def __init__(self,
                  T=1000, T_eval=20, beta_scheduler="linear", spaced=True, rescale_timesteps=False,
@@ -231,6 +271,7 @@ class GaussianSampler():
         else:
             raise NotImplementedError()
         ##################
+        self.spaced = spaced
         self.use_timesteps = space_timesteps(T, section_counts)
         self.gen_type = GenerativeType(gen_type)
         self.model_type = ModelType(model_type)
@@ -248,6 +289,8 @@ class GaussianSampler():
         assert isinstance(self.fp16, bool)
         assert isinstance(self.train_pred_xstart_detach, bool)
         ###################################################################################
+
+        self.original_num_steps = T
         betas, self.timestep_map = get_named_beta_schedule(beta_scheduler, T, self.use_timesteps, spaced)
         self.betas = np.array(betas, dtype=np.float64)
         assert len(betas.shape) == 1, "betas must be 1-D"
@@ -280,6 +323,16 @@ class GaussianSampler():
         self.posterior_mean_coef2 = ((1.0 - self.alphas_cumprod_prev) *
                                      np.sqrt(alphas) /
                                      (1.0 - self.alphas_cumprod))
+        
+    def _wrap_model(self, model):
+        if self.spaced:
+            if isinstance(model, _WrappedModel):
+                return model
+            return _WrappedModel(model, self.timestep_map, self.rescale_timesteps,
+                                self.original_num_steps)
+        else:
+            return model
+        
     def training_losses(self, model,
                         x_start: torch.Tensor, t: torch.Tensor,
                         model_kwargs=None,
@@ -296,6 +349,7 @@ class GaussianSampler():
         :return: a dict with the key "loss" containing a tensor of shape [N].
                  Some mean or variance settings may also have other keys.
         """
+        model = self._wrap_model(model)
         if model_kwargs is None:
             model_kwargs = {}
         if noise is None:
@@ -469,6 +523,8 @@ class GaussianSampler():
                  - 'log_variance': the log of 'variance'.
                  - 'pred_xstart': the prediction for x_0.
         """
+
+        model = self._wrap_model(model)
         if model_kwargs is None:
             model_kwargs = {}
 
@@ -551,10 +607,13 @@ class GaussianSampler():
             self.sqrt_one_minus_alphas_cumprod, t, x_t.shape)
 
     def _scale_timesteps(self, t):
-        if self.rescale_timesteps:
-            # scale t to be maxed out at 1000 steps
-            return t.float() * (1000.0 / self.num_timesteps)
-        return t
+        if self.spaced:
+            if self.rescale_timesteps:
+                # scale t to be maxed out at 1000 steps
+                return t.float() * (1000.0 / self.num_timesteps)
+            return t
+        else:# Scaling is done by the wrapped model.
+            return t
 
     def condition_mean(self, cond_fn, p_mean_var, x, t, model_kwargs=None):
         """
@@ -565,6 +624,7 @@ class GaussianSampler():
 
         This uses the conditioning strategy from Sohl-Dickstein et al. (2015).
         """
+        cond_fn = self._wrap_model(cond_fn)
         gradient = cond_fn(x, self._scale_timesteps(t), **model_kwargs)
         new_mean = (p_mean_var["mean"].float() +
                     p_mean_var["variance"] * gradient.float())
@@ -580,6 +640,7 @@ class GaussianSampler():
         Unlike condition_mean(), this instead uses the conditioning strategy
         from Song et al (2020).
         """
+        cond_fn = self._wrap_model(cond_fn)
         alpha_bar = _extract_into_tensor(self.alphas_cumprod, t, x.shape)
 
         eps = self._predict_eps_from_xstart(x, t, p_mean_var["pred_xstart"])

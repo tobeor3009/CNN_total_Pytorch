@@ -119,11 +119,8 @@ class AutoEncoder(nn.Module):
     def render(self, noise, cond=None, T=None):
         if T is None:
             sampler = self.eval_sampler
-            latent_sampler = self.eval_latent_sampler
         else:
             sampler = self.get_sampler(T=self.T, T_eval=T)
-            latent_sampler = self.get_latent_sampler(T=self.T, T_eval=T)
-
         if cond is not None:
             pred_img = render_condition(self.diffusion_model,
                                         noise, sampler,
@@ -131,7 +128,7 @@ class AutoEncoder(nn.Module):
                                         train_mode=self.train_mode)
         else:
             pred_img = render_uncondition(self.diffusion_model,
-                                          noise, sampler, latent_sampler,
+                                          noise, sampler, latent_sampler=None,
                                           latent_clip_sample=self.latent_clip_sample,
                                           latent_znormalize=self.latent_znormalize,
                                           train_mode=self.train_mode)
