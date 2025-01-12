@@ -421,8 +421,8 @@ class GaussianSampler():
             terms["loss"] = terms["eps"]
         elif self.model_mean_type == "eps + x_start":
             terms["eps"] = self.loss_fn(noise, model_output)
-            terms["recon"] = self.loss_fn(x_start, terms['pred_xstart'])
-            terms["loss"] = terms["eps"] + terms["recon"]
+            terms["recon"] = get_l1_loss(x_start, terms['pred_xstart'])
+            terms["loss"] = terms["eps"] * 0.99 + terms["recon"] * 0.01
         else:
             raise NotImplementedError()
         
