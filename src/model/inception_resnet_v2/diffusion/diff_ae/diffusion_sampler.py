@@ -344,8 +344,8 @@ class GaussianSampler():
         normal_dist = torch.distributions.Normal(0, 1)
 
         # 99% 신뢰구간에 해당하는 누적 확률값 (0.5%와 99.5%)
-        self.z_99 = normal_dist.icdf(torch.tensor(0.995))
-        self.z_neg_99 = normal_dist.icdf(torch.tensor(0.005))
+        self.z_99 = normal_dist.icdf(torch.tensor(0.995)).item()
+        self.z_neg_99 = normal_dist.icdf(torch.tensor(0.005)).item()
 
     def _wrap_model(self, model):
         if self.spaced:
