@@ -258,6 +258,15 @@ class _WrappedModel:
             return func
         raise AttributeError(name)
 
+
+def get_l1_loss(y_pred, y_true):
+    loss = mean_flat((y_pred - y_true).abs())
+    return loss
+
+def get_mse_loss(y_pred, y_true):
+    loss = mean_flat((y_pred - y_true)**2)
+    return loss
+
 class GaussianSampler():
     def __init__(self,
                  T=1000, T_eval=20, beta_scheduler="linear", spaced=True, rescale_timesteps=False,
@@ -278,11 +287,19 @@ class GaussianSampler():
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
         self.loss_type = loss_type
+        
+        if self.loss_type == "l1":
+            self.loss_fn = get_l1_loss
+        elif self.loss_type == "mse":
+            self.loss_fn = get_mse_loss
+        else:
+            raise NotImplementedError()
+        
         self.rescale_timesteps = rescale_timesteps
         self.fp16 = fp16
         self.train_pred_xstart_detach = train_pred_xstart_detach
         ################## check all varialble time before init process ##################
-        assert self.model_mean_type in ["eps"]
+        assert self.model_mean_type in ["eps", "eps + x_start"]
         assert self.model_var_type in ["fixed_small", "fixed_large"]
         assert self.loss_type in ["l1", "mse"]
         assert isinstance(self.rescale_timesteps, bool)
@@ -323,7 +340,13 @@ class GaussianSampler():
         self.posterior_mean_coef2 = ((1.0 - self.alphas_cumprod_prev) *
                                      np.sqrt(alphas) /
                                      (1.0 - self.alphas_cumprod))
-        
+        # 표준 정규분포 정의 (평균=0, 표준편차=1)
+        normal_dist = torch.distributions.Normal(0, 1)
+
+        # 99% 신뢰구간에 해당하는 누적 확률값 (0.5%와 99.5%)
+        self.z_99 = normal_dist.icdf(torch.tensor(0.995))
+        self.z_neg_99 = normal_dist.icdf(torch.tensor(0.005))
+
     def _wrap_model(self, model):
         if self.spaced:
             if isinstance(model, _WrappedModel):
@@ -332,7 +355,17 @@ class GaussianSampler():
                                 self.original_num_steps)
         else:
             return model
-        
+    
+    def get_noise_like(self, refer_x):
+        noise = torch.randn_like(refer_x)
+        noise = noise.clamp(self.z_neg_99, self.z_99)
+        return noise
+
+    def get_noise_as_shape(self, shape, device, dtype=torch.float32):
+        noise = torch.randn(*shape, device=device, dtype=dtype)
+        noise = noise.clamp(self.z_neg_99, self.z_99)
+        return noise
+
     def training_losses(self, model,
                         x_start: torch.Tensor, t: torch.Tensor,
                         model_kwargs=None,
@@ -353,7 +386,7 @@ class GaussianSampler():
         if model_kwargs is None:
             model_kwargs = {}
         if noise is None:
-            noise = torch.randn_like(x_start)
+            noise = self.get_noise_like(x_start)
 
         x_t = self.q_sample(x_start, t, noise=noise)
 
@@ -383,28 +416,19 @@ class GaussianSampler():
 
         if self.model_mean_type == "eps":
             target = noise
+            assert model_output.shape == target.shape == x_start.shape
+            terms["eps"] = self.loss_fn(target, model_output)
+            terms["loss"] = terms["eps"]
+        elif self.model_mean_type == "eps + x_start":
+            terms["eps"] = self.loss_fn(noise, model_output)
+            terms["recon"] = self.loss_fn(x_start, terms['pred_xstart'])
+            terms["loss"] = terms["eps"] + terms["recon"]
         else:
             raise NotImplementedError()
-        assert model_output.shape == target.shape == x_start.shape
-
-        if self.loss_type == "l1":
-            # (n, c, h, w) => (n, )
-            terms["mse"] = mean_flat((target - model_output).abs())
-        elif self.loss_type == "mse":
-            if self.model_mean_type == "eps":
-                # (n, c, h, w) => (n, )
-                terms["mse"] = mean_flat((target - model_output)**2)
-            else:
-                raise NotImplementedError()
-        else:
-            raise NotImplementedError()
-
+        
         if "vb" in terms:
             # if learning the variance also use the vlb loss
-            terms["loss"] = terms["mse"] + terms["vb"]
-        else:
-            terms["loss"] = terms["mse"]
-
+            terms["loss"] = terms["loss"] + terms["vb"]
         return terms
 
     def sample(self, model,
@@ -471,7 +495,7 @@ class GaussianSampler():
         :return: A noisy version of x_start.
         """
         if noise is None:
-            noise = torch.randn_like(x_start)
+            noise = self.get_noise_like(x_start)
         assert noise.shape == x_start.shape
         return (
             _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) *
@@ -556,7 +580,7 @@ class GaussianSampler():
                 return x.clamp(-1, 1)
             return x
 
-        if self.model_mean_type == "eps":
+        if self.model_mean_type in ["eps", "eps + x_start"]:
             pred_xstart = process_xstart(
                 self._predict_xstart_from_eps(x_t=x, t=t, eps=model_output))
         else:
@@ -685,7 +709,7 @@ class GaussianSampler():
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
         )
-        noise = torch.randn_like(x)
+        noise = self.get_noise_like(x)
         nonzero_mask = ((t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
                         )  # no noise when t == 0
         if cond_fn is not None:
@@ -768,7 +792,7 @@ class GaussianSampler():
             img = noise
         else:
             assert isinstance(shape, (tuple, list))
-            img = torch.randn(*shape, device=device)
+            img = self.get_noise_as_shape(shape, device=device)
         indices = list(range(self.num_timesteps))[::-1]
 
         if progress:
@@ -831,7 +855,7 @@ class GaussianSampler():
         sigma = (eta * torch.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar)) *
                  torch.sqrt(1 - alpha_bar / alpha_bar_prev))
         # Equation 12.
-        noise = torch.randn_like(x)
+        noise = self.get_noise_like(x)
         mean_pred = (out["pred_xstart"] * torch.sqrt(alpha_bar_prev) +
                      torch.sqrt(1 - alpha_bar_prev - sigma**2) * eps)
         nonzero_mask = ((t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
@@ -974,7 +998,7 @@ class GaussianSampler():
             img = noise
         else:
             assert isinstance(shape, (tuple, list))
-            img = torch.randn(*shape, device=device)
+            img = self.get_noise_as_shape(shape, device=device)
         indices = list(range(self.num_timesteps))[::-1]
 
         if progress:
@@ -1099,7 +1123,7 @@ class GaussianSampler():
         mse = []
         for t in list(range(self.num_timesteps))[::-1]:
             t_batch = torch.tensor([t] * batch_size, device=device)
-            noise = torch.randn_like(x_start)
+            noise = self.get_noise_like(x_start)
             x_t = self.q_sample(x_start=x_start, t=t_batch, noise=noise)
             # Calculate VLB term at the current timestep
             with torch.no_grad():
