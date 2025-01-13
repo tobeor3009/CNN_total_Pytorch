@@ -164,10 +164,16 @@ class AutoEncoder(nn.Module):
         torch_device = x_start_device or encoded_feature_device
         # with autocast(device_type=torch_device, enabled=False):
         if self.train_mode in ["autoencoder", "ddpm"]:
-            assert encoded_feature is None
             t, weight = self.T_sampler.sample(len(x_start), torch_device)
-            result_dict = self.sampler.training_losses(model=self.diffusion_model,
-                                                        x_start=x_start, t=t)
+            if encoded_feature is None:
+                result_dict = self.sampler.training_losses(model=self.diffusion_model,
+                                                            x_start=x_start, t=t)
+            else:
+                cond = self.encode(encoded_feature)
+                result_dict = self.sampler.training_losses(model=self.diffusion_model,
+                                                            x_start=x_start, t=t,
+                                                            model_kwargs={'cond': cond})
+
         elif self.train_mode == "latent_net":
             if encoded_feature is None:
                 with torch.no_grad():
