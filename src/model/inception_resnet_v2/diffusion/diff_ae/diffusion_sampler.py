@@ -271,7 +271,7 @@ class GaussianSampler():
     def __init__(self,
                  T=1000, T_eval=20, beta_scheduler="linear", spaced=True, rescale_timesteps=False,
                  gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large",
-                 loss_type="l1", fp16=False, train_pred_xstart_detach=True):
+                 loss_type="l1", fp16=False, train_pred_xstart_detach=True, noise_clip_ratio=0.95):
         #########################################################
         if gen_type == "ddpm":
             section_counts = [T_eval]
@@ -343,9 +343,10 @@ class GaussianSampler():
         # 표준 정규분포 정의 (평균=0, 표준편차=1)
         normal_dist = torch.distributions.Normal(0, 1)
 
+        noise_clip_ratio = (1 - noise_clip_ratio) / 2
         # 99% 신뢰구간에 해당하는 누적 확률값 (0.5%와 99.5%)
-        self.z_99 = normal_dist.icdf(torch.tensor(0.995)).item()
-        self.z_neg_99 = normal_dist.icdf(torch.tensor(0.005)).item()
+        self.z_upper_limit= normal_dist.icdf(torch.tensor(1 - noise_clip_ratio)).item()
+        self.z_lower_limit = normal_dist.icdf(torch.tensor(noise_clip_ratio)).item()
 
     def _wrap_model(self, model):
         if self.spaced:
@@ -356,14 +357,17 @@ class GaussianSampler():
         else:
             return model
     
+    def clip_noise_abnormal(self, noise):
+        noise = noise.clamp(self.z_lower_limit, self.z_upper_limit)
+        return noise
     def get_noise_like(self, refer_x):
         noise = torch.randn_like(refer_x)
-        noise = noise.clamp(self.z_neg_99, self.z_99)
+        noise = self.clip_noise_abnormal(noise)
         return noise
 
     def get_noise_as_shape(self, shape, device, dtype=torch.float32):
         noise = torch.randn(*shape, device=device, dtype=dtype)
-        noise = noise.clamp(self.z_neg_99, self.z_99)
+        noise = self.clip_noise_abnormal(noise)
         return noise
 
     def training_losses(self, model,
@@ -422,7 +426,7 @@ class GaussianSampler():
         elif self.model_mean_type == "eps + x_start":
             terms["eps"] = self.loss_fn(noise, model_output)
             terms["recon"] = get_l1_loss(x_start, terms['pred_xstart'])
-            terms["loss"] = terms["eps"] * 0.99 + terms["recon"] * 0.01
+            terms["loss"] = terms["eps"] * 0.75 + terms["recon"] * 0.25
         else:
             raise NotImplementedError()
         
@@ -578,6 +582,8 @@ class GaussianSampler():
                 x = denoised_fn(x)
             if clip_denoised:
                 return x.clamp(-1, 1)
+            else:
+                return self.clip_noise_abnormal(x)
             return x
 
         if self.model_mean_type in ["eps", "eps + x_start"]:

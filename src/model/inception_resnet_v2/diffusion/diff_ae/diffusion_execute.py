@@ -83,16 +83,13 @@ class AutoEncoder(nn.Module):
 
         # initial variables for consistent sampling
         # 표준 정규분포 정의 (평균=0, 표준편차=1)
-        normal_dist = torch.distributions.Normal(0, 1)
         # 99% 신뢰구간에 해당하는 누적 확률값 (0.5%와 99.5%)
-        self.z_99 = normal_dist.icdf(torch.tensor(0.995)).item()
-        self.z_neg_99 = normal_dist.icdf(torch.tensor(0.005)).item()
         self.register_buffer('x_T', self.get_noise(sample_size))
 
     def get_noise(self, batch_size):
         image_size_shape = tuple(self.img_size for _ in range(self.img_dim))
-        noise = torch.randn(batch_size, self.in_channel, *image_size_shape)
-        noise = noise.clamp(self.z_neg_99, self.z_99)
+        image_size_shape = (batch_size, self.in_channel, *image_size_shape)
+        noise = self.sampler.get_noise_as_shape(image_size_shape, device="cpu")
         return noise
 
     def get_sampler(self, T, T_eval):
