@@ -120,7 +120,7 @@ class AutoEncoder(nn.Module):
         pred_img = (pred_img + 1) / 2
         return pred_img
 
-    def render(self, noise, cond=None, T=None):
+    def render(self, noise, cond=None, T=None, clip_denoised=True):
         if T is None:
             sampler = self.eval_sampler
         else:
@@ -144,14 +144,15 @@ class AutoEncoder(nn.Module):
         cond = self.diffusion_model.encoder.forward(x)
         return cond
     
-    def encode_stochastic(self, x, cond, T=None):
+    def encode_stochastic(self, x, cond, T=None, clip_denoised=True):
         if T is None:
             sampler = self.eval_sampler
         else:
             sampler = self.get_sampler(T=self.T, T_eval=T)
         out = sampler.ddim_reverse_sample_loop(self.diffusion_model,
                                                x,
-                                               model_kwargs={'cond': cond})
+                                               model_kwargs={'cond': cond},
+                                               clip_denoised=clip_denoised)
         return out['sample']
 
     def forward(self, x_start=None, encoded_feature=None):
