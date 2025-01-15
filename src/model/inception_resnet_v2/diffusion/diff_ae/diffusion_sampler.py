@@ -2,6 +2,7 @@ from typing import NamedTuple
 from torch.amp import autocast
 import numpy as np
 import torch
+import math
 from .choices import ModelType, GenerativeType
 from .nn import mean_flat
 
@@ -271,7 +272,7 @@ class GaussianSampler():
     def __init__(self,
                  T=1000, T_eval=20, beta_scheduler="linear", spaced=True, rescale_timesteps=False,
                  gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large",
-                 loss_type="l1", fp16=False, train_pred_xstart_detach=True, noise_clip_ratio=0.99):
+                 loss_type="l1", fp16=False, train_pred_xstart_detach=True, noise_clip_ratio=0.99, use_truncated_noise=False):
         #########################################################
         if gen_type == "ddpm":
             section_counts = [T_eval]
@@ -298,6 +299,7 @@ class GaussianSampler():
         self.rescale_timesteps = rescale_timesteps
         self.fp16 = fp16
         self.train_pred_xstart_detach = train_pred_xstart_detach
+        self.use_truncated_noise = use_truncated_noise
         ################## check all varialble time before init process ##################
         assert self.model_mean_type in ["eps", "eps + x_start"]
         assert self.model_var_type in ["fixed_small", "fixed_large"]
@@ -340,13 +342,15 @@ class GaussianSampler():
         self.posterior_mean_coef2 = ((1.0 - self.alphas_cumprod_prev) *
                                      np.sqrt(alphas) /
                                      (1.0 - self.alphas_cumprod))
-        # 표준 정규분포 정의 (평균=0, 표준편차=1)
-        normal_dist = torch.distributions.Normal(0, 1)
-
-        noise_clip_ratio = (1 - noise_clip_ratio) / 2
-        # 99% 신뢰구간에 해당하는 누적 확률값 (0.5%와 99.5%)
-        self.z_upper_limit= normal_dist.icdf(torch.tensor(1 - noise_clip_ratio)).item()
-        self.z_lower_limit = normal_dist.icdf(torch.tensor(noise_clip_ratio)).item()
+        
+        if use_truncated_noise:
+            self.z_upper_limit = 1.1
+            self.z_lower_limit = -1.1
+        else:
+            normal_dist = torch.distributions.Normal(0, 1)
+            noise_clip_ratio = (1 - noise_clip_ratio) / 2
+            self.z_upper_limit= normal_dist.icdf(torch.tensor(1 - noise_clip_ratio)).item()
+            self.z_lower_limit = normal_dist.icdf(torch.tensor(noise_clip_ratio)).item()
 
     def _wrap_model(self, model):
         if self.spaced:
@@ -357,17 +361,47 @@ class GaussianSampler():
         else:
             return model
     
+    def truncated_normal_tensor(self, uniform_rand, mean=0, std=1):
+        """
+        잘린 정규분포(Truncated Normal Distribution)를 주어진 shape으로 생성
+        :param mean: 평균
+        :param std: 표준편차
+        :param lower: 하한
+        :param upper: 상한
+        :param shape: 출력 텐서의 크기
+        :return: 잘린 범위 내에서 샘플링된 PyTorch 텐서
+        """
+        # CDF 계산
+        lower_cdf = 0.5 * (1 + math.erf((self.z_lower_limit - mean) / (std * (2 ** 0.5))))
+        upper_cdf = 0.5 * (1 + math.erf((self.z_upper_limit - mean) / (std * (2 ** 0.5))))
+
+        # Uniform 분포에서 샘플링
+        u = uniform_rand * (upper_cdf - lower_cdf) + lower_cdf
+
+        # Inverse CDF 변환
+        samples = mean + std * (2 ** 0.5) * torch.erfinv(2 * u - 1)
+        return samples
+    
     def clip_noise_abnormal(self, noise):
         noise = noise.clamp(self.z_lower_limit, self.z_upper_limit)
         return noise
+    
     def get_noise_like(self, refer_x):
-        noise = torch.randn_like(refer_x)
-        noise = self.clip_noise_abnormal(noise)
+        if self.use_truncated_noise:
+            noise = torch.rand_like(refer_x)
+            noise = self.truncated_normal_tensor(noise)
+        else:
+            noise = torch.randn_like(refer_x)
+            noise = self.clip_noise_abnormal(noise)
         return noise
 
     def get_noise_as_shape(self, shape, device, dtype=torch.float32):
-        noise = torch.randn(*shape, device=device, dtype=dtype)
-        noise = self.clip_noise_abnormal(noise)
+        if self.use_truncated_noise:
+            noise = torch.rand(*shape, device=device, dtype=dtype)
+            noise = self.truncated_normal_tensor(noise)
+        else:
+            noise = torch.randn(*shape, device=device, dtype=dtype)
+            noise = self.clip_noise_abnormal(noise)
         return noise
 
     def training_losses(self, model,
