@@ -355,6 +355,7 @@ class AttentionBlock(nn.Module):
             ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
             self.num_heads = channels // num_head_channels
         self.use_checkpoint = use_checkpoint
+        self.norm = GroupNorm32(channels)
         self.qkv = conv_nd(1, channels, channels * 3, 1)
         if use_new_attention_order:
             # split qkv before split heads
@@ -375,7 +376,7 @@ class AttentionBlock(nn.Module):
     def _forward_impl(self, x, *args):
         b, c, *spatial = x.shape
         x = x.reshape(b, c, -1)
-        x = z_normalize(x)
+        x = self.norm(x)
         qkv = self.qkv(x)
         h = self.attention(qkv)
         h = self.proj_out(h)
@@ -408,12 +409,13 @@ class LearnedSinusoidalPosEmb(nn.Module):
         fouriered = torch.cat((x, fouriered), dim = -1)
         return fouriered
 
-def get_scale_shift_list(emb_block_list, emb_args):
+def get_scale_shift_list(emb_block_list, emb_args, img_dim):
+    unsqueeze_dim = tuple(1 for _ in range(img_dim))
     scale_shift_list = []
     for emb_block, emb in zip(emb_block_list, emb_args):
         emb = emb_block(emb)
-        if emb.ndim == 2:
-            emb = rearrange(emb, 'b c -> b c 1 1')
+        emb_shape = emb.shape
+        emb = emb.view(*emb_shape, *unsqueeze_dim)
         scale_shift = emb.chunk(2, dim=1)
         scale_shift_list.append(scale_shift)
     return scale_shift_list
@@ -480,6 +482,7 @@ class ResNetBlockND(nn.Module):
                  emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False, img_dim=2):
         super().__init__()
         conv_fn = get_conv_nd_fn(img_dim)
+        self.img_dim = img_dim
         self.attn_info = attn_info
         self.use_checkpoint = use_checkpoint
 
@@ -529,7 +532,7 @@ class ResNetBlockND(nn.Module):
     
     def _forward_conv(self, x, *emb_args):
         skip_x = x
-        scale_shift_list = get_scale_shift_list(self.emb_block_list, emb_args)
+        scale_shift_list = get_scale_shift_list(self.emb_block_list, emb_args, self.img_dim)
         x = self.block_1(x)
         x = self.block_2(x, scale_shift_list)
         x = x + self.residiual_conv(skip_x)
@@ -561,7 +564,7 @@ class ConvBlockND(nn.Module):
                  norm="batch", groups=1, act=DEFAULT_ACT, bias=False, dropout_proba=0.0,
                  emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False, img_dim=2):
         super().__init__()
-
+        self.img_dim = img_dim
         self.attn_info = attn_info
         self.use_checkpoint = use_checkpoint
 
@@ -605,7 +608,7 @@ class ConvBlockND(nn.Module):
             return self._forward_impl(x, *args)
 
     def _forward_impl(self, x, *emb_args):
-        scale_shift_list = get_scale_shift_list(self.emb_block_list, emb_args)
+        scale_shift_list = get_scale_shift_list(self.emb_block_list, emb_args, self.img_dim)
         x = self.block_1(x, scale_shift_list)
         x = self.attn(x)
         return x

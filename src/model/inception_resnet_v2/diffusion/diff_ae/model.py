@@ -310,13 +310,13 @@ class InceptionResNetV2_UNet(nn.Module):
         self.encode_final_block1 = ConvBlockND(block_size * 130, feature_channel, 3,
                                       norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                                       attn_info=None,
-                                      use_checkpoint=use_checkpoint[layer_idx])
+                                      use_checkpoint=use_checkpoint[layer_idx], img_dim=self.img_dim)
         self.encode_final_attn = self.get_attn_layer(feature_channel, self.num_head_list[layer_idx], self.attn_dim_head[layer_idx],
                                                      True, use_checkpoint=self.use_checkpoint[layer_idx])
         self.encode_final_block2 = ConvBlockND(feature_channel, feature_channel, 3,
                                                 norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                                                 attn_info=None,
-                                                use_checkpoint=use_checkpoint[layer_idx])
+                                                use_checkpoint=use_checkpoint[layer_idx], img_dim=self.img_dim)
     
     def set_decoder(self):
         block_size = self.block_size
@@ -378,19 +378,20 @@ class InceptionResNetV2_UNet(nn.Module):
             return {"num_heads": num_heads, "dim_head": dim_head, "full_attn": True}
     
     def get_attn_layer(self, dim, num_heads, dim_head, use_full_attn, use_checkpoint):
-        if use_full_attn:
+        if use_full_attn is True:
             return AttentionBlock(channels=dim, num_heads=num_heads,
                                   use_checkpoint=use_checkpoint)
-        else:
+        elif use_full_attn is False:
             return LinearAttention(dim=dim, num_heads=num_heads, dim_head=dim_head,
                                    use_checkpoint=use_checkpoint)
-
+        else:
+            return nn.Identity()
+                    
     def get_encode_stem(self, emb_dim_list, emb_type_list):
         in_channel = self.in_channel
         block_size = self.block_size
         get_attn_info = self.get_attn_info
         attn_info_list = self.attn_info_list
-
         common_kwarg_dict = {
             "norm": self.norm,
             "act": self.act,
@@ -597,17 +598,27 @@ class InceptionResNetV2_UNet(nn.Module):
         }
         branch_0_0 = ConvBlockND(in_channels, block_size * 12, 1, **common_arg_dict)
         branch_1_0 = ConvBlockND(in_channels, block_size * 8, 1, **common_arg_dict)
-        branch_1_1 = ConvBlockND(block_size * 8, block_size * 10, [1, 7], **common_arg_dict)
-        branch_1_2 = ConvBlockND(block_size * 10, block_size * 12, [7, 1], **common_arg_dict)
+        branch_1_list = [branch_1_0]
+        if self.img_dim == 1:
+            branch_1_1 = ConvBlockND(block_size * 8, block_size * 12, 7, **common_arg_dict)
+            branch_1_list.append(branch_1_1)
+        elif self.img_dim == 2:
+            branch_1_1 = ConvBlockND(block_size * 8, block_size * 10, [1, 7], **common_arg_dict)
+            branch_1_2 = ConvBlockND(block_size * 10, block_size * 12, [7, 1], **common_arg_dict)
+            branch_1_list.extend([branch_1_1, branch_1_2])
+        elif self.img_dim == 3:
+            branch_1_1 = ConvBlockND(block_size * 8, block_size * 10, [1, 1, 7], **common_arg_dict)
+            branch_1_2 = ConvBlockND(block_size * 10, block_size * 10, [1, 7, 1], **common_arg_dict)
+            branch_1_3 = ConvBlockND(block_size * 10, block_size * 12, [7, 1, 1], **common_arg_dict)
+            branch_1_list.extend([branch_1_1, branch_1_2, branch_1_3])
+
         up = ConvBlockND(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=self.use_checkpoint[layer_idx], img_dim=self.img_dim)
         mixed = nn.ModuleDict({
             "branch_0": nn.ModuleList([branch_0_0]),
-            "branch_1": nn.ModuleList([branch_1_0,
-                                    branch_1_1,
-                                    branch_1_2]),
+            "branch_1": nn.ModuleList(branch_1_list),
         })
         return mixed, up
 
@@ -628,8 +639,19 @@ class InceptionResNetV2_UNet(nn.Module):
         }
         branch_0_0 = ConvBlockND(in_channels, block_size * 12, 1, **common_arg_dict)
         branch_1_0 = ConvBlockND(in_channels, block_size * 12, 1, **common_arg_dict)
-        branch_1_1 = ConvBlockND(block_size * 12, block_size * 14, [1, 3], **common_arg_dict)
-        branch_1_2 = ConvBlockND(block_size * 14, block_size * 16, [3, 1], **common_arg_dict)
+        branch_1_list = [branch_1_0]
+        if self.img_dim == 1:
+            branch_1_1 = ConvBlockND(block_size * 12, block_size * 16, 3, **common_arg_dict)
+            branch_1_list.append(branch_1_1)
+        elif self.img_dim == 2:
+            branch_1_1 = ConvBlockND(block_size * 12, block_size * 14, [1, 3], **common_arg_dict)
+            branch_1_2 = ConvBlockND(block_size * 14, block_size * 16, [3, 1], **common_arg_dict)
+            branch_1_list.extend([branch_1_1, branch_1_2])
+        elif self.img_dim == 3:
+            branch_1_1 = ConvBlockND(block_size * 12, block_size * 14, [1, 1, 3], **common_arg_dict)
+            branch_1_2 = ConvBlockND(block_size * 14, block_size * 14, [1, 3, 1], **common_arg_dict)
+            branch_1_3 = ConvBlockND(block_size * 14, block_size * 16, [3, 1, 1], **common_arg_dict)
+            branch_1_list.extend([branch_1_1, branch_1_2, branch_1_3])
         up = ConvBlockND(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
@@ -637,9 +659,7 @@ class InceptionResNetV2_UNet(nn.Module):
         
         mixed = nn.ModuleDict({
             "branch_0": nn.ModuleList([branch_0_0]),
-            "branch_1": nn.ModuleList([branch_1_0,
-                                    branch_1_1,
-                                    branch_1_2]),
+            "branch_1": nn.ModuleList(branch_1_list),
         })
         return mixed, up
 
