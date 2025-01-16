@@ -272,7 +272,7 @@ class GaussianSampler():
     def __init__(self,
                  T=1000, T_eval=20, beta_scheduler="linear", spaced=True, rescale_timesteps=False,
                  gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large",
-                 loss_type="l1", fp16=False, train_pred_xstart_detach=True, noise_clip_ratio=0.99, use_truncated_noise=False):
+                 loss_type="l1", fp16=False, train_pred_xstart_detach=True, noise_clip_ratio=1, use_truncated_noise=False):
         #########################################################
         if gen_type == "ddpm":
             section_counts = [T_eval]
