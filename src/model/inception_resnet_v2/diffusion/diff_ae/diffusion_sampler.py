@@ -427,6 +427,7 @@ class GaussianSampler():
             noise = self.get_noise_like(x_start)
 
         x_t = self.q_sample(x_start, t, noise=noise)
+        x_t_from_noise = self.q_sample(noise, t, noise=noise)
         terms = {'x_t': x_t}
 
         # with autocast(device_type=x_start.device, enabled=self.fp16):
@@ -450,12 +451,17 @@ class GaussianSampler():
         terms['pred_xstart'] = p_mean_var['pred_xstart']
 
         # model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
-
+        model_forward_from_noise = model.forward(x=x_t_from_noise.detach(),
+                                                t=self._scale_timesteps(t),
+                                                x_start=x_start.detach(),
+                                                **model_kwargs)
+        model_output_from_noise = model_forward_from_noise.pred
         if self.model_mean_type == "eps":
             target = noise
             assert model_output.shape == target.shape == x_start.shape
             terms["eps"] = self.loss_fn(target, model_output)
-            terms["loss"] = terms["eps"]
+            terms["consitency"] = self.loss_fn(model_output_from_noise, model_output)
+            terms["loss"] = terms["eps"] * 0.9 + terms["consitency"] * 0.1
         elif self.model_mean_type == "eps + x_start":
             terms["eps"] = self.loss_fn(noise, model_output)
             terms["recon"] = get_l1_loss(x_start, terms['pred_xstart'])
