@@ -7,6 +7,7 @@ import numpy as np
 from .cbam import CBAM as CBAM2D
 from .cbam_3d import CBAM3D
 from torch.nn.utils import spectral_norm
+from src.model.inception_resnet_v2.diffusion.diff_ae.diffusion_layer import GroupNorm32
 INPLACE = False
 DEFAULT_ACT = "relu6"
 
@@ -78,7 +79,7 @@ def get_norm(norm, shape, mode="2d"):
             norm_layer = nn.BatchNorm1d(num_features=shape[0],
                                         affine=False)
     elif norm == "group":
-        norm_layer = nn.GroupNorm(num_groups=4, num_channels=shape[0])
+        norm_layer = GroupNorm32(num_channels=shape[0])
     elif norm is None:
         norm_layer = nn.Identity()
     else:
