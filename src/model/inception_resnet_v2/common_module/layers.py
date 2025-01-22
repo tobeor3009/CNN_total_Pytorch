@@ -7,7 +7,6 @@ import numpy as np
 from .cbam import CBAM as CBAM2D
 from .cbam_3d import CBAM3D
 from torch.nn.utils import spectral_norm
-from src.model.inception_resnet_v2.diffusion.diff_ae.diffusion_layer import GroupNorm32
 INPLACE = False
 DEFAULT_ACT = "relu6"
 
@@ -19,6 +18,18 @@ class SwishBeta(nn.Module):
 
     def forward(self, x):
         return x * torch.sigmoid(self.beta * x)
+
+class GroupNorm32(nn.GroupNorm):
+    def __init__(self, num_channels: int, *args, **kwargs) -> None:
+        if num_channels % 3 == 0:
+            num_groups = min(24, num_channels)
+        elif num_channels % 5 == 0:
+            num_groups = min(40, num_channels)
+        elif num_channels % 7 == 0:
+            num_groups = min(28, num_channels)
+        else:
+            num_groups = min(32, num_channels)
+        super().__init__(num_groups, num_channels, *args, **kwargs)
 
 
 def get_act(act):
