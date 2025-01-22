@@ -490,7 +490,9 @@ class ResNetBlockND(nn.Module):
         for emb_dim, emb_type in zip(emb_dim_list, emb_type_list):
             if emb_type == "seq":
                 emb_block = nn.Sequential(
-                                            nn.SiLU(),
+                                            GroupNorm32(emb_dim),
+                                            get_act(act),
+                                            nn.Dropout(p=dropout_proba),
                                             nn.Linear(emb_dim, out_channels * 2)
                                         )
             elif emb_type == "2d":

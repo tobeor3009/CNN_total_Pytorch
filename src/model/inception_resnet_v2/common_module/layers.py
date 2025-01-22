@@ -54,7 +54,7 @@ def get_norm(norm, shape, mode="2d"):
     if isinstance(shape, int):
         shape = [shape]
     if isinstance(norm, nn.Module) or callable(norm):
-        norm_layer = norm
+        norm_layer = norm(shape[0])
     elif norm == 'layer':
         if len(shape) == 1:
             shape = shape[0]
