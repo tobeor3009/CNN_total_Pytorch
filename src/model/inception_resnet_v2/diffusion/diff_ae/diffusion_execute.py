@@ -16,7 +16,7 @@ def identity_split_fn(x_cated):
 
 
 class AutoEncoder(nn.Module):
-    def __init__(self, diffusion_model, train_mode, image_mask_cat_fn=None, image_mask_split_fn=None, is_segmentation=False,
+    def __init__(self, diffusion_model, train_mode, is_segmentation=False, image_mask_cat_fn=None, image_mask_split_fn=None,
                  sample_size=1, img_size=512, img_dim=2, T=1000, T_eval=20, T_sampler="uniform",
                  beta_scheduler="linear", spaced=True, rescale_timesteps=False,
                  gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large", model_loss_type="mse",
@@ -42,9 +42,19 @@ class AutoEncoder(nn.Module):
         ##########################
         self.diffusion_model = diffusion_model
         self.train_mode = train_mode
-        self.image_mask_cat_fn = image_mask_cat_fn or identity_cat_fn
-        self.image_mask_split_fn = image_mask_split_fn or identity_split_fn
         self.is_segmentation = is_segmentation
+        
+        if is_segmentation:
+            image_mask_cat_fn = image_mask_cat_fn or identity_cat_fn
+            image_mask_split_fn = image_mask_split_fn or identity_split_fn
+            assert callable(self.image_mask_cat_fn)
+            assert callable(self.image_mask_split_fn)
+        else:
+            assert image_mask_cat_fn is None, "do not provide image_mask_cat_fn when is_segmentation=True"
+            assert image_mask_split_fn is None, "do not provide image_mask_split_fn when is_segmentation=True"
+
+        self.image_mask_cat_fn = image_mask_cat_fn
+        self.image_mask_split_fn = image_mask_split_fn
         self.img_size = getattr(diffusion_model, "img_size", None) or img_size
         self.img_dim = img_dim
         self.in_channel = diffusion_model.in_channel
@@ -60,11 +70,7 @@ class AutoEncoder(nn.Module):
         else:
             raise NotImplementedError()
         ################## check all varialble time before init process ##################
-        if not is_segmentation:
-            assert image_mask_cat_fn is None, "do not provide image_mask_cat_fn when is_segmentation=True"
-            assert image_mask_split_fn is None, "do not provide image_mask_split_fn when is_segmentation=True"
-        assert callable(self.image_mask_cat_fn)
-        assert callable(self.image_mask_split_fn)
+        
         ##################################################################################
         self.common_sampler_kwarg_dict = {
              "beta_scheduler": beta_scheduler,
