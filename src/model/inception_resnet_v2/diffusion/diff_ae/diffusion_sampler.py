@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import NamedTuple, Callable
 from torch.amp import autocast
 import numpy as np
 import torch
@@ -427,7 +427,6 @@ class GaussianSampler():
             noise = self.get_noise_like(x_start)
 
         x_t = self.q_sample(x_start, t, noise=noise)
-
         terms = {'x_t': x_t}
 
         # with autocast(device_type=x_start.device, enabled=self.fp16):
@@ -460,7 +459,7 @@ class GaussianSampler():
         elif self.model_mean_type == "eps + x_start":
             terms["eps"] = self.loss_fn(noise, model_output)
             terms["recon"] = get_l1_loss(x_start, terms['pred_xstart'])
-            terms["loss"] = terms["eps"] * 0.75 + terms["recon"] * 0.25
+            terms["loss"] = terms["eps"] * 0.1 + terms["recon"] * 0.9
         else:
             raise NotImplementedError()
         
@@ -469,8 +468,62 @@ class GaussianSampler():
             terms["loss"] = terms["loss"] + terms["vb"]
         return terms
 
+    def training_losses_segmentation(self, model,
+                                    image: torch.Tensor, mask: torch.Tensor, image_encoded: torch.Tensor,
+                                    t: torch.Tensor, image_mask_cat_fn: Callable,
+                                    model_kwargs=None, noise: torch.Tensor = None):
+        model = self._wrap_model(model)
+        if model_kwargs is None:
+            model_kwargs = {}
+        model_kwargs = {'cond': image_encoded}
+        
+        if noise is None:
+            noise = self.get_noise_like(mask)
+        
+        noise_mask = self.q_sample(mask, t, noise=noise)
+        x_start = image_mask_cat_fn(image, mask)
+        x_t = image_mask_cat_fn(image, noise_mask)
+        terms = {'x_t': x_t}
+
+        # with autocast(device_type=x_start.device, enabled=self.fp16):
+        # x_t is static wrt. to the diffusion process
+        model_forward = model.forward(x=x_t.detach(),
+                                        t=self._scale_timesteps(t),
+                                        x_start=x_start.detach(),
+                                        **model_kwargs)
+        model_output = model_forward.pred
+        _model_output = model_output
+        if self.train_pred_xstart_detach:
+            _model_output = _model_output.detach()
+        
+        # get the pred xstart
+        p_mean_var = self.p_mean_variance(
+            model=DummyModel(pred=_model_output),
+            # gradient goes through x_t
+            x=noise_mask,
+            t=t,
+            clip_denoised=False)
+        terms['pred_xstart'] = p_mean_var['pred_xstart']
+
+        assert model_output.shape == noise.shape == mask.shape
+        if self.model_mean_type == "eps":
+            target = noise
+            terms["eps"] = self.loss_fn(target, model_output)
+            terms["loss"] = terms["eps"]
+        elif self.model_mean_type == "eps + x_start":
+            terms["loss_noise"] = self.loss_fn(noise, model_output)
+            terms["loss_mask"] = self.loss_fn(mask, terms['pred_xstart'])
+            terms["loss"] = terms["loss_noise"] * 0.1 + terms["loss_mask"] * 0.9
+
+        if "vb" in terms:
+            # if learning the variance also use the vlb loss
+            terms["loss"] = terms["loss"] + terms["vb"]
+        return terms
+
     def sample(self, model,
                shape=None,
+               image_mask_cat_fn=None,
+               image_mask_split_fn=None,
                noise=None,
                cond=None,
                x_start=None,
@@ -490,6 +543,7 @@ class GaussianSampler():
         if self.gen_type == GenerativeType.ddpm:
             return self.p_sample_loop(model,
                                       shape=shape,
+                                    #   mask_channel=mask_channel,
                                       noise=noise,
                                       clip_denoised=clip_denoised,
                                       model_kwargs=model_kwargs,
@@ -497,6 +551,8 @@ class GaussianSampler():
         elif self.gen_type == GenerativeType.ddim:
             return self.ddim_sample_loop(model,
                                          shape=shape,
+                                         image_mask_cat_fn=image_mask_cat_fn,
+                                         image_mask_split_fn=image_mask_split_fn,
                                          noise=noise,
                                          clip_denoised=clip_denoised,
                                          model_kwargs=model_kwargs,
@@ -536,9 +592,8 @@ class GaussianSampler():
             noise = self.get_noise_like(x_start)
         assert noise.shape == x_start.shape
         return (
-            _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) *
-            x_start + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod,
-                                           t, x_start.shape) * noise)
+            _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
+            _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
 
     def q_posterior_mean_variance(self, x_start, x_t, t):
         """
@@ -562,6 +617,7 @@ class GaussianSampler():
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
     def p_mean_variance(self, model, x, t,
+                        image_mask_split_fn=None,
                         clip_denoised=True,
                         denoised_fn=None,
                         model_kwargs=None):
@@ -609,8 +665,6 @@ class GaussianSampler():
         else:
             raise NotImplementedError()
         
-        model_variance = _extract_into_tensor(model_variance, t, x.shape)
-        model_log_variance = _extract_into_tensor(model_log_variance, t, x.shape)
         def process_xstart(x):
             if denoised_fn is not None:
                 x = denoised_fn(x)
@@ -618,16 +672,25 @@ class GaussianSampler():
                 return x.clamp(-1, 1)
             else:
                 return self.clip_noise_abnormal(x)
-            return x
+        
+        if image_mask_split_fn is not None:
+            # x means mask
+            image, mask = image_mask_split_fn(x)
+            target = mask
+        else:
+            target = x
+
+        model_variance = _extract_into_tensor(model_variance, t, target.shape)
+        model_log_variance = _extract_into_tensor(model_log_variance, t, target.shape)
 
         if self.model_mean_type in ["eps", "eps + x_start"]:
-            pred_xstart = process_xstart(
-                self._predict_xstart_from_eps(x_t=x, t=t, eps=model_output))
+            pred_xstart = self._predict_xstart_from_eps(x_t=target, t=t, eps=model_output)
+            pred_xstart = process_xstart(pred_xstart)
         else:
             raise NotImplementedError()
-        model_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart, x_t=x, t=t)
+        model_mean, _, _ = self.q_posterior_mean_variance(x_start=pred_xstart, x_t=target, t=t)
 
-        assert (model_mean.shape == model_log_variance.shape == pred_xstart.shape == x.shape)
+        assert (model_mean.shape == model_log_variance.shape == pred_xstart.shape == target.shape)
         return {
             "mean": model_mean,
             "variance": model_variance,
@@ -859,6 +922,7 @@ class GaussianSampler():
 
     def ddim_sample(
         self, model, x, t,
+        image_mask_split_fn=None,
         clip_denoised=True,
         denoised_fn=None,
         cond_fn=None,
@@ -871,40 +935,53 @@ class GaussianSampler():
         Same usage as p_sample().
         """
         out = self.p_mean_variance(
-            model,
-            x,
-            t,
+            model, x, t,
+            image_mask_split_fn=image_mask_split_fn,
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
         )
+        if image_mask_split_fn is not None:
+            # x means mask
+            image, mask = image_mask_split_fn(x)
+            target = mask
+        else:
+            target = x        
         if cond_fn is not None:
-            out = self.condition_score(cond_fn,
-                                       out,
-                                       x,
-                                       t,
+            out = self.condition_score(cond_fn, out, target, t,
                                        model_kwargs=model_kwargs)
-
         # Usually our model outputs epsilon, but we re-derive it
         # in case we used x_start or x_prev prediction.
-        eps = self._predict_eps_from_xstart(x, t, out["pred_xstart"])
+        eps = self._predict_eps_from_xstart(target, t, out["pred_xstart"])
 
-        alpha_bar = _extract_into_tensor(self.alphas_cumprod, t, x.shape)
-        alpha_bar_prev = _extract_into_tensor(self.alphas_cumprod_prev, t,
-                                              x.shape)
+        alpha_bar = _extract_into_tensor(self.alphas_cumprod, t, target.shape)
+        alpha_bar_prev = _extract_into_tensor(self.alphas_cumprod_prev, t, target.shape)
         sigma = (eta * torch.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar)) *
                  torch.sqrt(1 - alpha_bar / alpha_bar_prev))
         # Equation 12.
-        noise = self.get_noise_like(x)
+        # if mask_channel is not None:
+        #     noise = self.get_noise_like(x[:, -mask_channel:])
+        #     barch_size, x_start_channel, *img_shape = x.shape
+        #     permute_dim_tuple = tuple((0, 2, 1, *range(3, 3 + len(img_shape))))
+        #     assert x_start_channel % mask_channel == 0
+        #     multiple_channel = x_start_channel // mask_channel
+        #     noise = noise.unsqueeze(2)
+        #     noise = noise.expand(barch_size, mask_channel, multiple_channel, *img_shape)
+        #     noise = noise.permute(*permute_dim_tuple)
+        #     noise = noise.reshape(barch_size, x_start_channel, *img_shape)
+        # else:
+        #     noise = self.get_noise_like(x)
+        noise = self.get_noise_like(out["pred_xstart"])
         mean_pred = (out["pred_xstart"] * torch.sqrt(alpha_bar_prev) +
                      torch.sqrt(1 - alpha_bar_prev - sigma**2) * eps)
         nonzero_mask = ((t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
                         )  # no noise when t == 0
         sample = mean_pred + nonzero_mask * sigma * noise
         return {"sample": sample, "pred_xstart": out["pred_xstart"]}
-
+    
     def ddim_reverse_sample(
         self, model, x, t,
+        image_mask_split_fn=None,
         clip_denoised=True,
         denoised_fn=None,
         model_kwargs=None,
@@ -916,20 +993,24 @@ class GaussianSampler():
         """
         assert eta == 0.0, "Reverse ODE only for deterministic path"
         out = self.p_mean_variance(
-            model,
-            x,
-            t,
+            model, x, t,
+            image_mask_split_fn=image_mask_split_fn,
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
         )
+        if image_mask_split_fn is not None:
+            # x means mask
+            image, mask = image_mask_split_fn(x)
+            target = mask
+        else:
+            target = x
         # Usually our model outputs epsilon, but we re-derive it
         # in case we used x_start or x_prev prediction.
-        eps = (_extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x.shape)
-               * x - out["pred_xstart"]) / _extract_into_tensor(
-                   self.sqrt_recipm1_alphas_cumprod, t, x.shape)
+        eps = (_extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, target.shape)
+               * target - out["pred_xstart"]) / _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, target.shape)
         alpha_bar_next = _extract_into_tensor(self.alphas_cumprod_next, t,
-                                              x.shape)
+                                              target.shape)
 
         # Equation 12. reversed  (DDIM paper)  (torch.sqrt == torch.sqrt)
         mean_pred = (out["pred_xstart"] * torch.sqrt(alpha_bar_next) +
@@ -939,6 +1020,8 @@ class GaussianSampler():
 
     def ddim_reverse_sample_loop(
         self, model, x,
+        image_mask_cat_fn=None,
+        image_mask_split_fn=None,
         clip_denoised=True,
         denoised_fn=None,
         model_kwargs=None,
@@ -951,17 +1034,23 @@ class GaussianSampler():
         xstart_t = []
         T = []
         indices = list(range(self.num_timesteps))
+        if image_mask_split_fn is not None:
+            image, mask = image_mask_split_fn(x)
+        else:
+            image, mask = None, None
         sample = x
-        for i in indices:
-            t = torch.tensor([i] * len(sample), device=device)
+        for time_step in indices:
+            t = torch.tensor([time_step] * len(sample), device=device)
             with torch.no_grad():
-                out = self.ddim_reverse_sample(model,
-                                               sample,
-                                               t=t,
+                out = self.ddim_reverse_sample(model, sample, t=t,
+                                               image_mask_split_fn=image_mask_split_fn,
                                                clip_denoised=clip_denoised,
                                                denoised_fn=denoised_fn,
                                                model_kwargs=model_kwargs,
                                                eta=eta)
+                if image_mask_cat_fn is not None:
+                    # ddim_reverse_sample output reconstruct about mask, not image
+                    out['sample'] = image_mask_cat_fn(image, out['sample'])
                 sample = out['sample']
                 # [1, ..., T]
                 sample_t.append(sample)
@@ -984,6 +1073,8 @@ class GaussianSampler():
     def ddim_sample_loop(
         self, model,
         shape=None,
+        image_mask_cat_fn=None,
+        image_mask_split_fn=None,
         noise=None,
         clip_denoised=True,
         denoised_fn=None,
@@ -1002,6 +1093,8 @@ class GaussianSampler():
         for sample in self.ddim_sample_loop_progressive(
                 model,
                 shape,
+                image_mask_cat_fn=image_mask_cat_fn,
+                image_mask_split_fn=image_mask_split_fn,
                 noise=noise,
                 clip_denoised=clip_denoised,
                 denoised_fn=denoised_fn,
@@ -1017,6 +1110,8 @@ class GaussianSampler():
     def ddim_sample_loop_progressive(
         self, model,
         shape=None,
+        image_mask_cat_fn=None,
+        image_mask_split_fn=None,
         noise=None,
         clip_denoised=True,
         denoised_fn=None,
@@ -1035,12 +1130,17 @@ class GaussianSampler():
         if device is None:
             device = next(model.parameters()).device
         if noise is not None:
-            img = noise
+            pred_image = noise
         else:
             assert isinstance(shape, (tuple, list))
-            img = self.get_noise_as_shape(shape, device=device)
+            pred_image = self.get_noise_as_shape(shape, device=device)
         indices = list(range(self.num_timesteps))[::-1]
-
+        
+        if image_mask_split_fn is not None:
+            assert image_mask_cat_fn is not None
+            image, mask = image_mask_split_fn(noise)
+        else:
+            image, mask = None, None
         if progress:
             # Lazy import so that we don't depend on tqdm.
             from tqdm.auto import tqdm
@@ -1056,12 +1156,11 @@ class GaussianSampler():
             else:
                 _kwargs = model_kwargs
 
-            t = torch.tensor([i] * len(img), device=device)
+            t = torch.tensor([i] * len(pred_image), device=device)
             with torch.no_grad():
                 out = self.ddim_sample(
-                    model,
-                    img,
-                    t,
+                    model, pred_image, t,
+                    image_mask_split_fn=image_mask_split_fn,
                     clip_denoised=clip_denoised,
                     denoised_fn=denoised_fn,
                     cond_fn=cond_fn,
@@ -1069,9 +1168,12 @@ class GaussianSampler():
                     eta=eta,
                 )
                 out['t'] = t
+                if image_mask_cat_fn is not None:
+                    out["sample"] = image_mask_cat_fn(image, out["sample"])
                 yield out
-                img = out["sample"]
+                pred_image = out["sample"]
 
+                    
     def _vb_terms_bpd(self, model,
                       x_start,
                       x_t,

@@ -7,7 +7,9 @@ def render_uncondition(model, x_T, sampler, latent_sampler,
                        latent_clip_sample=False,
                        latent_znormalize=True,
                        train_mode=None,
-                       clip_denoised=True):
+                       clip_denoised=True,
+                       image_mask_cat_fn=None,
+                       image_mask_split_fn=None):
     device = x_T.device
     if train_mode in ["ddpm"]:
         return sampler.sample(model=model, noise=x_T)
@@ -26,7 +28,8 @@ def render_uncondition(model, x_T, sampler, latent_sampler,
             cond = z_normalize(cond)
 
         # the diffusion on the model
-        return sampler.sample(model=model, noise=x_T, cond=cond, clip_denoised=clip_denoised)
+        return sampler.sample(model=model, image_mask_cat_fn=image_mask_cat_fn, image_mask_split_fn=image_mask_split_fn,
+                              noise=x_T, cond=cond, clip_denoised=clip_denoised)
     else:
         raise NotImplementedError()
 
@@ -36,12 +39,16 @@ def render_condition(
     x_start=None,
     cond=None,
     train_mode=None,
-    clip_denoised=True
+    clip_denoised=True,
+    image_mask_cat_fn=None,
+    image_mask_split_fn=None
 ):
     if train_mode in ["autoencoder"]:
         if cond is None:
             cond = model.encode(x_start)
         return sampler.sample(model=model,
+                              image_mask_cat_fn=image_mask_cat_fn,
+                              image_mask_split_fn=image_mask_split_fn,
                               noise=x_T,
                               model_kwargs={'cond': cond},
                               clip_denoised=clip_denoised)

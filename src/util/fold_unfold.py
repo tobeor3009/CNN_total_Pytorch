@@ -120,7 +120,7 @@ def combine_region_voting_patches(unfold_tensor, batch_size, image_size, patch_s
     return recon_tensor / divisor
 
 def combine_region_voting_patches_with_patch_weights(unfold_tensor, batch_size, image_size, patch_size, stride, pad_size, img_dim,
-                                                     stride_weight=None):
+                                                     stride_weight=None, max_distance_coef=1.25):
     assert_patch_stride_size(patch_size, stride)
     _, in_channels, *_ = unfold_tensor.shape
     if img_dim == 2:
@@ -134,7 +134,8 @@ def combine_region_voting_patches_with_patch_weights(unfold_tensor, batch_size, 
     device, dtype = unfold_tensor.device, unfold_tensor.dtype
 
     if stride_weight is None:
-        stride_weight = compute_stride_weights(image_size, patch_size, stride, pad_size, img_dim).to(device=device, dtype=dtype)
+        stride_weight = compute_stride_weights(image_size, patch_size, stride, pad_size, img_dim,
+                                               max_distance_coef=max_distance_coef).to(device=device, dtype=dtype)
     stride_weight = stride_weight.permute(*weight_permute_dim).unsqueeze(0).unsqueeze(2)
     stride_weight = stride_weight.expand(batch_size, num_patch, in_channels, *expand_dim).flatten(0, 1)
 
@@ -144,7 +145,7 @@ def combine_region_voting_patches_with_patch_weights(unfold_tensor, batch_size, 
     
     return recon_tensor / divisor
 
-def compute_single_weights(patch_size, img_dim):
+def compute_single_weights(patch_size, img_dim, max_distance_coef=1.25):
     patch_size_tuple = to_ntuple(patch_size, img_dim)
     if img_dim == 2:
         height, width = patch_size_tuple
@@ -157,16 +158,17 @@ def compute_single_weights(patch_size, img_dim):
         z_coords, y_coords, x_coords = np.indices(patch_size_tuple)
         distances = np.sqrt((z_coords - center_z) ** 2 + (x_coords - center_x) ** 2 + (y_coords - center_y) ** 2)
     
-    max_distance = (patch_size / 2) ** (img_dim * 1.5)
+    max_distance = (patch_size / 2) ** (img_dim * max_distance_coef)
     distances = 1 - (distances / max_distance).clip(0, 1)
     return torch.tensor(distances, dtype=torch.float32)
 
-def compute_stride_weights(image_size, patch_size, stride, pad_size, img_dim):
+def compute_stride_weights(image_size, patch_size, stride, pad_size, img_dim, max_distance_coef=1.25):
     padded_image_size = image_size + pad_size * 2
     patch_per_dim = int((padded_image_size - patch_size) / stride) + 1
     num_patch = patch_per_dim ** img_dim
     repeat_dim = to_ntuple(1, img_dim)
-    single_weight = compute_single_weights(patch_size, img_dim)[..., None]
+    single_weight = compute_single_weights(patch_size, img_dim, 
+                                           max_distance_coef=max_distance_coef)[..., None]
     patch_weight = single_weight.repeat(*repeat_dim, num_patch)
     if img_dim == 2:
         patch_weight[:stride, :, :patch_per_dim] = 1
