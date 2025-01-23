@@ -409,22 +409,26 @@ class LearnedSinusoidalPosEmb(nn.Module):
         fouriered = torch.cat((x, fouriered), dim = -1)
         return fouriered
 
-def get_scale_shift_list(emb_block_list, emb_args, img_dim):
+def get_scale_shift_list(emb_block_list, emb_type_list, emb_args, img_dim):
     unsqueeze_dim = tuple(1 for _ in range(img_dim))
     scale_shift_list = []
-    for emb_block, emb in zip(emb_block_list, emb_args):
+    for emb_block, emb_type, emb in zip(emb_block_list, emb_type_list, emb_args):
         emb = emb_block(emb)
         emb_shape = emb.shape
         emb = emb.view(*emb_shape, *unsqueeze_dim)
-        scale_shift = emb.chunk(2, dim=1)
-        scale_shift_list.append(scale_shift)
+        if emb_type == "cond":
+            scale, shift = emb, None
+        else:
+            scale, shift = emb.chunk(2, dim=1)
+        scale_shift_list.append([scale, shift])
     return scale_shift_list
 
 def apply_embedding(x, scale_shift_list, scale_bias=1):
     if exists(scale_shift_list):
-        for scale_shift in scale_shift_list:
-            scale, shift = scale_shift
-            x = x * (scale_bias + scale) + shift
+        for scale, shift in scale_shift_list:
+            x = x * (scale_bias + scale)
+            if shift is not None:
+                x = x * (scale_bias + scale) + shift
     return x    
 
 class GroupNorm32(nn.GroupNorm):
@@ -490,18 +494,22 @@ class ResNetBlockND(nn.Module):
         for emb_dim, emb_type in zip(emb_dim_list, emb_type_list):
             if emb_type == "seq":
                 emb_block = nn.Sequential(
-                                            GroupNorm32(emb_dim),
                                             get_act(act),
-                                            nn.Dropout(p=dropout_proba),
                                             nn.Linear(emb_dim, out_channels * 2)
                                         )
-            elif emb_type == "2d":
+            elif emb_type == "cond":
+                emb_block = nn.Sequential(
+                                            get_act(act),
+                                            nn.Linear(emb_dim, out_channels)
+                                        )
+            elif emb_type == "nd":
                 emb_block = BaseBlockND(emb_dim, out_channels * 2, kernel_size,
-                                        1, padding, norm, groups, act, bias, dropout_proba=0.0, img_dim=2)
+                                        1, padding, norm, groups, act, bias, dropout_proba=0.0, img_dim=img_dim)
             else:
-                raise Exception("emb_type must be seq or 2d")
+                raise NotImplementedError(f"emb_type must be in [seq, cond, nd]")
             emb_block_list.append(emb_block)
         self.emb_block_list = nn.ModuleList(emb_block_list)
+        self.emb_type_list = emb_type_list
 
         self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
                                     1, padding, norm, groups, act, bias, dropout_proba=dropout_proba, img_dim=img_dim)
@@ -534,7 +542,8 @@ class ResNetBlockND(nn.Module):
     
     def _forward_conv(self, x, *emb_args):
         skip_x = x
-        scale_shift_list = get_scale_shift_list(self.emb_block_list, emb_args, self.img_dim)
+        scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, 
+                                                emb_args, self.img_dim)
         x = self.block_1(x)
         x = self.block_2(x, scale_shift_list)
         x = x + self.residiual_conv(skip_x)
@@ -581,14 +590,19 @@ class ConvBlockND(nn.Module):
                                             get_act(act),
                                             nn.Linear(emb_dim, out_channels * 2)
                                         )
-            elif emb_type == "2d":
+            elif emb_type == "cond":
+                emb_block = nn.Sequential(
+                                            get_act(act),
+                                            nn.Linear(emb_dim, out_channels)
+                                        )
+            elif emb_type == "nd":
                 emb_block = BaseBlockND(emb_dim, out_channels * 2, kernel_size,
-                                        1, padding, norm, groups, act, bias,
-                                        dropout_proba=0.0, img_dim=2)
+                                        1, padding, norm, groups, act, bias, dropout_proba=0.0, img_dim=img_dim)
             else:
-                raise Exception("emb_type must be seq or 2d")
+                raise NotImplementedError(f"emb_type must be in [seq, cond, nd]")
             emb_block_list.append(emb_block)
         self.emb_block_list = nn.ModuleList(emb_block_list)
+        self.emb_type_list = emb_type_list
 
         self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
                                     stride, padding, norm, groups, act, bias,
@@ -610,7 +624,8 @@ class ConvBlockND(nn.Module):
             return self._forward_impl(x, *args)
 
     def _forward_impl(self, x, *emb_args):
-        scale_shift_list = get_scale_shift_list(self.emb_block_list, emb_args, self.img_dim)
+        scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list,
+                                                emb_args, self.img_dim)
         x = self.block_1(x, scale_shift_list)
         x = self.attn(x)
         return x
