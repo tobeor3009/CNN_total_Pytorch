@@ -19,3 +19,5 @@ __pycache__
 .ipynb_checkpoints
 Dockerfile*
 .DS_Store
+!scripts/*
+!scripts/logs/*
