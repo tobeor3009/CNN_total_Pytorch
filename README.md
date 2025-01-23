@@ -22,9 +22,8 @@ This repository contains a collection of various libraries and utility functions
 Currently, detailed usage instructions are under development. Custom `.ipynb` files for each task are being created but have not yet been uploaded, as the general usage methodology has not been finalized. If requested, I will upload example `.ipynb` files for demonstration.
 
 For now, the files under the `src/model` directory can be used independently. They return PyTorch `Model` objects (`nn.Module`) and can be directly imported and utilized in your projects.
-
 --- 
-> **Note:** 
+**Note:** 
 > 1. A script capable of performing **regression multi-task** is located at `scripts/0_regression_multi_task_pft_xray.ipynb`.
 > 2. A script capable of performing **segmentation multi-task** is located at `scripts/1_segmentation_multi_task_dp.py`.
 > 3. A script capable of performing **CT-Super resoultion Gan** is located at `scripts/2_ct_super_resolution_gan.py`
