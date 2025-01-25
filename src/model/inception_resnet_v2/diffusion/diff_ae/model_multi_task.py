@@ -29,7 +29,7 @@ def get_encode_feature_channel(block_size, last_channel_ratio):
     return int(round(feature_channel))
 
 def get_time_emb_dim(block_size):
-    emb_dim = block_size * 16
+    emb_dim = block_size * 32
     time_emb_dim_init = emb_dim // 2
     time_emb_dim = emb_dim * 4
     return emb_dim, time_emb_dim_init, time_emb_dim
@@ -157,8 +157,7 @@ class InceptionResNetV2_UNet(nn.Module):
             if isinstance(include_latent_net, nn.Module):
                 self.latent_net = include_latent_net
             else:
-                self.emb_channel = emb_channel
-                self.latent_net = MLPSkipNet(emb_channel=emb_channel, block_size=block_size, num_time_layers=2, time_last_act=None,
+                self.latent_net = MLPSkipNet(block_size=block_size, last_channel_ratio=last_channel_ratio, num_time_layers=2, time_last_act=None,
                                             num_latent_layers=10, latent_last_act=None, latent_dropout=0., latent_condition_bias=1,
                                             act=act, use_norm=True, skip_layers=[1, 2, 3, 4, 5, 6, 7, 8, 9])
         for m in self.modules():
@@ -443,14 +442,14 @@ class InceptionResNetV2_UNet(nn.Module):
             "use_checkpoint": self.use_checkpoint[layer_idx],
             "img_dim": self.img_dim
         }
-        mixed_5b_branch_0_0 = ConvBlockND(block_size * 12, block_size * 6, 1, **common_arg_dict)
-        mixed_5b_branch_1_0 = ConvBlockND(block_size * 12, block_size * 3, 1, **common_arg_dict)
-        mixed_5b_branch_1_1 = ConvBlockND(block_size * 3, block_size * 4, 5, **common_arg_dict)
-        mixed_5b_branch_2_0 = ConvBlockND(block_size * 12, block_size * 4, 1, **common_arg_dict)
-        mixed_5b_branch_2_1 = ConvBlockND(block_size * 4, block_size * 6, 3, **common_arg_dict)
-        mixed_5b_branch_2_2 = ConvBlockND(block_size * 6, block_size * 6, 3, **common_arg_dict)
+        mixed_5b_branch_0_0 = ResNetBlockND(block_size * 12, block_size * 6, 1, **common_arg_dict)
+        mixed_5b_branch_1_0 = ResNetBlockND(block_size * 12, block_size * 3, 1, **common_arg_dict)
+        mixed_5b_branch_1_1 = ResNetBlockND(block_size * 3, block_size * 4, 5, **common_arg_dict)
+        mixed_5b_branch_2_0 = ResNetBlockND(block_size * 12, block_size * 4, 1, **common_arg_dict)
+        mixed_5b_branch_2_1 = ResNetBlockND(block_size * 4, block_size * 6, 3, **common_arg_dict)
+        mixed_5b_branch_2_2 = ResNetBlockND(block_size * 6, block_size * 6, 3, **common_arg_dict)
         mixed_5b_branch_pool_0 = get_avgpool_nd(self.img_dim)(3, stride=1, padding=1)
-        mixed_5b_branch_pool_1 = ConvBlockND(block_size * 12, block_size * 4, 1, **common_arg_dict)
+        mixed_5b_branch_pool_1 = ResNetBlockND(block_size * 12, block_size * 4, 1, **common_arg_dict)
         mixed_5b = nn.ModuleDict({
             "mixed_5b_branch_0": nn.ModuleList([mixed_5b_branch_0_0]),
             "mixed_5b_branch_1": nn.ModuleList([mixed_5b_branch_1_0, 
@@ -481,11 +480,11 @@ class InceptionResNetV2_UNet(nn.Module):
             "img_dim": self.img_dim
         }
 
-        mixed_6a_branch_0_0 = ConvBlockND(block_size * 20, block_size * 24, 3,
+        mixed_6a_branch_0_0 = ResNetBlockND(block_size * 20, block_size * 24, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
-        mixed_6a_branch_1_1 = ConvBlockND(block_size * 20, block_size * 16, 1, **common_arg_dict)
-        mixed_6a_branch_1_2 = ConvBlockND(block_size * 16, block_size * 16, 3, **common_arg_dict)
-        mixed_6a_branch_1_3 = ConvBlockND(block_size * 16, block_size * 24, 3,
+        mixed_6a_branch_1_1 = ResNetBlockND(block_size * 20, block_size * 16, 1, **common_arg_dict)
+        mixed_6a_branch_1_2 = ResNetBlockND(block_size * 16, block_size * 16, 3, **common_arg_dict)
+        mixed_6a_branch_1_3 = ResNetBlockND(block_size * 16, block_size * 24, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
         mixed_6a_branch_pool_0 = get_maxpool_nd(self.img_dim)(3, stride=2, padding=padding_3x3)
         mixed_6a = nn.ModuleDict({
@@ -512,15 +511,15 @@ class InceptionResNetV2_UNet(nn.Module):
             "use_checkpoint": self.use_checkpoint[layer_idx],
             "img_dim": self.img_dim
         }
-        mixed_7a_branch_0_1 = ConvBlockND(block_size * 68, block_size * 16, 1, **common_arg_dict)
-        mixed_7a_branch_0_2 = ConvBlockND(block_size * 16, block_size * 24, 3,
+        mixed_7a_branch_0_1 = ResNetBlockND(block_size * 68, block_size * 16, 1, **common_arg_dict)
+        mixed_7a_branch_0_2 = ResNetBlockND(block_size * 16, block_size * 24, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
-        mixed_7a_branch_1_1 = ConvBlockND(block_size * 68, block_size * 16, 1, **common_arg_dict)
-        mixed_7a_branch_1_2 = ConvBlockND(block_size * 16, block_size * 18, 3,
+        mixed_7a_branch_1_1 = ResNetBlockND(block_size * 68, block_size * 16, 1, **common_arg_dict)
+        mixed_7a_branch_1_2 = ResNetBlockND(block_size * 16, block_size * 18, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
-        mixed_7a_branch_2_1 = ConvBlockND(block_size * 68, block_size * 16, 1, **common_arg_dict)
-        mixed_7a_branch_2_2 = ConvBlockND(block_size * 16, block_size * 18, 3, **common_arg_dict)
-        mixed_7a_branch_2_3 = ConvBlockND(block_size * 18, block_size * 20, 3,
+        mixed_7a_branch_2_1 = ResNetBlockND(block_size * 68, block_size * 16, 1, **common_arg_dict)
+        mixed_7a_branch_2_2 = ResNetBlockND(block_size * 16, block_size * 18, 3, **common_arg_dict)
+        mixed_7a_branch_2_3 = ResNetBlockND(block_size * 18, block_size * 20, 3,
                                           stride=2, padding=padding_3x3, **common_arg_dict)
         mixed_7a_branch_pool_0 = get_maxpool_nd(self.img_dim)(3, stride=2, padding=padding_3x3)
         mixed_7a = nn.ModuleDict({
@@ -561,14 +560,14 @@ class InceptionResNetV2_UNet(nn.Module):
             "img_dim": self.img_dim
         }
 
-        branch_0_0 = ConvBlockND(in_channels, block_size * 2, 1, **common_arg_dict)
-        branch_1_0 = ConvBlockND(in_channels, block_size * 2, 1, **common_arg_dict)
-        branch_1_1 = ConvBlockND(block_size * 2, block_size * 2, 3, **common_arg_dict)
-        branch_2_0 = ConvBlockND(in_channels, block_size * 2, 1, **common_arg_dict)
-        branch_2_1 = ConvBlockND(block_size * 2, block_size * 3, 3, **common_arg_dict)
-        branch_2_2 = ConvBlockND(block_size * 3, block_size * 4, 3, **common_arg_dict)
+        branch_0_0 = ResNetBlockND(in_channels, block_size * 2, 1, **common_arg_dict)
+        branch_1_0 = ResNetBlockND(in_channels, block_size * 2, 1, **common_arg_dict)
+        branch_1_1 = ResNetBlockND(block_size * 2, block_size * 2, 3, **common_arg_dict)
+        branch_2_0 = ResNetBlockND(in_channels, block_size * 2, 1, **common_arg_dict)
+        branch_2_1 = ResNetBlockND(block_size * 2, block_size * 3, 3, **common_arg_dict)
+        branch_2_2 = ResNetBlockND(block_size * 3, block_size * 4, 3, **common_arg_dict)
 
-        up = ConvBlockND(mixed_channel, in_channels, 1,
+        up = ResNetBlockND(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=self.use_checkpoint[layer_idx], img_dim=self.img_dim)
@@ -597,23 +596,23 @@ class InceptionResNetV2_UNet(nn.Module):
             "use_checkpoint": self.use_checkpoint[layer_idx],
             "img_dim": self.img_dim
         }
-        branch_0_0 = ConvBlockND(in_channels, block_size * 12, 1, **common_arg_dict)
-        branch_1_0 = ConvBlockND(in_channels, block_size * 8, 1, **common_arg_dict)
+        branch_0_0 = ResNetBlockND(in_channels, block_size * 12, 1, **common_arg_dict)
+        branch_1_0 = ResNetBlockND(in_channels, block_size * 8, 1, **common_arg_dict)
         branch_1_list = [branch_1_0]
         if self.img_dim == 1:
-            branch_1_1 = ConvBlockND(block_size * 8, block_size * 12, 7, **common_arg_dict)
+            branch_1_1 = ResNetBlockND(block_size * 8, block_size * 12, 7, **common_arg_dict)
             branch_1_list.append(branch_1_1)
         elif self.img_dim == 2:
-            branch_1_1 = ConvBlockND(block_size * 8, block_size * 10, [1, 7], **common_arg_dict)
-            branch_1_2 = ConvBlockND(block_size * 10, block_size * 12, [7, 1], **common_arg_dict)
+            branch_1_1 = ResNetBlockND(block_size * 8, block_size * 10, [1, 7], **common_arg_dict)
+            branch_1_2 = ResNetBlockND(block_size * 10, block_size * 12, [7, 1], **common_arg_dict)
             branch_1_list.extend([branch_1_1, branch_1_2])
         elif self.img_dim == 3:
-            branch_1_1 = ConvBlockND(block_size * 8, block_size * 10, [1, 1, 7], **common_arg_dict)
-            branch_1_2 = ConvBlockND(block_size * 10, block_size * 10, [1, 7, 1], **common_arg_dict)
-            branch_1_3 = ConvBlockND(block_size * 10, block_size * 12, [7, 1, 1], **common_arg_dict)
+            branch_1_1 = ResNetBlockND(block_size * 8, block_size * 10, [1, 1, 7], **common_arg_dict)
+            branch_1_2 = ResNetBlockND(block_size * 10, block_size * 10, [1, 7, 1], **common_arg_dict)
+            branch_1_3 = ResNetBlockND(block_size * 10, block_size * 12, [7, 1, 1], **common_arg_dict)
             branch_1_list.extend([branch_1_1, branch_1_2, branch_1_3])
 
-        up = ConvBlockND(mixed_channel, in_channels, 1,
+        up = ResNetBlockND(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=self.use_checkpoint[layer_idx], img_dim=self.img_dim)
@@ -638,22 +637,22 @@ class InceptionResNetV2_UNet(nn.Module):
             "use_checkpoint": self.use_checkpoint[layer_idx],
             "img_dim": self.img_dim
         }
-        branch_0_0 = ConvBlockND(in_channels, block_size * 12, 1, **common_arg_dict)
-        branch_1_0 = ConvBlockND(in_channels, block_size * 12, 1, **common_arg_dict)
+        branch_0_0 = ResNetBlockND(in_channels, block_size * 12, 1, **common_arg_dict)
+        branch_1_0 = ResNetBlockND(in_channels, block_size * 12, 1, **common_arg_dict)
         branch_1_list = [branch_1_0]
         if self.img_dim == 1:
-            branch_1_1 = ConvBlockND(block_size * 12, block_size * 16, 3, **common_arg_dict)
+            branch_1_1 = ResNetBlockND(block_size * 12, block_size * 16, 3, **common_arg_dict)
             branch_1_list.append(branch_1_1)
         elif self.img_dim == 2:
-            branch_1_1 = ConvBlockND(block_size * 12, block_size * 14, [1, 3], **common_arg_dict)
-            branch_1_2 = ConvBlockND(block_size * 14, block_size * 16, [3, 1], **common_arg_dict)
+            branch_1_1 = ResNetBlockND(block_size * 12, block_size * 14, [1, 3], **common_arg_dict)
+            branch_1_2 = ResNetBlockND(block_size * 14, block_size * 16, [3, 1], **common_arg_dict)
             branch_1_list.extend([branch_1_1, branch_1_2])
         elif self.img_dim == 3:
-            branch_1_1 = ConvBlockND(block_size * 12, block_size * 14, [1, 1, 3], **common_arg_dict)
-            branch_1_2 = ConvBlockND(block_size * 14, block_size * 14, [1, 3, 1], **common_arg_dict)
-            branch_1_3 = ConvBlockND(block_size * 14, block_size * 16, [3, 1, 1], **common_arg_dict)
+            branch_1_1 = ResNetBlockND(block_size * 12, block_size * 14, [1, 1, 3], **common_arg_dict)
+            branch_1_2 = ResNetBlockND(block_size * 14, block_size * 14, [1, 3, 1], **common_arg_dict)
+            branch_1_3 = ResNetBlockND(block_size * 14, block_size * 16, [3, 1, 1], **common_arg_dict)
             branch_1_list.extend([branch_1_1, branch_1_2, branch_1_3])
-        up = ConvBlockND(mixed_channel, in_channels, 1,
+        up = ResNetBlockND(mixed_channel, in_channels, 1,
                         bias=True, norm=self.norm, act=None,
                         emb_dim_list=emb_dim_list, emb_type_list=emb_type_list,
                         use_checkpoint=self.use_checkpoint[layer_idx], img_dim=self.img_dim)
@@ -740,11 +739,12 @@ class MLPSkipNet(nn.Module):
 
     default MLP for the latent DPM in the paper!
     """
-    def __init__(self, emb_channel, block_size=16, num_time_layers=2, time_last_act=None,
+    def __init__(self, block_size=16, last_channel_ratio=1, num_time_layers=2, time_last_act=None,
                  num_latent_layers=10, latent_last_act=None, latent_dropout=0., latent_condition_bias=1,
                  act="silu", use_norm=True, skip_layers=[1, 2, 3, 4, 5, 6, 7, 8, 9]):
         super().__init__()
         self.skip_layers = skip_layers
+        self.feature_channel = get_encode_feature_channel(block_size, last_channel_ratio)
         _, time_emb_dim_init, time_emb_dim = get_time_emb_dim(block_size)
         self.time_emb_dim_init = time_emb_dim_init
         latent_hid_channels = time_emb_dim * 2
@@ -767,13 +767,13 @@ class MLPSkipNet(nn.Module):
                 mlp_act = act
                 mlp_norm = use_norm
                 cond = True
-                a, b = emb_channel, latent_hid_channels
+                a, b = time_emb_dim, latent_hid_channels
                 mlp_dropout = latent_dropout
             elif i == num_latent_layers - 1:
                 mlp_act = None
                 mlp_norm = False
                 cond = False
-                a, b = latent_hid_channels, emb_channel
+                a, b = latent_hid_channels, time_emb_dim
                 mlp_dropout = 0
             else:
                 mlp_act = act
@@ -783,7 +783,7 @@ class MLPSkipNet(nn.Module):
                 mlp_dropout = latent_dropout
 
             if i in skip_layers:
-                a += emb_channel
+                a += time_emb_dim
 
             self.layers.append(
                 MLPLNAct(

@@ -887,7 +887,7 @@ class MultiDecoderND_V2(nn.Module):
         self.conv_transpose = conv_transpose_fn(in_channels, out_channels,
                                                 stride=kernel_size,
                                                 **conv_transpose_kwarg_dict)
-        self.concat_conv = ConvBlockND(in_channels=out_channels * 2,
+        self.concat_conv = ResNetBlockND(in_channels=out_channels * 2,
                                        out_channels=out_channels, **conv_common_kwarg_dict)
     def forward(self, x, *args):
         if self.use_checkpoint:
@@ -924,7 +924,7 @@ class OutputND(nn.Module):
         self.conv_3x3 = conv_fn(in_channels=in_channels,
                                   out_channels=conv_out_channels,
                                   kernel_size=3, padding=1)
-        self.concat_conv = ConvBlockND(in_channels=conv_out_channels * 2,
+        self.concat_conv = ResNetBlockND(in_channels=conv_out_channels * 2,
                                        out_channels=out_channels,
                                       **conv_common_kwarg_dict)
         self.act = get_act(act)

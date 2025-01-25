@@ -5,6 +5,7 @@ import torch
 import math
 from .choices import ModelType, GenerativeType
 from .nn import mean_flat
+import os
 
 def space_timesteps(num_timesteps, section_counts):
     """
@@ -75,9 +76,9 @@ def _extract_into_tensor(arr, timesteps, broadcast_shape):
         res = res[..., None]
     return res.expand(broadcast_shape)
 
-def get_const_betas(num_diffusion_timesteps):
+def get_const_betas(const_coef, num_diffusion_timesteps):
     scale = 1000 / num_diffusion_timesteps
-    betas = np.array([scale * 0.01] * num_diffusion_timesteps)
+    betas = np.array([scale * const_coef] * num_diffusion_timesteps)
     return betas
 
 def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
@@ -132,7 +133,7 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps, use_timestep
                                     lambda t: torch.cos((t + 0.008) / 1.008 * torch.pi / 2)**2)
     elif schedule_name[:5] == "const":
         const_coef = float(schedule_name[5:])
-        betas = get_const_betas(const_coef)
+        betas = get_const_betas(const_coef, num_diffusion_timesteps)
     else:
         raise NotImplementedError(f"unknown beta schedule: {schedule_name}")
     betas = betas.astype(np.float64)
@@ -309,9 +310,9 @@ class GaussianSampler():
         assert isinstance(self.train_pred_xstart_detach, bool)
         ###################################################################################
 
-        self.original_num_steps = T
         betas, self.timestep_map = get_named_beta_schedule(beta_scheduler, T, self.use_timesteps, spaced)
         self.betas = np.array(betas, dtype=np.float64)
+        self.original_num_steps = T
         assert len(betas.shape) == 1, "betas must be 1-D"
         assert (betas > 0).all() and (betas <= 1).all()
         self.num_timesteps = int(betas.shape[0])
@@ -427,7 +428,6 @@ class GaussianSampler():
             noise = self.get_noise_like(x_start)
 
         x_t = self.q_sample(x_start, t, noise=noise)
-        x_t_from_noise = self.q_sample(noise, t, noise=noise)
         terms = {'x_t': x_t}
 
         # with autocast(device_type=x_start.device, enabled=self.fp16):
@@ -451,21 +451,26 @@ class GaussianSampler():
         terms['pred_xstart'] = p_mean_var['pred_xstart']
 
         # model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
-        model_forward_from_noise = model.forward(x=x_t_from_noise.detach(),
-                                                t=self._scale_timesteps(t),
-                                                x_start=x_start.detach(),
-                                                **model_kwargs)
-        model_output_from_noise = model_forward_from_noise.pred
+
         if self.model_mean_type == "eps":
             target = noise
             assert model_output.shape == target.shape == x_start.shape
             terms["eps"] = self.loss_fn(target, model_output)
-            terms["consitency"] = self.loss_fn(model_output_from_noise, model_output)
-            terms["loss"] = terms["eps"] * 0.9 + terms["consitency"] * 0.1
+            terms["loss"] = terms["eps"]
         elif self.model_mean_type == "eps + x_start":
             terms["eps"] = self.loss_fn(noise, model_output)
             terms["recon"] = get_l1_loss(x_start, terms['pred_xstart'])
             terms["loss"] = terms["eps"] * 0.1 + terms["recon"] * 0.9
+        elif self.model_mean_type == "eps + consistency":
+            x_t_from_noise = self.q_sample(self.get_noise_like(noise), t, noise=noise)
+            model_forward_from_noise = model.forward(x=x_t_from_noise.detach(),
+                                                    t=self._scale_timesteps(t),
+                                                    x_start=x_start.detach(),
+                                                    **model_kwargs)
+            model_output_from_noise = model_forward_from_noise.pred
+            terms["eps"] = self.loss_fn(target, model_output)
+            terms["consitency"] = self.loss_fn(model_output_from_noise, model_output)
+            terms["loss"] = terms["eps"] * 0.9 + terms["consitency"] * 0.1
         else:
             raise NotImplementedError()
         
@@ -549,7 +554,6 @@ class GaussianSampler():
         if self.gen_type == GenerativeType.ddpm:
             return self.p_sample_loop(model,
                                       shape=shape,
-                                    #   mask_channel=mask_channel,
                                       noise=noise,
                                       clip_denoised=clip_denoised,
                                       model_kwargs=model_kwargs,
@@ -741,11 +745,11 @@ class GaussianSampler():
 
     def _scale_timesteps(self, t):
         if self.spaced:
+            return t
+        else:# Scaling is done by the wrapped model.
             if self.rescale_timesteps:
                 # scale t to be maxed out at 1000 steps
                 return t.float() * (1000.0 / self.num_timesteps)
-            return t
-        else:# Scaling is done by the wrapped model.
             return t
 
     def condition_mean(self, cond_fn, p_mean_var, x, t, model_kwargs=None):
@@ -952,7 +956,7 @@ class GaussianSampler():
             image, mask = image_mask_split_fn(x)
             target = mask
         else:
-            target = x        
+            target = x
         if cond_fn is not None:
             out = self.condition_score(cond_fn, out, target, t,
                                        model_kwargs=model_kwargs)
