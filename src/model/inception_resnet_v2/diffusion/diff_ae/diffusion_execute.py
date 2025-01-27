@@ -52,8 +52,8 @@ class AutoEncoder(nn.Module):
         if is_segmentation:
             image_mask_cat_fn = image_mask_cat_fn or identity_cat_fn
             image_mask_split_fn = image_mask_split_fn or identity_split_fn
-            assert callable(self.image_mask_cat_fn)
-            assert callable(self.image_mask_split_fn)
+            assert callable(image_mask_cat_fn)
+            assert callable(image_mask_split_fn)
         else:
             assert image_mask_cat_fn is None, "do not provide image_mask_cat_fn when is_segmentation=True"
             assert image_mask_split_fn is None, "do not provide image_mask_split_fn when is_segmentation=True"

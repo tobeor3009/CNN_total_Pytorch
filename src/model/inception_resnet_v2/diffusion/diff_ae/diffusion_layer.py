@@ -417,19 +417,16 @@ def get_scale_shift_list(emb_block_list, emb_type_list, emb_args, img_dim):
         emb_shape = emb.shape
         emb = emb.view(*emb_shape, *unsqueeze_dim)
         if emb_type == "cond":
-            scale, shift = emb, None
+            scale, shift = emb, 0
         else:
             scale, shift = emb.chunk(2, dim=1)
         scale_shift_list.append([scale, shift])
     return scale_shift_list
 
 def apply_embedding(x, scale_shift_list, scale_bias=1):
-    if exists(scale_shift_list):
-        for scale, shift in scale_shift_list:
-            x = x * (scale_bias + scale)
-            if shift is not None:
-                x = x * (scale_bias + scale) + shift
-    return x    
+    for scale, shift in scale_shift_list:
+        x = x * (scale_bias + scale) + shift
+    return x
 
 class GroupNorm32(nn.GroupNorm):
     def __init__(self, num_channels: int, *args, **kwargs) -> None:
@@ -542,7 +539,7 @@ class ResNetBlockND(nn.Module):
     
     def _forward_conv(self, x, *emb_args):
         skip_x = x
-        scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, 
+        scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list,
                                                 emb_args, self.img_dim)
         x = self.block_1(x)
         x = self.block_2(x, scale_shift_list)

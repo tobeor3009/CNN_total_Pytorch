@@ -9,15 +9,17 @@ from torch.utils.checkpoint import checkpoint
 from timm.models.layers import DropPath, to_2tuple
 import numpy as np
 from .diffusion_layer import AttentionBlock, GroupNorm32
-from .diffusion_layer import get_scale_shift_list, apply_embedding
+from .diffusion_layer import apply_embedding
 from src.model.inception_resnet_v2.common_module.layers import get_act, get_norm, DEFAULT_ACT, INPLACE
 from src.model.swin_transformer.model_2d.swin_layers import window_partition, window_reverse, check_hasattr_and_init
 from src.model.swin_transformer.model_2d.swin_layers import Mlp, WindowAttention
 from src.model.swin_transformer.model_2d.swin_layers import DROPOUT_INPLACE, InstanceNormChannelLast
+from .diffusion_layer import get_scale_shift_list, apply_embedding
 from einops import rearrange, repeat
 from functools import partial
 from functools import wraps
 from packaging import version
+
 
 DEFAULT_ACT = get_act("silu")
 
@@ -42,12 +44,6 @@ def prob_mask_like(shape, prob, device):
     else:
         return torch.zeros(shape, device = device).float().uniform_(0, 1) < prob
 
-def get_norm_layer_partial(num_groups):
-    return partial(GroupNormChannelFirst, num_groups=num_groups)
-
-def get_norm_layer_partial_conv(num_groups):
-    return partial(WrapGroupNorm, num_groups=num_groups)
-
 def once(fn):
     called = False
     @wraps(fn)
@@ -61,95 +57,24 @@ def once(fn):
 
 print_once = once(print)
 
-# main class
-
-AttentionConfig = namedtuple('AttentionConfig', ['enable_flash', 'enable_math', 'enable_mem_efficient'])
-
-class Attend(nn.Module):
-    def __init__(
-        self,
-        dropout = 0.,
-        flash = False,
-        scale = None
-    ):
-        super().__init__()
-        self.dropout = dropout
-        self.scale = scale
-        self.attn_dropout = nn.Dropout(dropout)
-
-        self.flash = flash
-        assert not (flash and version.parse(torch.__version__) < version.parse('2.0.0')), 'in order to use flash attention, you must be using pytorch 2.0 or above'
-
-        # determine efficient attention configs for cuda and cpu
-
-        self.cpu_config = AttentionConfig(True, True, True)
-        self.cuda_config = None
-
-        if not torch.cuda.is_available() or not flash:
-            return
-
-        device_properties = torch.cuda.get_device_properties(torch.device('cuda'))
-
-        if device_properties.major == 8 and device_properties.minor == 0:
-            print_once('A100 GPU detected, using flash attention if input tensor is on cuda')
-            self.cuda_config = AttentionConfig(True, False, False)
+def get_scale_shift_list(emb_block_list, emb_type_list, emb_args):
+    scale_shift_list = []
+    for emb_block, emb_type, emb in zip(emb_block_list, emb_type_list, emb_args):
+        emb = emb_block(emb)
+        emb = emb.unsqueeze(1)
+        if emb_type == "cond":
+            scale, shift = emb, 0
         else:
-            print_once('Non-A100 GPU detected, using math or mem efficient attention if input tensor is on cuda')
-            self.cuda_config = AttentionConfig(False, True, True)
+            scale, shift = emb.chunk(2, dim=-1)
+        scale_shift_list.append([scale, shift])
+    return scale_shift_list
 
-    def flash_attn(self, q, k, v):
-        _, heads, q_len, _, k_len, is_cuda, device = *q.shape, k.shape[-2], q.is_cuda, q.device
-
-        if exists(self.scale):
-            default_scale = q.shape[-1]
-            q = q * (self.scale / default_scale)
-
-        q, k, v = map(lambda t: t.contiguous(), (q, k, v))
-
-        # Check if there is a compatible device for flash attention
-
-        config = self.cuda_config if is_cuda else self.cpu_config
-
-        # pytorch 2.0 flash attn: q, k, v, mask, dropout, causal, softmax_scale
-
-        with torch.backends.cuda.sdp_kernel(**config._asdict()):
-            out = F.scaled_dot_product_attention(
-                q, k, v,
-                dropout_p = self.dropout if self.training else 0.
-            )
-
-        return out
-
-    def forward(self, q, k, v):
-        """
-        einstein notation
-        b - batch
-        h - heads
-        n, i, j - sequence length (base sequence length, source, target)
-        d - feature dimension
-        """
-
-        q_len, k_len, device = q.shape[-2], k.shape[-2], q.device
-
-        if self.flash:
-            return self.flash_attn(q, k, v)
-
-        scale = default(self.scale, q.shape[-1] ** -0.5)
-
-        # similarity
-
-        sim = einsum(f"b h i d, b h j d -> b h i j", q, k) * scale
-
-        # attention
-
-        attn = sim.softmax(dim = -1)
-        attn = self.attn_dropout(attn)
-
-        # aggregate values
-
-        out = einsum(f"b h i j, b h j d -> b h i d", attn, v)
-
-        return out
+def process_checkpoint_block(use_checkpoint, block, x, *emb_args):
+    if use_checkpoint:
+        output = checkpoint(block, x, *emb_args, use_reentrant=False)
+    else:
+        output = block(x, *emb_args)
+    return output         
 class SelfAttention(nn.MultiheadAttention):
     def forward(self, x):
         output = super().forward(query=x, key=x, value=x, need_weights=False)
@@ -202,60 +127,48 @@ class Interpolate(nn.Module):
     def forward(self, x):
         x = self.interp(x, scale_factor=self.scale_factor, mode=self.mode, align_corners=False)
         return x
-    
-class GroupNormChannelFirst(nn.GroupNorm):
-    
-    def __init__(self, num_channels, *args, **kwargs):
-        super().__init__(num_channels=num_channels,*args, **kwargs)
-    def forward(self, x):
-        x = x.permute(0, 2, 1)
-        return super().forward(x).permute(0, 2, 1)
-
-class WrapGroupNorm(nn.GroupNorm):
-    
-    def __init__(self, num_channels, *args, **kwargs):
-        super().__init__(num_channels=num_channels,*args, **kwargs)
-
 class RMSNorm(nn.Module):
-    def __init__(self, dim, mode="seq"):
+    """
+    Root Mean Square Layer Normalization (RMSNorm).
+
+    Args:
+        dim (int): Dimension of the input tensor.
+        eps (float): Epsilon value for numerical stability. Defaults to 1e-6.
+    """
+    def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
-        if mode == "seq":
-            param_shape = (1, 1, dim)
-            self.normalize_dim = 2
-        elif mode == "1d":
-            param_shape = (1, dim, 1)
-            self.normalize_dim = 1
-        elif mode == "2d":
-            param_shape = (1, dim, 1, 1)
-            self.normalize_dim = 1
+        self.dim = dim
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
 
-        self.weight = nn.Parameter(torch.ones(*param_shape))
-        self.scale = dim ** 0.5
-    def forward(self, x):
-        return F.normalize(x, dim=self.normalize_dim) * self.weight * self.scale
+    def forward(self, x: torch.Tensor):
+        """
+        Forward pass for RMSNorm.
 
-class LayerNorm(nn.Module):
-    def __init__(self, dim, bias = False, mode="seq"):
-        super().__init__()
-        if mode == "seq":
-            param_shape = (1, 1, dim)
-            self.normalize_dim = 2
-        elif mode == "1d":
-            param_shape = (1, dim, 1)
-            self.normalize_dim = 1
-        elif mode == "2d":
-            param_shape = (1, dim, 1, 1)
-            self.normalize_dim = 1
-        
-        self.weight = nn.Parameter(torch.ones(*param_shape))
-        self.bias = nn.Parameter(torch.zeros(*param_shape)) if bias else None
+        Args:
+            x (torch.Tensor): Input tensor.
 
-    def forward(self, x):
-        eps = 1e-5 if x.dtype == torch.float32 else 1e-3
-        var = torch.var(x, dim = self.normalize_dim, unbiased = False, keepdim = True)
-        mean = torch.mean(x, dim = self.normalize_dim, keepdim = True)
-        return (x - mean) * (var + eps).rsqrt() * self.weight + default(self.bias, 0)
+        Returns:
+            torch.Tensor: Normalized tensor with the same shape as input.
+        """
+        return F.rms_norm(x, (self.dim,), self.weight, self.eps)
 
+class GroupNorm32(nn.GroupNorm):
+    def __init__(self, num_channels: int, *args, **kwargs) -> None:
+        num_groups = min(32, num_channels)
+        super().__init__(num_groups, num_channels, *args, **kwargs)
+
+def get_norm_layer(dim, norm_layer_str):
+
+    if norm_layer_str == "rms":
+        norm_layer = RMSNorm(dim)
+    elif norm_layer_str == "group":
+        norm_layer = GroupNorm32(dim)
+    elif norm_layer_str is None:
+        norm_layer = nn.Identity()
+    else:
+        raise NotImplementedError()
+    return norm_layer
 class PixelShuffleLinear(nn.Module):
     def __init__(self, upscale_factor):
         '''
@@ -267,264 +180,18 @@ class PixelShuffleLinear(nn.Module):
             upscale_factor = (upscale_factor, upscale_factor)
         self.scale_num = np.prod(upscale_factor)
 
-    def forward(self, input):
-        batch_size, component, channels = input.size()
+    def forward(self, input_tensor):
+        batch_size, component, channels = input_tensor.size()
         nOut = channels // self.scale_num
 
         out_component = component * self.scale_num
 
-        input_view = input.view(batch_size, component, self.scale_num, nOut)
+        input_view = input_tensor.view(batch_size, component, self.scale_num, nOut)
 
         output = input_view.permute(0, 2, 1, 3)
         output = output.contiguous()
 
         return output.view(batch_size, out_component, nOut)
-
-class SkipLinear(nn.Module):
-    def __init__(self, in_channels, out_channels, norm=None):
-        super().__init__()
-        self.skip_linear = nn.Linear(in_channels, out_channels, bias=False)
-        if norm is None:
-            self.norm = nn.Identity()
-        else:
-            self.norm = norm(out_channels)
-    def forward(self, *args):
-        # expected shape: [B, N, C]
-        x = torch.cat(args, dim=2)
-        x = self.skip_linear(x)
-        x = self.norm(x)
-        return x
-
-class SkipConv1D(nn.Module):
-    def __init__(self, in_channels, out_channels, norm=None, kernel_size=1):
-        super().__init__()
-        self.skip_conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
-                                   kernel_size=kernel_size, stride=1, padding="same")
-        if norm is None:
-            self.norm = nn.Identity()
-        else:
-            self.norm = norm(out_channels)
-    def forward(self, *args):
-        # expected shape: [B, N, C]
-        x = torch.cat(args, dim=2)
-        x = self.skip_conv(x.permute(0, 2, 1))
-        x = self.norm(x)
-        x = x.permute(0, 2, 1)
-        return x
-    
-class SkipZConv(nn.Module):
-    def __init__(self, in_channels, out_channels, norm=None, kernel_size=1):
-        super().__init__()
-        self.skip_conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels,
-                                   kernel_size=kernel_size, stride=1, padding="same", bias=False)
-        if norm is None:
-            self.norm = nn.Identity()
-        else:
-            self.norm = norm(out_channels)
-    def forward(self, *args):
-        # expected shape: [B, N, C]
-        x = torch.cat(args, dim=2)
-        x = self.skip_conv(x)
-        x = self.norm(x)
-        return x
-
-class SkipZLinear(nn.Module):
-    def __init__(self, in_channels, out_channels, norm=None):
-        super().__init__()
-        self.skip_linear = nn.Linear(in_channels, out_channels, bias=False)
-        if norm is None:
-            self.norm = nn.Identity()
-        else:
-            self.norm = norm(out_channels)
-    def forward(self, *args):
-        # expected shape: [B, N, C]
-        x = torch.cat(args, dim=2)
-        x = x.permute(0, 2, 1)
-        x = self.skip_linear(x)
-        x = self.norm(x)
-        return x.permute(0, 2, 1)
-    
-class LinearAttention(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=32, use_checkpoint=False):
-        super().__init__()
-
-        self.use_checkpoint = use_checkpoint
-        self.num_heads = num_heads
-        num_mem_kv = num_heads
-        hidden_dim = dim_head * num_heads
-        self.dim_head = dim_head
-        self.scale = dim_head ** -0.5
-
-        self.norm = RMSNorm(dim, mode="seq")
-        self.mem_kv = nn.Parameter(torch.randn(2, num_heads, dim_head, num_mem_kv))
-        self.to_qkv = nn.Linear(dim, hidden_dim * 3, bias=False)
-        self.to_out = nn.Sequential(
-            nn.Linear(hidden_dim, dim),
-            RMSNorm(dim, mode="seq")
-        )
-
-    def forward(self, x):
-        if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x,
-                              use_reentrant=False)
-        else:
-            return self._forward_impl(x)
-        
-    def _forward_impl(self, x):
-        b = x.size(0)
-        x = self.norm(x)
-        # x.shape = [B, N, C]
-        qkv = self.to_qkv(x).chunk(3, dim=2)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h c) -> b h c n', h=self.num_heads), qkv)
-
-        mk, mv = map(lambda t: repeat(t, 'h c n -> b h c n', b = b), self.mem_kv)
-        k, v = map(partial(torch.cat, dim = -1), ((mk, k), (mv, v)))
-
-        q = q.softmax(dim = -2)
-        k = k.softmax(dim = -1)
-
-        q = q * self.scale
-
-        context = torch.einsum('b h d n, b h e n -> b h d e', k, v)
-
-        out = torch.einsum('b h d e, b h d n -> b h e n', context, q)
-        out = rearrange(out, 'b h c n -> b n (h c)', h=self.num_heads)
-        return self.to_out(out)
-    
-class Attention(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=32, flash=False, use_checkpoint=False, 
-                 norm_layer="rms", use_norm=True, dropout=0.0):
-        super().__init__()
-
-        norm_layer_list = ["rms", "instance"]
-        assert norm_layer in norm_layer_list, f"you can choose norm layer: {norm_layer_list}"
-        
-        self.use_checkpoint = use_checkpoint
-        self.num_heads = num_heads
-        num_mem_kv = num_heads
-        hidden_dim = dim_head * num_heads
-        self.dim_head = dim_head
-        self.scale = dim_head ** -0.5
-        
-        if use_norm:
-            if norm_layer == "rms":
-                self.norm = RMSNorm(dim, mode="seq")
-            else:
-                self.norm = InstanceNormChannelLast(dim)
-        else:
-            self.norm = nn.Identity()
-        self.attend = Attend(flash=flash, dropout=dropout)
-        self.mem_kv = nn.Parameter(torch.randn(2, num_heads, num_mem_kv, dim_head))
-        self.to_qkv = nn.Linear(dim, hidden_dim * 3, bias=False)
-        self.to_out = nn.Linear(hidden_dim, dim)
-
-    def forward(self, x):
-        if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x,
-                              use_reentrant=False)
-        else:
-            return self._forward_impl(x)
-        
-    def _forward_impl(self, x):
-        b = x.size(0)
-        x = self.norm(x)
-
-        qkv = self.to_qkv(x).chunk(3, dim=2)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h c) -> b h n c', h=self.num_heads), qkv)
-
-        mk, mv = map(lambda t: repeat(t, 'h n d -> b h n d', b=b), self.mem_kv)
-        k, v = map(partial(torch.cat, dim = -2), ((mk, k), (mv, v)))
-
-        out = self.attend(q, k, v)
-
-        out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out)
-
-
-class LinearAttention2D(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=32, use_checkpoint=False):
-        super().__init__()
-        self.use_checkpoint = use_checkpoint
-        self.num_heads = num_heads
-        num_mem_kv = num_heads
-        hidden_dim = dim_head * num_heads
-        self.dim_head = dim_head
-        self.scale = dim_head ** -0.5
-
-        self.norm = RMSNorm(dim, mode="2d")
-        self.mem_kv = nn.Parameter(torch.randn(2, num_heads, dim_head, num_mem_kv))
-        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias=False)
-        self.to_out = nn.Sequential(
-            nn.Conv2d(hidden_dim, dim, 1),
-            RMSNorm(dim, mode="2d")
-        )
-
-    def forward(self, x):
-        if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x,
-                              use_reentrant=False)
-        else:
-            return self._forward_impl(x)
-        
-    def _forward_impl(self, x):
-        b, c, h, w = x.shape
-
-        x = self.norm(x)
-
-        qkv = self.to_qkv(x).chunk(3, dim = 1)
-        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h c (x y)', h = self.num_heads), qkv)
-
-        mk, mv = map(lambda t: repeat(t, 'h c n -> b h c n', b = b), self.mem_kv)
-        k, v = map(partial(torch.cat, dim = -1), ((mk, k), (mv, v)))
-
-        q = q.softmax(dim = -2)
-        k = k.softmax(dim = -1)
-
-        q = q * self.scale
-
-        context = torch.einsum('b h d n, b h e n -> b h d e', k, v)
-
-        out = torch.einsum('b h d e, b h d n -> b h e n', context, q)
-        out = rearrange(out, 'b h c (x y) -> b (h c) x y', h = self.num_heads, x = h, y = w)
-        return self.to_out(out)
-
-class Attention2D(nn.Module):
-    def __init__(self, dim, num_heads=4, dim_head=32, flash=False, use_checkpoint=False):
-        super().__init__()
-        self.use_checkpoint = use_checkpoint
-        self.num_heads = num_heads
-        num_mem_kv = num_heads
-        hidden_dim = dim_head * num_heads
-        self.dim_head = dim_head
-        self.scale = dim_head ** -0.5
-
-        self.norm = RMSNorm(dim, mode="2d")
-        self.attend = Attend(flash = flash)
-        self.mem_kv = nn.Parameter(torch.randn(2, num_heads, num_mem_kv, dim_head))
-        self.to_qkv = nn.Conv2d(dim, hidden_dim * 3, 1, bias = False)
-        self.to_out = nn.Conv2d(hidden_dim, dim, 1)
-
-    def forward(self, x):
-        if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x,
-                              use_reentrant=False)
-        else:
-            return self._forward_impl(x)
-        
-    def _forward_impl(self, x):
-        b, c, h, w = x.shape
-        x = self.norm(x)
-
-        qkv = self.to_qkv(x).chunk(3, dim = 1)
-        q, k, v = map(lambda t: rearrange(t, 'b (h c) x y -> b h (x y) c', h = self.num_heads), qkv)
-
-        mk, mv = map(lambda t: repeat(t, 'h n d -> b h n d', b=b), self.mem_kv)
-        k, v = map(partial(torch.cat, dim = -2), ((mk, k), (mv, v)))
-
-        out = self.attend(q, k, v)
-
-        out = rearrange(out, 'b h (x y) d -> b (h d) x y', x = h, y = w)
-        return self.to_out(out)
 
 class WindowContextAttention(nn.Module):
     r""" Window based multi-head self attention (W-MSA) module with relative position bias.
@@ -599,7 +266,10 @@ class WindowContextAttention(nn.Module):
                              relative_position_index)
 
         self.q = nn.Linear(dim, dim, bias=False)
-        self.kv = nn.Linear(dim, dim * 3, bias=False)
+        self.kv = nn.Linear(dim, dim * 2, bias=False)
+
+        self.q_norm = RMSNorm(dim)
+        self.k_norm = RMSNorm(dim)
         if qkv_bias:
             self.q_bias = nn.Parameter(torch.zeros(dim))
             self.v_bias = nn.Parameter(torch.zeros(dim))
@@ -627,14 +297,12 @@ class WindowContextAttention(nn.Module):
         # [B, N, H, C] => [B, H, N, C]
         # [B, N, 2, H, C] => [2, B, H, N, C]
         q = q.reshape(B_, N. self.num_heads, -1).permute(0, 2, 1 ,3).contiguous()
-        kv = kv.reshape(B_, N, 2,
-                        self.num_heads, -1).permute(2, 0, 3, 1, 4).contiguous()
+        kv = kv.reshape(B_, N, 2, self.num_heads, -1).permute(2, 0, 3, 1, 4).contiguous()
         # make torchscript happy (cannot use tensor as tuple)
         k, v = kv[0], kv[1]
 
         # cosine attention
-        attn = (F.normalize(q, dim=-1) @
-                F.normalize(k, dim=-1).transpose(-2, -1))
+        attn = (self.q_norm(q) @ self.k_norm(k).transpose(-2, -1))
         logit_scale = torch.clamp(self.logit_scale,
                                   max=np.log(1. / 0.01)).exp()
         attn = attn * logit_scale
@@ -702,7 +370,7 @@ class SwinTransformerBlock(nn.Module):
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0., drop_path=0.,
-                 norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, pretrained_window_size=0):
+                 norm_layer="rms", act_layer=DEFAULT_ACT, pretrained_window_size=0):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -716,7 +384,7 @@ class SwinTransformerBlock(nn.Module):
             self.window_size = min(self.input_resolution)
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
-        self.norm1 = norm_layer(dim)
+        self.norm1 = get_norm_layer(dim, norm_layer)
         self.attn = WindowAttention(dim, window_size=to_2tuple(self.window_size),
                                     num_heads=num_heads, qkv_bias=qkv_bias,
                                     qkv_drop=qkv_drop, attn_drop=attn_drop, proj_drop=drop,
@@ -725,7 +393,7 @@ class SwinTransformerBlock(nn.Module):
 
         self.drop_path = DropPath(
             drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
+        self.norm2 = get_norm_layer(dim, norm_layer)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
                        act_layer=act_layer, drop=drop)
@@ -801,10 +469,7 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
 
         norm = self.norm1(x)
-        if exists(scale_shift_list):
-            for scale_shift in scale_shift_list:
-                scale, shift = scale_shift
-                norm = norm * (scale + 1) + shift
+        norm = apply_embedding(norm, scale_shift_list)
         x = shortcut + self.drop_path(norm)
         # FFN
         x = x + self.drop_path(self.norm2(self.mlp(x)))
@@ -857,7 +522,7 @@ class PatchEmbed(nn.Module):
         self.proj = nn.Conv2d(in_chans, embed_dim,
                               kernel_size=patch_size, stride=patch_size)
         if norm_layer is not None:
-            self.norm = norm_layer(embed_dim)
+            self.norm = get_norm_layer(embed_dim, norm_layer)
         else:
             self.norm = None
 
@@ -905,15 +570,15 @@ class PatchMerging(nn.Module):
     Args:
         input_resolution (tuple[int]): Resolution of input feature.
         dim (int): Number of input channels.
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        norm_layer (nn.Module, optional): Normalization layer.  Default: rms
     """
 
-    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
+    def __init__(self, input_resolution, dim, norm_layer="rms"):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
-        self.norm = norm_layer(2 * dim)
+        self.norm = get_norm_layer(2 * dim, norm_layer)
 
     def forward(self, x):
         """
@@ -947,57 +612,9 @@ class PatchMerging(nn.Module):
         flops += H * W * self.dim // 2
         return flops
 
-class PatchMergingConv(nn.Module):
-    r""" Patch Merging Layer.
-
-    Args:
-        input_resolution (tuple[int]): Resolution of input feature.
-        dim (int): Number of input channels.
-        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
-    """
-
-    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
-        super().__init__()
-        self.input_resolution = input_resolution
-        self.dim = dim
-        self.reduction = nn.Conv2d(4 * dim, 2 * dim,
-                                   kernel_size=3, stride=1, padding=1, bias=False)
-        self.norm = norm_layer(2 * dim)
-
-    def forward(self, x):
-        """
-        x: B, H*W, C
-        """
-        H, W = self.input_resolution
-        B, L, C = x.shape
-        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
-        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
-
-        x = x.view(B, H, W, C)
-
-        x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
-        x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
-        x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
-        x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
-        x = torch.cat([x0, x1, x2, x3], -1).permute(0, 3, 1, 2)  # B 4*C H/2 W/2
-        x = self.reduction(x)  # B 2 * C H/2 W/2
-        x = x.reshape(B, 2 * C, -1).permute(0, 2, 1)  # B H/2*W/2 C
-        x = self.norm(x)
-        return x
-
-    def extra_repr(self) -> str:
-        return f"input_resolution={self.input_resolution}, dim={self.dim}"
-
-    def flops(self):
-        H, W = self.input_resolution
-        flops = (H // 2) * (W // 2) * 4 * self.dim * 2 * self.dim
-        flops += H * W * self.dim // 2
-        return flops
-
 class PatchExpanding(nn.Module):
     def __init__(self, input_resolution, dim,
-                 return_vector=True, dim_scale=2,
-                 norm_layer=nn.LayerNorm):
+                 return_vector=True, dim_scale=2, norm_layer="rms"):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
@@ -1013,7 +630,7 @@ class PatchExpanding(nn.Module):
                             pixel_conv,
                             nn.PixelShuffle(dim_scale)
             )
-        self.norm_layer = norm_layer(dim // 2)
+        self.norm_layer = get_norm_layer(dim // 2, norm_layer)
 
     def forward(self, x):
         H, W = self.input_resolution
@@ -1030,92 +647,6 @@ class PatchExpanding(nn.Module):
                                         H * self.dim_scale,
                                         W * self.dim_scale)
         return x
-
-class PatchExpandingLinear(nn.Module):
-    def __init__(self, input_resolution, dim,
-                 return_vector=True, dim_scale=2,
-                 norm_layer=nn.LayerNorm):
-        super().__init__()
-        self.input_resolution = input_resolution
-        self.dim = dim
-        self.return_vector = return_vector
-        self.dim_scale = dim_scale
-        
-        assert dim_scale in [1, 2], "not supported dim_scale"
-        self.pixel_shuffle = nn.Linear(dim, dim * (dim_scale ** 2) // 2, bias=False)
-        self.norm_layer = norm_layer(dim // 2)
-
-    def forward(self, x):
-        H, W = self.input_resolution
-        B, L, C = x.shape
-        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
-        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
-        x = self.pixel_shuffle(x)
-
-        if self.dim_scale == 2:
-            x_expand = torch.empty(B, 2 * H, 2 * W, C // 2, device=x.device, dtype=x.dtype)
-            x = x.reshape(B, H, W, 2 * C)
-            x_expand[:, 0::2, 0::2, :] = x[:, :, :, :C // 2]  # B H/2 W/2 C
-            x_expand[:, 1::2, 0::2, :] = x[:, :, :, C // 2:C]  # B H/2 W/2 C
-            x_expand[:, 0::2, 1::2, :] = x[:, :, :, C:C // 2 * 3]  # B H/2 W/2 C
-            x_expand[:, 1::2, 1::2, :] = x[:, :, :, C // 2 * 3:]  # B H/2 W/2 C
-            x = x_expand.view(B, 4 * H * W, C // 2) # B 4*C H/2 W/2
-        x = self.norm_layer(x)
-        if not self.return_vector:
-            x = x.permute(0, 2, 1).view(B, self.dim // 2,
-                                        H * self.dim_scale,
-                                        W * self.dim_scale)
-        return x
-    
-class PatchExpandingMulti(nn.Module):
-    def __init__(self, input_resolution, dim,
-                 return_vector=True, dim_scale=2,
-                 norm_layer=nn.LayerNorm):
-        super().__init__()
-        self.input_resolution = input_resolution
-        self.dim = dim
-        self.return_vector = return_vector
-        self.dim_scale = dim_scale
-        pixel_shuffle_conv_1 = nn.Conv2d(dim, dim * (dim_scale ** 2) // 2,
-                                         kernel_size=1, padding=0, bias=False)
-        pixel_shuffle = nn.PixelShuffle(dim_scale)
-        pixel_shuffle_conv_2 = nn.Conv2d(dim // 2, dim // 2,
-                                         kernel_size=1, padding=0, bias=False)
-        self.pixel_shuffle_layer = nn.Sequential(
-            pixel_shuffle_conv_1,
-            pixel_shuffle,
-            pixel_shuffle_conv_2
-        )
-        upsample_layer = nn.Upsample(scale_factor=dim_scale, mode='bilinear')
-        conv_after_upsample = nn.Conv2d(dim, dim // 2, kernel_size=1)
-        self.upsample_layer = nn.Sequential(
-            upsample_layer,
-            conv_after_upsample
-        )
-        self.concat_conv = nn.Conv2d(dim, dim // 2, kernel_size=3, padding=1, stride=1)
-
-        
-        self.norm_layer = norm_layer(dim // 2)
-
-    def forward(self, x):
-        H, W = self.input_resolution
-        B, L, C = x.shape
-        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
-        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
-        x = x.permute(0, 2, 1).view(B, C, H, W)
-        pixel_shuffle = self.pixel_shuffle_layer(x)
-        upsample = self.upsample_layer(x)
-        x = torch.cat([pixel_shuffle, upsample], dim=1)
-        x = self.concat_conv(x)
-        
-        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
-        x = self.norm_layer(x)
-        if not self.return_vector:
-            x = x.permute(0, 2, 1).view(B, self.dim // 2,
-                                        H * self.dim_scale,
-                                        W * self.dim_scale)
-        return x
-
 
 class BasicLayerV1(nn.Module):
     """ A basic Swin Transformer layer for one stage.
@@ -1139,20 +670,16 @@ class BasicLayerV1(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, downsample=None, upsample=None,
-                 use_checkpoint=False, pretrained_window_size=0,
-                 emb_dim_list=[], use_residual=False):
+                 drop_path=0., norm_layer="rms", act_layer=DEFAULT_ACT, downsample=None, upsample=None,
+                 use_checkpoint=False, pretrained_window_size=0, emb_dim_list=[], emb_type_list=[], img_dim=2):
 
         super().__init__()
+        assert len(emb_dim_list) == len(emb_type_list)
         self.dim = dim
         self.input_resolution = input_resolution
 
         self.depth = depth
         self.use_checkpoint = use_checkpoint
-        self.use_residual = use_residual
-        
-        if use_residual:
-            assert depth == 2, "residual depth must be 2"
         emb_block_list = []
         for emb_dim in emb_dim_list:
             emb_block = nn.Sequential(
@@ -1161,6 +688,8 @@ class BasicLayerV1(nn.Module):
                                     )
             emb_block_list.append(emb_block)
         self.emb_block_list = nn.ModuleList(emb_block_list)
+        self.emb_type_list = emb_type_list
+
         # build blocks
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
@@ -1179,55 +708,19 @@ class BasicLayerV1(nn.Module):
             self.downsample = downsample(input_resolution,
                                          dim=dim, norm_layer=norm_layer)
         else:
-            self.downsample = None
+            self.downsample = nn.Identity()
         if upsample is not None:
             self.upsample = upsample(input_resolution,
                                      dim=dim, norm_layer=norm_layer)
         else:
-            self.upsample = None
+            self.upsample = nn.Identity()
 
-    def forward(self, x, *args):
-        scale_shift_list = []
-        for emb_block, emb in zip(self.emb_block_list, args):
-            emb = emb_block(emb)
-            if emb.ndim == 2:
-                emb = emb.unsqueeze(1)
-            scale_shift = emb.chunk(2, dim=2)
-            scale_shift_list.append(scale_shift)
-        x = self.process_block(x, scale_shift_list)
-        if self.downsample is not None:
-            if self.use_checkpoint:
-                x = checkpoint(self.downsample, x,
-                               use_reentrant=False)
-            else:
-                x = self.downsample(x)
-        if self.upsample is not None:
-            if self.use_checkpoint:
-                x = checkpoint(self.upsample, x,
-                               use_reentrant=False)
-            else:
-                x = self.upsample(x)
-        return x
-    
-    def process_block(self, x, scale_shift_list):
-        if self.use_residual:
-            shortcut = x
-            if self.use_checkpoint:
-                x = checkpoint(self.blocks[0], x, scale_shift_list,
-                            use_reentrant=False)
-                x = checkpoint(self.blocks[1], x,
-                            use_reentrant=False)
-            else:
-                x = self.blocks[0](x, scale_shift_list)
-                x = self.blocks[1](x, scale_shift_list)
-            x = x + shortcut
-        else:
-            for blk in self.blocks:
-                if self.use_checkpoint:
-                    x = checkpoint(blk, x, scale_shift_list,
-                                use_reentrant=False)
-                else:
-                    x = blk(x, scale_shift_list)
+    def forward(self, x, *emb_args):
+        scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
+        for blk in self.blocks:
+            x = process_checkpoint_block(self.use_checkpoint, blk, x, scale_shift_list)
+        x = process_checkpoint_block(self.use_checkpoint, self.downsample, x)
+        x = process_checkpoint_block(self.use_checkpoint, self.upsample, x)
         return x
 
     def extra_repr(self) -> str:
@@ -1252,8 +745,7 @@ class BasicLayerV2(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, downsample=None, upsample=None,
-                 use_checkpoint=False, pretrained_window_size=0,
-                 emb_dim_list=[], use_residual=False):
+                 use_checkpoint=False, pretrained_window_size=0, emb_dim_list=[], emb_type_list=[], img_dim=2):
 
         super().__init__()
         self.dim = dim
@@ -1261,10 +753,7 @@ class BasicLayerV2(nn.Module):
         self.depth = depth
         self.depth = depth
         self.use_checkpoint = use_checkpoint
-        self.use_residual = use_residual
         
-        if use_residual:
-            assert depth == 2, "residual depth must be 2"
         # patch merging layer
         if downsample is not None:
             self.downsample = downsample(input_resolution,
@@ -1275,7 +764,7 @@ class BasicLayerV2(nn.Module):
             input_resolution = [input_resolution[0] // 2,
                                 input_resolution[1] // 2]
         else:
-            self.downsample = None
+            self.downsample = nn.Identity()
         if upsample is not None:
             self.upsample = upsample(input_resolution,
                                      dim=dim, norm_layer=norm_layer)
@@ -1285,7 +774,7 @@ class BasicLayerV2(nn.Module):
             input_resolution = [input_resolution[0] * 2,
                                 input_resolution[1] * 2]
         else:
-            self.upsample = None
+            self.upsample = nn.Identity()
 
         emb_block_list = []
         for emb_dim in emb_dim_list:

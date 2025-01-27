@@ -31,7 +31,32 @@ class GroupNorm32(nn.GroupNorm):
             num_groups = min(32, num_channels)
         super().__init__(num_groups, num_channels, *args, **kwargs)
 
+class RMSNorm(nn.Module):
+    """
+    Root Mean Square Layer Normalization (RMSNorm).
 
+    Args:
+        dim (int): Dimension of the input tensor.
+        eps (float): Epsilon value for numerical stability. Defaults to 1e-6.
+    """
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.dim = dim
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x: torch.Tensor):
+        """
+        Forward pass for RMSNorm.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Normalized tensor with the same shape as input.
+        """
+        return F.rms_norm(x, (self.dim,), self.weight, self.eps)
+    
 def get_act(act):
     if isinstance(act, nn.Module) or callable(act):
         act = act
@@ -91,6 +116,8 @@ def get_norm(norm, shape, mode="2d"):
                                         affine=False)
     elif norm == "group":
         norm_layer = GroupNorm32(num_channels=shape[0])
+    elif norm == "rms":
+        norm_layer = RMSNorm(num_channels=shape[0])
     elif norm is None:
         norm_layer = nn.Identity()
     else:
