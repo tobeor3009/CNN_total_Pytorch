@@ -426,7 +426,7 @@ class SwinTransformerBlock(nn.Module):
 
         self.register_buffer("attn_mask", attn_mask)
 
-    def forward(self, x, scale_shift_list=None):
+    def forward(self, x, scale_shift_list=[]):
         H, W = self.input_resolution
         B, L, C = x.shape
         assert L == H * W, f"input feature has wrong size, {L} != {H}, {W}"

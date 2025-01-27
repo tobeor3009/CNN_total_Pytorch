@@ -467,7 +467,7 @@ class BaseBlockND(nn.Module):
         self.act_layer = get_act(act)
         self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=INPLACE)
     
-    def forward(self, x, scale_shift_list=None):
+    def forward(self, x, scale_shift_list=[]):
         norm = self.norm_layer(x)
         drop = self.dropout_layer(norm)
         act = self.act_layer(drop)
