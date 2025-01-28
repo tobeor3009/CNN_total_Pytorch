@@ -222,7 +222,6 @@ class AutoEncoder(nn.Module):
             assert (exists_encoded_feature and exists_cond_start) is False, "Neither encoded_feature or cond_start should not be provided"
 
         if cond_start is not None:
-            x_start = self.image_mask_cat_fn(x_start, cond_start)
             encoded_feature = self.encode(cond_start)
         x_start_device = getattr(x_start, "device", None)
         encoded_feature_device = getattr(encoded_feature, "device", None)
@@ -234,10 +233,9 @@ class AutoEncoder(nn.Module):
                 result_dict = self.sampler.training_losses(model=self.diffusion_model,
                                                             x_start=x_start, t=t)
             else:
-                cond = self.encode(encoded_feature)
                 result_dict = self.sampler.training_losses(model=self.diffusion_model,
                                                             x_start=x_start, t=t,
-                                                            model_kwargs={'cond': cond})
+                                                            model_kwargs={'cond': encoded_feature})
 
         elif self.train_mode == "latent_net":
             if encoded_feature is None:
@@ -254,13 +252,12 @@ class AutoEncoder(nn.Module):
                 result_dict = self.sampler.training_losses(model=self.diffusion_model,
                                                             x_start=x_start, t=t)
             else:
-                cond = self.encode(encoded_feature)
                 result_dict = self.sampler.training_losses(model=self.diffusion_model,
                                                             x_start=x_start, t=t,
-                                                            model_kwargs={'cond': cond})
+                                                            model_kwargs={'cond': encoded_feature})
                 t, weight = self.T_sampler.sample(len(encoded_feature), torch_device)
                 result_dict_latent = self.latent_sampler.training_losses(model=self.diffusion_model.latent_net,
-                                                                        x_start=cond.detach(), t=t)
+                                                                        x_start=encoded_feature.detach(), t=t)
             return result_dict['loss'], result_dict_latent['loss']
         else:
             raise NotImplementedError()

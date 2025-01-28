@@ -417,7 +417,8 @@ def get_scale_shift_list(emb_block_list, emb_type_list, emb_args, img_dim):
         emb_shape = emb.shape
         emb = emb.view(*emb_shape, *unsqueeze_dim)
         if emb_type == "cond":
-            scale, shift = emb, 0
+            scale = emb
+            shift = torch.zeros_like(emb)
         else:
             scale, shift = emb.chunk(2, dim=1)
         scale_shift_list.append([scale, shift])
@@ -787,7 +788,7 @@ class MultiDecoderND(nn.Module):
                                               np.prod(kernel_size),
                                               kernel_size=1)
         pixel_shuffle_layer = None
-        upsample_mode = None        
+        upsample_mode = None
         if img_dim == 1:
             pixel_shuffle_layer = PixelShuffle1D(upscale_factor=kernel_size)
             upsample_mode = "linear"
