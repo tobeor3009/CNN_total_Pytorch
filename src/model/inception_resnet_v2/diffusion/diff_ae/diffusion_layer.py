@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from einops import rearrange, repeat
 from src.model.inception_resnet_v2.common_module.cbam import CBAM
-from src.model.inception_resnet_v2.common_module.layers import get_act, get_norm, DEFAULT_ACT, INPLACE
+from src.model.inception_resnet_v2.common_module.layers import get_act, DEFAULT_ACT, INPLACE
 from src.model.inception_resnet_v2.common_module.layers import ConcatBlock
 from .nn import zero_module, conv_nd
 
@@ -344,8 +344,10 @@ class AttentionBlock(nn.Module):
         num_head_channels=-1,
         use_checkpoint=False,
         use_new_attention_order=False,
+        norm_layer="group"
     ):  
         super().__init__()
+        assert norm_layer in ["rms", "group"]
         self.channels = channels
         if num_head_channels == -1:
             self.num_heads = num_heads

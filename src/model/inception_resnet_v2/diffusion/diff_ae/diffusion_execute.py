@@ -2,17 +2,42 @@ import math
 import torch
 from torch import nn
 from torch.amp import autocast
-from torch.nn import functional as F 
+from torch.nn import functional as F
+from torch.utils.data import Dataset
 from .resample import UniformSampler
 from .diffusion_sampler import GaussianSampler
 from .renderer import render_uncondition, render_condition
 from src.model.train_util.common import _z_normalize, feature_z_normalize, z_normalize
+from tqdm import tqdm
 
 def identity_cat_fn(x, cond):
     return x
 
 def identity_split_fn(x_cated):
     return x_cated, x_cated
+
+class TargetStepDataset(Dataset):
+    def __init__(self, dataset, batch_size, target_stepsize):
+        self.dataset = dataset
+        self.dataset_real_len = len(dataset)
+        self.dataset_len = target_stepsize * batch_size
+        assert self.dataset_real_len >= len(dataset), "target_stepsize * batch_size is smaller than dataset_real_len"
+ 
+    def __len__(self):
+        return self.dataset_len
+
+    def __getitem__(self, idx):
+        idx = idx % self.dataset_real_len
+        return self.dataset[idx]
+class LatentDataset(Dataset):
+    def __init__(self, batch_cond):
+        self.batch_cond = batch_cond
+
+    def __len__(self):
+        return len(self.batch_cond)
+        
+    def __getitem__(self, idx):
+        return self.batch_cond[idx]
 
 
 class AutoEncoder(nn.Module):
@@ -112,6 +137,46 @@ class AutoEncoder(nn.Module):
         # 표준 정규분포 정의 (평균=0, 표준편차=1)
         # 99% 신뢰구간에 해당하는 누적 확률값 (0.5%와 99.5%)
         self.register_buffer('x_T', self.get_noise(sample_size))
+        
+    def compute_cond_mean_std(self, train_dataloader, encode_process_fn=None, device=None, cond_save_path=None):
+        device = device or torch.device("cuda")
+        
+        with torch.no_grad():
+            batch_idx = 0
+            cond_list = [None for _ in range(len(train_dataloader.dataset))]
+            for batch in tqdm(train_dataloader, total=len(train_dataloader)):
+                if encode_process_fn is not None:
+                    cond = encode_process_fn(batch, self.encode, device)
+                else:
+                    batch = batch.to(device)
+                    cond = self.encode(batch)
+                cond = cond.cpu()
+                for part_cond in cond:
+                    cond_list[batch_idx] = part_cond
+                    batch_idx += 1
+
+        batch_cond = torch.stack(cond_list, dim=0)
+        cond_mean = batch_cond.mean(dim=0, keepdim=True)
+        cond_std = batch_cond.std(dim=0, keepdim=True)
+
+        if cond_save_path is not None:
+            torch.save({
+                "batch_cond": batch_cond,
+                "cond_mean": cond_mean,
+                "cond_std": cond_std
+            }, cond_save_path)
+
+        return batch_cond, cond_mean, cond_std
+
+    def load_cond_into(self, cond_file_path, set_buffer=False):
+        cond_dict = torch.load(cond_file_path)
+        batch_cond = cond_dict["batch_cond"]
+        cond_mean = cond_dict["cond_mean"]
+        cond_std = cond_dict["cond_std"]
+        if set_buffer:
+            self.register_buffer("cond_mean", cond_mean)
+            self.register_buffer("cond_std", cond_std)
+        return LatentDataset(batch_cond)
 
     def get_noise(self, batch_size, noise_channel=None):
         noise_channel = noise_channel or self.in_channel
@@ -134,19 +199,66 @@ class AutoEncoder(nn.Module):
         else:
             sampler = self.get_sampler(T=self.T, T_eval=T)
             latent_sampler = self.get_latent_sampler(T=self.T, T_eval=T_latent)
+
+        if self.latent_znormalize:
+            assert (self.cond_mean is not None) and (self.cond_std is not None), "get cond_mean and cond_std first by compute_cond_mean_std class fn"
+            cond_mean = self.cond_mean
+            cond_std = self.cond_std
+        else:
+            cond_mean = None
+            cond_std = None
         pred_img = render_uncondition(
             self.diffusion_model,
             noise,
             sampler=sampler,
             latent_sampler=latent_sampler,
             latent_clip_sample=self.latent_clip_sample,
-            latent_znormalize=self.latent_znormalize,
+            cond_mean=cond_mean,
+            cond_std=cond_std,
             train_mode=self.train_mode,
-            clip_denoised=clip_denoised
+            clip_denoised=clip_denoised,
+            image_mask_cat_fn=self.image_mask_cat_fn,
+            image_mask_split_fn=self.image_mask_split_fn
         )
         pred_img = (pred_img + 1) / 2
         return pred_img
 
+    def sample_segmentation(self, image, device, T=None, T_latent=None, clip_denoised=True):
+        image = image.to(device)
+        noise = self.get_noise(len(image)).to(device=device)
+        _, noise = self.image_mask_split_fn(noise)
+        image_noise = self.image_mask_cat_fn(image, noise)
+        if T is None:
+            sampler = self.eval_sampler
+            latent_sampler = self.latent_sampler
+        else:
+            sampler = self.get_sampler(T=self.T, T_eval=T)
+            latent_sampler = self.get_latent_sampler(T=self.T, T_eval=T_latent)
+
+        if self.latent_znormalize:
+            assert (self.cond_mean is not None) and (self.cond_std is not None), "get cond_mean and cond_std first by compute_cond_mean_std class fn"
+            cond_mean = self.cond_mean
+            cond_std = self.cond_std
+        else:
+            cond_mean = None
+            cond_std = None
+
+        pred_img = render_uncondition(
+            self.diffusion_model,
+            image_noise,
+            sampler=sampler,
+            latent_sampler=latent_sampler,
+            latent_clip_sample=self.latent_clip_sample,
+            cond_mean=cond_mean,
+            cond_std=cond_std,
+            train_mode=self.train_mode,
+            clip_denoised=clip_denoised,
+            image_mask_cat_fn=self.image_mask_cat_fn,
+            image_mask_split_fn=self.image_mask_split_fn
+        )
+        pred_img = (pred_img + 1) / 2
+        return pred_img
+    
     def render(self, noise, cond=None, T=None, clip_denoised=True):
         if T is None:
             sampler = self.eval_sampler
@@ -165,7 +277,6 @@ class AutoEncoder(nn.Module):
             pred_img = render_uncondition(self.diffusion_model,
                                           noise, sampler, latent_sampler=None,
                                           latent_clip_sample=self.latent_clip_sample,
-                                          latent_znormalize=self.latent_znormalize,
                                           train_mode=self.train_mode,
                                           clip_denoised=clip_denoised,
                                           image_mask_cat_fn=self.image_mask_cat_fn,
@@ -205,7 +316,7 @@ class AutoEncoder(nn.Module):
 
 
     def forward(self, x_start=None, encoded_feature=None, cond_start=None):
-        if self.is_segmentation:
+        if self.is_segmentation and (self.train_mode != "latent_net"):
             return self._get_loss_segmentation(x_start=x_start, cond_start=cond_start)
         else:
             return self._get_loss(x_start=x_start, encoded_feature=encoded_feature, cond_start=cond_start)
@@ -238,12 +349,9 @@ class AutoEncoder(nn.Module):
                                                             model_kwargs={'cond': encoded_feature})
 
         elif self.train_mode == "latent_net":
-            if encoded_feature is None:
-                with torch.no_grad():
-                    encoded_feature = self.encode(x_start)
-            t, weight = self.T_sampler.sample(len(encoded_feature), torch_device)
+            t, weight = self.T_sampler.sample(len(x_start), torch_device)
             result_dict = self.latent_sampler.training_losses(model=self.diffusion_model.latent_net,
-                                                                x_start=encoded_feature, t=t)
+                                                                x_start=x_start, t=t)
             
         elif self.train_mode == "autoencoder_latent_net":
     

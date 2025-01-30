@@ -866,7 +866,7 @@ class BasicDecodeLayer(nn.Module):
         self.emb_block_list = get_emb_block_list(act_layer, emb_dim_list, emb_type_list, dim)
         self.emb_type_list = emb_type_list
         # build blocks
-        self.mlp_after_skip = Mlp(in_features=dim + skip_dim, 
+        self.mlp_after_skip = Mlp(in_features=dim + skip_dim,
                                   out_features=dim,
                                   act_layer=act_layer, drop=drop)
         self.blocks_after_skip = nn.ModuleList([

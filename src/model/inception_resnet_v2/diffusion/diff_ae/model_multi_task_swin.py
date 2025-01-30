@@ -6,7 +6,7 @@ from torch import nn
 from einops.layers.torch import Rearrange
 from .nn import timestep_embedding
 from ...common_module.layers import get_act
-from .diffusion_layer import OutputND, ConvBlockND
+from .diffusion_layer import OutputND, ConvBlockND, AttentionBlock
 from src.model.swin_transformer.model_2d.swin_layers import Mlp
 from .diffusion_layer_swin_2d import AttentionPool1d, RMSNorm
 from .diffusion_layer_swin_2d import BasicLayerV1, BasicLayerV2
@@ -16,8 +16,8 @@ from .diffusion_layer_swin_2d import PatchEmbed, PatchMerging, PatchExpanding, B
 from einops import rearrange, repeat
 
 def get_time_emb_dim(emb_dim):
-    time_emb_dim_init = emb_dim // 2
-    time_emb_dim = emb_dim * 4
+    time_emb_dim = max(512, emb_dim * 8)
+    time_emb_dim_init = time_emb_dim // 4
     return time_emb_dim_init, time_emb_dim
 
 class SwinMultitask(nn.Module):
@@ -31,8 +31,8 @@ class SwinMultitask(nn.Module):
                 window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True, patch_norm=True,
                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.0,
                 use_checkpoint=False, pretrained_window_sizes=0,
-                get_seg=True, get_class=False, get_recon=False, get_validity=False,
-                get_diffusion=False, include_encoder=True, include_latent_net=True):
+                get_diffusion=False, get_seg=True, get_class=False, get_recon=False, get_validity=False,
+                include_encoder=False, include_latent_net=False):
         super().__init__()
         norm_layer_list = ["rms", "group"]
         assert norm_layer in norm_layer_list, f"you can choose norm layer: {norm_layer_list}"
@@ -65,32 +65,13 @@ class SwinMultitask(nn.Module):
         self.get_seg = get_seg
         self.get_recon = get_recon
         self.get_validity = get_validity
+        self.get_diffusion = get_diffusion
         ##################################
         self.num_layers = len(depths)
         self.ape = ape
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.feature_dim = int(self.embed_dim * 2 ** self.num_layers)
 
-        if num_class_embeds is not None:
-            class_emb_dim = embed_dim * 4
-            self.class_emb_layer = nn.Embedding(num_class_embeds, class_emb_dim)
-            if self.cond_drop_prob > 0:
-                self.null_class_emb = nn.Parameter(torch.randn(class_emb_dim))
-            else:
-                self.null_class_emb = None
-            
-            self.class_mlp = nn.Sequential(
-                nn.Linear(class_emb_dim, class_emb_dim),
-                get_act(self.model_act_layer),
-                nn.Linear(class_emb_dim, class_emb_dim)
-            )
-            emb_dim_list = [class_emb_dim]
-        else:
-            self.class_emb_layer = None
-            self.null_class_emb = None
-            self.class_mlp = None
-            emb_dim_list = []
-        self.emb_dim_list = emb_dim_list
         # stochastic depth
         self.dpr = [x.item() for x in torch.linspace(0, drop_path_rate,
                                                 sum(depths))]  # stochastic depth decay rule
@@ -115,14 +96,45 @@ class SwinMultitask(nn.Module):
         self.encode_layers = self.get_encode_layers()
         self.mid_layer_1, self.mid_attn, self.mid_layer_2 = self.get_mid_layer()
         
+        emb_dim_list = []
+        emb_type_list = []
+        time_emb_dim_init, time_emb_dim = get_time_emb_dim(embed_dim)
         if get_diffusion:
-            time_emb_dim_init, time_emb_dim = get_time_emb_dim(embed_dim)
             self.time_emb_dim_init = time_emb_dim_init
             self.time_mlp = nn.Sequential(
                 nn.Linear(time_emb_dim_init, time_emb_dim),
                 get_act(act_layer),
                 nn.Linear(time_emb_dim, time_emb_dim)
             )
+            emb_dim_list.append(time_emb_dim)
+            emb_type_list.append("seq")
+
+            self.diff_decode_layers = self.get_decode_layers(is_diffusion=True)
+            self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv = self.get_decode_final_layers(seg_out_chans, seg_out_act, is_diffusion=True)
+
+        if num_class_embeds is not None:
+            class_emb_dim = time_emb_dim
+            self.class_emb_layer = nn.Embedding(num_class_embeds, class_emb_dim)
+            if self.cond_drop_prob > 0:
+                self.null_class_emb = nn.Parameter(torch.randn(class_emb_dim))
+            else:
+                self.null_class_emb = None
+            
+            self.class_mlp = nn.Sequential(
+                nn.Linear(class_emb_dim, class_emb_dim),
+                get_act(self.model_act_layer),
+                nn.Linear(class_emb_dim, class_emb_dim)
+            )
+            emb_dim_list.append(class_emb_dim)
+            emb_type_list.append("seq")
+        else:
+            self.class_emb_layer = None
+            self.null_class_emb = None
+            self.class_mlp = None
+            emb_dim_list = []
+        self.emb_dim_list = emb_dim_list
+        self.emb_type_list = emb_type_list
+
         if get_seg:
             self.seg_decode_layers = self.get_decode_layers()
             self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv = self.get_decode_final_layers(seg_out_chans, seg_out_act)
@@ -166,21 +178,31 @@ class SwinMultitask(nn.Module):
     def no_weight_decay_keywords(self):
         return {"cpb_mlp", "logit_scale", 'relative_position_bias_table'}
 
-    def forward(self, x, class_labels=None,
-                cond_drop_prob=None):
+    def forward(self, x, t, t_cond=None,
+                x_start=None, cond=None,
+                x_self_cond=None, class_labels=None, cond_drop_prob=None):
         output = []
+        emb_list = []
+        if self.get_diffusion:
+            time_emb = timestep_embedding(t, self.time_emb_dim_init)
+            time_emb = self.time_mlp(time_emb)
+
         if self.num_class_embeds is not None:
             class_emb = self.process_class_emb(x, class_labels, cond_drop_prob)
-            emb_list = [class_emb]
-        else:
-            emb_list = []
-
-        x, skip_connect_list = self.process_encode_layers(x, emb_list)
-        x = self.process_mid_layers(x, emb_list)
+            emb_list.append(class_emb)
+        if self.get_diffusion:
+            diff_x, diff_skip_connect_list = self.process_encode_layers(x, emb_list)
+            diff_x = self.process_mid_layers(diff_x, emb_list)
+            diff_output = self.process_decode_layers(diff_x, self.diff_decode_layers,
+                                                    self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv,
+                                                    diff_skip_connect_list, emb_list)
+            output.append(diff_output)
+        x, skip_connect_list = self.process_encode_layers(x, emb_list[-1:])
+        x = self.process_mid_layers(x, emb_list[-1:])
         if self.get_seg:
             seg_output = self.process_decode_layers(x, self.seg_decode_layers,
                                                     self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv,
-                                                    skip_connect_list, emb_list)
+                                                    skip_connect_list, emb_list[-1:])
             output.append(seg_output)
         if self.get_class:
             class_output = self.class_head(x)
@@ -188,7 +210,7 @@ class SwinMultitask(nn.Module):
         if self.get_recon:
             recon_output = self.process_decode_layers(x, self.recon_decode_layers,
                                                       self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv,
-                                                      skip_connect_list, emb_list)
+                                                      skip_connect_list, emb_list[-1:])
             output.append(recon_output)
         if self.get_validity:
             validitiy_output = self.validity_head(x)
@@ -256,8 +278,8 @@ class SwinMultitask(nn.Module):
             emb_dim_list = self.emb_dim_list
             emb_type_list = self.emb_type_list
         else:
-            emb_dim_list = []
-            emb_type_list = []
+            emb_dim_list = self.emb_dim_list[-1:]
+            emb_type_list = self.emb_type_list[-1:]
 
         common_kwarg_dict = {"dim":dim,
                             "input_resolution":feature_resolution,
@@ -270,14 +292,14 @@ class SwinMultitask(nn.Module):
                             "norm_layer":self.norm_layer,
                             "act_layer":get_act(self.model_act_layer),
                             "pretrained_window_size":self.pretrained_window_sizes[i_layer],
-                            "use_checkpoint":self.use_checkpoint[i_layer]
+                            "use_checkpoint":self.use_checkpoint[i_layer],
                             "emb_dim_list": emb_dim_list,
                             "emb_type_list": emb_type_list 
                             }
         return common_kwarg_dict
     
     def get_init_layer(self):
-        common_kwarg_dict = self.get_layer_config_dict(self.embed_dim, self.patches_resolution, 0)
+        common_kwarg_dict = self.get_layer_config_dict(self.embed_dim, self.patches_resolution, 0, is_diffusion=True)
         init_layer = BasicLayerV2(**common_kwarg_dict)
         return init_layer
     
@@ -286,7 +308,7 @@ class SwinMultitask(nn.Module):
         for i_layer in range(self.num_layers):
             layer_dim = int(self.embed_dim * 2 ** i_layer)
             feature_resolution = np.array(self.patches_resolution) // (2 ** i_layer)
-            common_kwarg_dict = self.get_layer_config_dict(layer_dim, feature_resolution, i_layer)
+            common_kwarg_dict = self.get_layer_config_dict(layer_dim, feature_resolution, i_layer, is_diffusion=True)
             common_kwarg_dict["downsample"] = PatchMerging
             encode_layer = BasicLayerV2(**common_kwarg_dict)
             encode_layers.append(encode_layer)
@@ -295,12 +317,12 @@ class SwinMultitask(nn.Module):
     def get_mid_layer(self):
         i_layer = self.num_layers - 1
         feature_dim = self.feature_dim
-        common_kwarg_dict = self.get_layer_config_dict(feature_dim, self.feature_hw, i_layer)
+        common_kwarg_dict = self.get_layer_config_dict(feature_dim, self.feature_hw, i_layer, is_diffusion=True)
         mid_layer_1 = BasicLayerV2(**common_kwarg_dict)
         mid_attn_norm_layer = "instance" if self.norm_layer == "instance" else "rms"
         # TBD: self.attn_drop_rate 추가할지 고민
-        mid_attn = Attention(dim=feature_dim, num_heads=self.num_heads[i_layer],
-                            use_checkpoint=self.use_checkpoint[i_layer], norm_layer=mid_attn_norm_layer)
+        mid_attn = AttentionBlock(channels=feature_dim, num_heads=common_kwarg_dict["num_heads"],
+                                  use_checkpoint=common_kwarg_dict["use_checkpoint"], norm_layer=mid_attn_norm_layer)
         mid_layer_2 = BasicLayerV2(**common_kwarg_dict)
         return mid_layer_1, mid_attn, mid_layer_2
     

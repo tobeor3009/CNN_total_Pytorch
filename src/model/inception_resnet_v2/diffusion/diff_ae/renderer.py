@@ -2,10 +2,12 @@ import torch
 from torch.cuda import amp
 from .model import z_normalize
 import os
-def render_uncondition(model, x_T, sampler, latent_sampler,
+from .diffusion_sampler import GaussianSampler
+def render_uncondition(model, x_T, sampler: GaussianSampler, latent_sampler: GaussianSampler,
                        clip_latent_noise: bool = False,
                        latent_clip_sample=False,
-                       latent_znormalize=True,
+                       cond_mean=None,
+                       cond_std=None,
                        train_mode=None,
                        clip_denoised=True,
                        image_mask_cat_fn=None,
@@ -24,12 +26,11 @@ def render_uncondition(model, x_T, sampler, latent_sampler,
             noise=latent_noise,
             clip_denoised=latent_clip_sample,
         )
-        if latent_znormalize:
-            cond = z_normalize(cond)
-
+        if (cond_mean is not None) and (cond_std is not None):
+            cond = cond * cond_std + cond_mean 
         # the diffusion on the model
         return sampler.sample(model=model, image_mask_cat_fn=image_mask_cat_fn, image_mask_split_fn=image_mask_split_fn,
-                              noise=x_T, cond=cond, clip_denoised=clip_denoised)
+                              noise=x_T, model_kwargs={'cond': cond}, clip_denoised=clip_denoised)
     else:
         raise NotImplementedError()
 
@@ -77,7 +78,7 @@ def render_condition(
     image_mask_cat_fn=None,
     image_mask_split_fn=None
 ):
-    if train_mode in ["autoencoder", "autoencoder_latent_net"]:
+    if train_mode in ["autoencoder", "autoencoder_latent_net", "latent_net"]:
         if cond is None:
             cond = model.encode(x_start)
         return sampler.sample(model=model,

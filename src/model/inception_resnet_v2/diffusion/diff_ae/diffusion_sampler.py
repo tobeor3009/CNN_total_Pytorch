@@ -1151,6 +1151,7 @@ class GaussianSampler():
             image, mask = image_mask_split_fn(noise)
         else:
             image, mask = None, None
+
         if progress:
             # Lazy import so that we don't depend on tqdm.
             from tqdm.auto import tqdm
