@@ -19,7 +19,7 @@ This repository contains a collection of various libraries and utility functions
 --- 
 ## Installation and Usage
 ### How to Use
-Currently, detailed usage instructions are under development. Custom `.ipynb` files for each task are being created but have not yet been uploaded, as the general usage methodology has not been finalized. If requested, I will upload example `.ipynb` files for demonstration.
+Currently, detailed usage instructions are under development. Custom `.ipynb` files for each task are being created but have not yet been fully uploaded, as the general usage methodology has not been finalized. If requested, I will upload example `.ipynb` files for demonstration.
 
 For now, the files under the `src/model` directory can be used independently. They return PyTorch `Model` objects (`nn.Module`) and can be directly imported and utilized in your projects.
 --- 
