@@ -210,7 +210,6 @@ class SwinMultitask(nn.Module):
     def forward(self, x, t, t_cond=None,
                 x_start=None, cond=None,
                 x_self_cond=None, class_labels=None, cond_drop_prob=None):
-        output = []
         emb_list = []
         output = Return()
         if self.get_diffusion:
@@ -240,7 +239,7 @@ class SwinMultitask(nn.Module):
             output["pred"] = diff_output
         if self.use_non_diffusion:
             x, skip_connect_list = self.process_encode_layers(x_start, non_diffusion_emb_list)
-            x = self.process_mid_layers(x, emb_list[-1:])
+            x = self.process_mid_layers(x, non_diffusion_emb_list)
             if self.get_seg:
                 seg_output = self.process_decode_layers(x, self.seg_decode_layers,
                                                         self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv,

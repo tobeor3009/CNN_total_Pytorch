@@ -190,23 +190,6 @@ class Attend(nn.Module):
         out = einsum(f"b h i j, b h j d -> b h i d", attn, v)
 
         return out
-class RMSNorm(nn.Module):
-    def __init__(self, dim, mode="2d"):
-        super().__init__()
-        if mode == "seq":
-            param_shape = (1, 1, dim)
-            self.normalize_dim = 2
-        elif mode == "1d":
-            param_shape = (1, dim, 1)
-            self.normalize_dim = 1
-        elif mode == "2d":
-            param_shape = (1, dim, 1, 1)
-            self.normalize_dim = 1
-
-        self.weight = nn.Parameter(torch.ones(*param_shape))
-        self.scale = dim ** 0.5
-    def forward(self, x):
-        return F.normalize(x, dim=self.normalize_dim) * self.weight * self.scale
     
 class LinearAttention(nn.Module):
     def __init__(self, dim, num_heads=4, dim_head=32, num_mem_kv=4, use_checkpoint=False):
@@ -472,14 +455,19 @@ def get_conv_nd_fn(img_dim):
 class BaseBlockND(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
-                 norm=nn.LayerNorm, groups=1, act=DEFAULT_ACT, bias=False, dropout_proba=0.0, img_dim=2):
+                 norm=nn.LayerNorm, groups=1, act=DEFAULT_ACT, bias=False, dropout_proba=0.0, image_shape=None, img_dim=2):
         super().__init__()
         conv_fn = get_conv_nd_fn(img_dim)
         self.conv = conv_fn(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups, bias=bias)
+        
         if (not bias) and (norm is not None):
-            self.norm_layer = norm(in_channels)
+            if image_shape is None:
+                image_shape = in_channels
+            else:
+                image_shape = (in_channels, *image_shape)
+            self.norm_layer = norm(image_shape)
         else:
             self.norm_layer = nn.Identity()
         self.act_layer = get_act(act)
@@ -498,7 +486,7 @@ class ResNetBlockND(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
                  norm="batch", groups=1, act=DEFAULT_ACT, bias=False, dropout_proba=0.0,
-                 emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False, img_dim=2):
+                 emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False, image_shape=None, img_dim=2):
         super().__init__()
         conv_fn = get_conv_nd_fn(img_dim)
         self.img_dim = img_dim
@@ -527,9 +515,11 @@ class ResNetBlockND(nn.Module):
         self.emb_type_list = emb_type_list
 
         self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
-                                    1, padding, norm, groups, act, bias, dropout_proba=dropout_proba, img_dim=img_dim)
+                                    1, padding, norm, groups, act, bias, dropout_proba=dropout_proba,
+                                    image_shape=image_shape, img_dim=img_dim)
         self.block_2 = BaseBlockND(out_channels, out_channels, kernel_size,
-                                    stride, padding, norm, groups, act, bias, dropout_proba=dropout_proba, img_dim=img_dim)
+                                    stride, padding, norm, groups, act, bias, dropout_proba=dropout_proba, 
+                                    image_shape=image_shape, img_dim=img_dim)
 
         if in_channels != out_channels or stride != 1:
             self.residiual_conv = conv_fn(in_channels, out_channels, 1, stride, bias=False)
@@ -588,7 +578,8 @@ class ConvBlockND(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
                  norm="batch", groups=1, act=DEFAULT_ACT, bias=False, dropout_proba=0.0,
-                 emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False, img_dim=2):
+                 emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False,
+                 image_shape=None, img_dim=2):
         super().__init__()
         self.img_dim = img_dim
         self.attn_info = attn_info
@@ -621,7 +612,7 @@ class ConvBlockND(nn.Module):
 
         self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
                                     stride, padding, norm, groups, act, bias,
-                                    dropout_proba=dropout_proba, img_dim=img_dim)
+                                    dropout_proba=dropout_proba, image_shape=image_shape, img_dim=img_dim)
         if attn_info is None:
             self.attn = nn.Identity()
         elif attn_info["full_attn"] is None:
