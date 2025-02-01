@@ -4,7 +4,8 @@ from functools import wraps
 from functools import partial
 import math
 import numpy as np
-
+from typing import NamedTuple, Optional, Any
+from dataclasses import dataclass, field
 import torch
 from torch import nn, einsum
 import torch.nn.functional as F
@@ -68,6 +69,20 @@ def feature_z_normalize(x, eps=1e-5):
 def z_normalize(x, eps=1e-5):
     target_dim_tuple = tuple(range(2, x.ndim))
     return _z_normalize(x, target_dim_tuple, eps=eps)
+
+@dataclass
+class Return:
+    pred: Optional[torch.Tensor] = None
+    seg_output: Optional[torch.Tensor] = None
+    class_output: Optional[torch.Tensor] = None
+    recon_output: Optional[torch.Tensor] = None
+    validity_output: Optional[torch.Tensor] = None
+
+    def __getitem__(self, key: str) -> Any:
+        return getattr(self, key)
+
+    def __setitem__(self, key: str, value: Any):
+        setattr(self, key, value)
 
 class WrapGroupNorm(nn.GroupNorm):
     
@@ -840,7 +855,7 @@ class MultiDecoderND(nn.Module):
 
 class MultiDecoderND_V2(nn.Module):
     def __init__(self, in_channels, out_channels,
-                 norm="layer", act=DEFAULT_ACT, kernel_size=2, drop_prob=0.0,
+                 norm="layer", act=DEFAULT_ACT, kernel_size=2, dropout_proba=0.0,
                  emb_dim_list=None, emb_type_list=None, attn_info=None, use_checkpoint=False,
                  img_dim=2):
         super().__init__()
@@ -848,7 +863,7 @@ class MultiDecoderND_V2(nn.Module):
         self.use_checkpoint = use_checkpoint
         conv_common_kwarg_dict = {
             "kernel_size": 3, "stride": 1, "padding": 1,
-            "dropout_proba": drop_prob,
+            "dropout_proba": dropout_proba,
             "norm": norm, "act": act,
             "emb_dim_list": emb_dim_list,
             "emb_type_list": emb_type_list,
@@ -988,4 +1003,54 @@ class MultiInputSequential(nn.Sequential):
     def forward(self, x, *args):
         for module in self:
             x = module(x, *args)
+        return x
+    
+class ClassificationHeadSimple(nn.Module):
+    def __init__(self, in_channels, num_classes, dropout_proba, act, img_dim=2):
+        super(ClassificationHeadSimple, self).__init__()
+        # Global Average Pooling Layer
+        if img_dim == 1:
+            self.gap_layer = nn.AdaptiveAvgPool1d((1))
+        elif img_dim == 2:
+            self.gap_layer = nn.AdaptiveAvgPool2d((1, 1))
+        elif img_dim == 3:
+            self.gap_layer = nn.AdaptiveAvgPool3d((1, 1, 1))
+
+        # First fully connected layer
+        self.fc_1 = nn.Linear(in_channels, in_channels * 2)
+        self.drop_1 = nn.Dropout(p=dropout_proba, inplace=INPLACE)
+        self.act_1 = nn.ReLU6(inplace=INPLACE)
+
+        # Second fully connected layer
+        self.fc_2 = nn.Linear(in_channels * 2, in_channels)
+        self.drop_2 = nn.Dropout(p=dropout_proba, inplace=INPLACE)
+        self.act_2 = nn.ReLU6(inplace=INPLACE)
+
+        # Dropout layer
+
+        # Third fully connected layer
+        self.fc_3 = nn.Linear(in_channels, in_channels // 2)
+        self.drop_3 = nn.Dropout(p=dropout_proba, inplace=INPLACE)
+        self.act_3 = nn.ReLU6(inplace=INPLACE)
+        # Output layer
+        self.fc_out = nn.Linear(in_channels // 2, num_classes)
+        self.last_act = get_act(act)
+
+    def forward(self, x):
+        x = self.gap_layer(x)
+        x = x.flatten(start_dim=1, end_dim=-1)
+
+        x = self.fc_1(x)
+        x = self.drop_1(x)
+        x = self.act_1(x)
+        x = self.fc_2(x)
+        x = self.drop_2(x)
+        x = self.act_2(x)
+
+        x = self.fc_3(x)
+        x = self.drop_3(x)
+        x = self.act_3(x)
+        x = self.fc_out(x)
+        x = self.last_act(x)
+
         return x

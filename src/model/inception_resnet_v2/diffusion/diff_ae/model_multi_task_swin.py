@@ -5,14 +5,13 @@ from functools import partial
 from torch import nn
 from einops.layers.torch import Rearrange
 from .nn import timestep_embedding
-from ...common_module.layers import get_act
-from .diffusion_layer import OutputND, ConvBlockND, AttentionBlock
+from .diffusion_layer import OutputND, ConvBlockND, Return
 from src.model.swin_transformer.model_2d.swin_layers import Mlp
-from .diffusion_layer_swin_2d import AttentionPool1d, RMSNorm
-from .diffusion_layer_swin_2d import BasicLayerV1, BasicLayerV2
-from .diffusion_layer_swin_2d import default, prob_mask_like
+from .diffusion_layer_swin_2d import AttentionPool1d, RMSNorm, AttentionBlock
+from .diffusion_layer_swin_2d import BasicLayerV1, BasicLayerV2, MeanBN2BC
+from .diffusion_layer_swin_2d import default, prob_mask_like, get_act, get_norm
 from .diffusion_layer_swin_2d import PatchEmbed, PatchMerging, PatchExpanding, BasicDecodeLayer
-
+from .model import MLPSkipNet
 from einops import rearrange, repeat
 
 def get_time_emb_dim(emb_dim):
@@ -21,9 +20,11 @@ def get_time_emb_dim(emb_dim):
     return time_emb_dim_init, time_emb_dim
 
 class SwinMultitask(nn.Module):
-    def __init__(self, img_size=512, patch_size=4, in_chans=1,
+    def __init__(self, img_size=512, patch_size=4,
+                 in_channel=3, cond_channel=3, self_condition=False,
                  norm_layer="rms", act_layer="silu",
-                 seg_out_chans=2, seg_out_act="softmax",
+                 diffusion_out_channel=1, diffusion_out_act=None, emb_channel=1024,
+                 seg_out_channel=2, seg_out_act="softmax",
                  num_classes=1000, class_act="softmax", recon_act="sigmoid",
                  validity_shape=(1, 8, 8), validity_act=None,
                 num_class_embeds=None, cond_drop_prob=0.5,
@@ -36,12 +37,17 @@ class SwinMultitask(nn.Module):
         super().__init__()
         norm_layer_list = ["rms", "group"]
         assert norm_layer in norm_layer_list, f"you can choose norm layer: {norm_layer_list}"
-        self.model_norm_layer = nn.LayerNorm
-        
         self.norm_layer = norm_layer
         self.model_act_layer = act_layer
         patch_size = int(patch_size)
         self.img_dim = 2
+        # for compability with diffusion_sample
+        self.img_size = img_size
+        self.cond_channel = cond_channel
+        self.out_channel = diffusion_out_channel
+        self.self_condition = self_condition
+        if self.self_condition:
+            in_channel *= 2
         ##################################
         self.patch_size = patch_size
         self.patch_norm = patch_norm
@@ -61,24 +67,33 @@ class SwinMultitask(nn.Module):
         if isinstance(use_checkpoint, bool):
             use_checkpoint = [use_checkpoint for _ in num_heads]
         self.use_checkpoint = use_checkpoint
-        self.get_class = get_class
+        self.use_non_diffusion = get_seg or get_class or get_recon or get_validity
+        self.get_diffusion = get_diffusion
         self.get_seg = get_seg
+        self.get_class = get_class
         self.get_recon = get_recon
         self.get_validity = get_validity
-        self.get_diffusion = get_diffusion
         ##################################
         self.num_layers = len(depths)
         self.ape = ape
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.feature_dim = int(self.embed_dim * 2 ** self.num_layers)
-
+        # for compability with diffusion_sample
+        self.img_size = img_size
+        self.in_channel = in_channel
+        self.cond_channel = cond_channel
+        self.out_channel = diffusion_out_channel
+        self.emb_channel = emb_channel
+        self.self_condition = self_condition
+        if self.self_condition:
+            in_channel *= 2
         # stochastic depth
         self.dpr = [x.item() for x in torch.linspace(0, drop_path_rate,
                                                 sum(depths))]  # stochastic depth decay rule
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size,
-                                    in_chans=in_chans, embed_dim=embed_dim,
+                                    in_chans=in_channel, embed_dim=embed_dim,
                                     norm_layer=self.norm_layer if self.patch_norm else None)
         
         num_patches = self.patch_embed.num_patches
@@ -92,13 +107,11 @@ class SwinMultitask(nn.Module):
             trunc_normal_(self.absolute_pos_embed, std=.02)
         self.pos_drop = nn.Dropout(p=drop_rate)
 
-        self.init_layer = self.get_init_layer()
-        self.encode_layers = self.get_encode_layers()
-        self.mid_layer_1, self.mid_attn, self.mid_layer_2 = self.get_mid_layer()
-        
         emb_dim_list = []
         emb_type_list = []
         time_emb_dim_init, time_emb_dim = get_time_emb_dim(embed_dim)
+        self.include_encoder = include_encoder
+        self.include_latent_net = include_latent_net
         if get_diffusion:
             self.time_emb_dim_init = time_emb_dim_init
             self.time_mlp = nn.Sequential(
@@ -109,8 +122,28 @@ class SwinMultitask(nn.Module):
             emb_dim_list.append(time_emb_dim)
             emb_type_list.append("seq")
 
-            self.diff_decode_layers = self.get_decode_layers(is_diffusion=True)
-            self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv = self.get_decode_final_layers(seg_out_chans, seg_out_act, is_diffusion=True)
+            if self.include_encoder:
+                if isinstance(include_encoder, nn.Module):
+                    self.encoder = include_encoder
+                else:
+                    self.encoder = SwinEncoder(img_size=img_size, patch_size=patch_size,
+                                                in_channel=cond_channel, emb_channel=emb_channel, self_condition=False,
+                                                norm_layer=norm_layer, act_layer=act_layer,
+                                                embed_dim=embed_dim, depths=depths, num_heads=num_heads,
+                                                window_sizes=window_sizes, mlp_ratio=mlp_ratio,
+                                                qkv_bias=qkv_bias, ape=ape, patch_norm=patch_norm,
+                                                drop_rate=drop_rate, attn_drop_rate=attn_drop_rate, drop_path_rate=drop_path_rate,
+                                                use_checkpoint=use_checkpoint, pretrained_window_sizes=pretrained_window_sizes)
+                emb_dim_list.append(emb_channel)
+                emb_type_list.append("cond")
+            if self.include_latent_net:
+                if isinstance(include_latent_net, nn.Module):
+                    self.latent_net = include_latent_net
+                else:
+                    self.emb_channel = emb_channel
+                    self.latent_net = MLPSkipNet(emb_channel=emb_channel, block_size=16, num_time_layers=2, time_last_act=None,
+                                                num_latent_layers=10, latent_last_act=None, latent_dropout=0., latent_condition_bias=1,
+                                                act="silu", use_norm=True, skip_layers=[1, 2, 3, 4, 5, 6, 7, 8, 9])
 
         if num_class_embeds is not None:
             class_emb_dim = time_emb_dim
@@ -131,32 +164,28 @@ class SwinMultitask(nn.Module):
             self.class_emb_layer = None
             self.null_class_emb = None
             self.class_mlp = None
-            emb_dim_list = []
         self.emb_dim_list = emb_dim_list
         self.emb_type_list = emb_type_list
-
+        ###################### Define Encoder ######################
+        self.init_layer = self.get_init_layer()
+        self.encode_layers = self.get_encode_layers()
+        self.mid_layer_1, self.mid_attn, self.mid_layer_2 = self.get_mid_layer()
+        ###################### Define Parts ########################
+        if get_diffusion:
+            self.diff_decode_layers = self.get_decode_layers(is_diffusion=True)
+            self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv = self.get_decode_final_layers(diffusion_out_channel, diffusion_out_act, is_diffusion=True)
         if get_seg:
             self.seg_decode_layers = self.get_decode_layers()
-            self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv = self.get_decode_final_layers(seg_out_chans, seg_out_act)
-            for bly in self.seg_decode_layers:
-                bly._init_respostnorm()
+            self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv = self.get_decode_final_layers(seg_out_channel, seg_out_act)
         if get_class:
             self.class_head = self.get_class_head(num_classes, class_act)
         if get_recon:
             self.recon_decode_layers = self.get_decode_layers()
-            self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv = self.get_decode_final_layers(in_chans, recon_act)
-            for bly in self.recon_decode_layers:
-                bly._init_respostnorm()
+            self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv = self.get_decode_final_layers(in_channel, recon_act)
         if get_validity:
             self.validity_dim = int(embed_dim * (2 ** self.num_layers))
             self.validity_head = self.get_validity_head(validity_shape, validity_act)
 
-        self.apply(self._init_weights)
-
-        for bly in self.encode_layers:
-            bly._init_respostnorm()
-        self.mid_layer_1._init_respostnorm()
-        self.mid_layer_2._init_respostnorm()
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -177,48 +206,57 @@ class SwinMultitask(nn.Module):
     @torch.jit.ignore
     def no_weight_decay_keywords(self):
         return {"cpb_mlp", "logit_scale", 'relative_position_bias_table'}
-
+    
     def forward(self, x, t, t_cond=None,
                 x_start=None, cond=None,
                 x_self_cond=None, class_labels=None, cond_drop_prob=None):
         output = []
         emb_list = []
+        output = Return()
         if self.get_diffusion:
             time_emb = timestep_embedding(t, self.time_emb_dim_init)
             time_emb = self.time_mlp(time_emb)
+            emb_list.append(time_emb)
+            if self.encoder is not None:
+                if cond is None:
+                    latent_emb = self.encoder(x_start)
+                else:
+                    latent_emb = cond
+                emb_list.append(latent_emb)
 
         if self.num_class_embeds is not None:
             class_emb = self.process_class_emb(x, class_labels, cond_drop_prob)
             emb_list.append(class_emb)
+            non_diffusion_emb_list = emb_list[-1:]
+        else:
+            non_diffusion_emb_list = []
+
         if self.get_diffusion:
             diff_x, diff_skip_connect_list = self.process_encode_layers(x, emb_list)
             diff_x = self.process_mid_layers(diff_x, emb_list)
             diff_output = self.process_decode_layers(diff_x, self.diff_decode_layers,
                                                     self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv,
                                                     diff_skip_connect_list, emb_list)
-            output.append(diff_output)
-        x, skip_connect_list = self.process_encode_layers(x, emb_list[-1:])
-        x = self.process_mid_layers(x, emb_list[-1:])
-        if self.get_seg:
-            seg_output = self.process_decode_layers(x, self.seg_decode_layers,
-                                                    self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv,
-                                                    skip_connect_list, emb_list[-1:])
-            output.append(seg_output)
-        if self.get_class:
-            class_output = self.class_head(x)
-            output.append(class_output)
-        if self.get_recon:
-            recon_output = self.process_decode_layers(x, self.recon_decode_layers,
-                                                      self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv,
-                                                      skip_connect_list, emb_list[-1:])
-            output.append(recon_output)
-        if self.get_validity:
-            validitiy_output = self.validity_head(x)
-            output.append(validitiy_output)
-        if len(output) == 1:
-            output = output[0]
-        elif len(output) == 0:
-            output = x
+            output["pred"] = diff_output
+        if self.use_non_diffusion:
+            x, skip_connect_list = self.process_encode_layers(x_start, non_diffusion_emb_list)
+            x = self.process_mid_layers(x, emb_list[-1:])
+            if self.get_seg:
+                seg_output = self.process_decode_layers(x, self.seg_decode_layers,
+                                                        self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv,
+                                                        skip_connect_list, non_diffusion_emb_list)
+                output["seg_output"] = seg_output
+            if self.get_class:
+                class_output = self.class_head(x)
+                output["class_output"] = class_output
+            if self.get_recon:
+                recon_output = self.process_decode_layers(x, self.recon_decode_layers,
+                                                        self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv,
+                                                        skip_connect_list, non_diffusion_emb_list)
+                output["recon_output"] = recon_output
+            if self.get_validity:
+                validitiy_output = self.validity_head(x)
+                output["validitiy_output"] = validitiy_output
         return output
     
     def process_class_emb(self, x, class_labels, cond_drop_prob):
@@ -237,7 +275,7 @@ class SwinMultitask(nn.Module):
         class_emb = self.class_mlp(class_emb)
         return class_emb
     
-    def process_encode_layers(self, x, emb_list):
+    def process_encode_layers(self, x, emb_list=[]):
         skip_connect_list = []
         x = self.patch_embed(x)
         if self.ape:
@@ -253,7 +291,7 @@ class SwinMultitask(nn.Module):
             
         return x, skip_connect_list[::-1]
 
-    def process_mid_layers(self, x, emb_list):
+    def process_mid_layers(self, x, emb_list=[]):
         x = self.mid_layer_1(x, *emb_list)
         x = self.mid_attn(x)
         x = self.mid_layer_2(x, *emb_list)
@@ -261,7 +299,7 @@ class SwinMultitask(nn.Module):
 
     def process_decode_layers(self, x, decode_layers,
                               decode_final_layer, decode_final_expanding, decode_out_conv,
-                              skip_connect_list, emb_list):
+                              skip_connect_list, emb_list=[]):
         for decode_idx, decode_layer in enumerate(decode_layers, start=0):
             skip_x = skip_connect_list[decode_idx]
             x = decode_layer(x, skip_x, *emb_list)
@@ -278,12 +316,16 @@ class SwinMultitask(nn.Module):
             emb_dim_list = self.emb_dim_list
             emb_type_list = self.emb_type_list
         else:
-            emb_dim_list = self.emb_dim_list[-1:]
-            emb_type_list = self.emb_type_list[-1:]
-
+            if self.num_class_embeds is None:
+                emb_dim_list = []
+                emb_type_list = []
+            else:
+                emb_dim_list = self.emb_dim_list[-1:]
+                emb_type_list = self.emb_type_list[-1:]
+                
         common_kwarg_dict = {"dim":dim,
                             "input_resolution":feature_resolution,
-                            "depth":self.depths[i_layer],
+                            "depth":depths[i_layer],
                             "num_heads":self.num_heads[i_layer],
                             "window_size":self.window_sizes[i_layer],
                             "mlp_ratio":self.mlp_ratio, "qkv_bias":self.qkv_bias, 
@@ -319,7 +361,7 @@ class SwinMultitask(nn.Module):
         feature_dim = self.feature_dim
         common_kwarg_dict = self.get_layer_config_dict(feature_dim, self.feature_hw, i_layer, is_diffusion=True)
         mid_layer_1 = BasicLayerV2(**common_kwarg_dict)
-        mid_attn_norm_layer = "instance" if self.norm_layer == "instance" else "rms"
+        mid_attn_norm_layer = "group" if self.norm_layer == "group" else "rms"
         # TBD: self.attn_drop_rate 추가할지 고민
         mid_attn = AttentionBlock(channels=feature_dim, num_heads=common_kwarg_dict["num_heads"],
                                   use_checkpoint=common_kwarg_dict["use_checkpoint"], norm_layer=mid_attn_norm_layer)
@@ -339,7 +381,7 @@ class SwinMultitask(nn.Module):
             decode_layers.append(decode_layer)
         return decode_layers
     
-    def get_decode_final_layers(self, decode_out_chans, decode_out_act, is_diffusion=False):
+    def get_decode_final_layers(self, decode_out_channel, decode_out_act, is_diffusion=False):
         
         i_layer = 0
         common_kwarg_dict = self.get_layer_config_dict(self.embed_dim, self.patches_resolution, i_layer, is_diffusion)
@@ -350,7 +392,7 @@ class SwinMultitask(nn.Module):
                                                     dim_scale=self.patch_size,
                                                     norm_layer=self.norm_layer
                                                     )
-        out_conv = OutputND(self.embed_dim // 2, decode_out_chans, act=decode_out_act, img_dim=self.img_dim)
+        out_conv = OutputND(self.embed_dim // 2, decode_out_channel, act=decode_out_act, img_dim=self.img_dim)
         return seg_final_layer, seg_final_expanding, out_conv
     
     def get_class_head(self, num_classes, class_act):
@@ -370,18 +412,107 @@ class SwinMultitask(nn.Module):
     def get_validity_head(self, validity_shape, validity_act):
         i_layer = 0
         h, w = self.feature_hw
-        common_kwarg_dict = self.get_layer_config_dict(self.feature_dim, self.feature_hw, i_layer)
+        common_kwarg_dict = self.get_layer_config_dict(self.feature_dim, self.feature_hw, i_layer, is_diffusion=False)
+        common_kwarg_dict["emb_dim_list"] = []
+        common_kwarg_dict["emb_type_list"] = []
         validity_layer_1 = BasicLayerV2(**common_kwarg_dict)
         validity_layer_2 = BasicLayerV2(**common_kwarg_dict)
         validity_mlp = Mlp(self.feature_dim, hidden_features=self.feature_dim // 2,
-                           out_features=validity_shape[0], act_layer=get_act(self.model_act_layer))
-        validity_avg_pool = nn.AdaptiveAvgPool2d(validity_shape[1:])
+                           out_features=self.feature_dim, act_layer=get_act(self.model_act_layer))
+        if self.img_dim == 1:
+            pool_layer = nn.AdaptiveAvgPool1d
+        elif self.img_dim == 2:
+            pool_layer = nn.AdaptiveAvgPool2d
+        elif self.img_dim == 3:
+            pool_layer = nn.AdaptiveAvgPool3d
+        validity_conv = ConvBlockND(in_channels=self.feature_dim, out_channels=validity_shape[0],
+                                    kernel_size=3, stride=1, padding=1, norm="group", act=self.model_act_layer, 
+                                    dropout_proba=self.drop_rate)
+        validity_avg_pool = pool_layer(validity_shape[1:])
         validity_head = nn.Sequential(
             validity_layer_1,
             validity_layer_2,
             validity_mlp,
             Rearrange('b (h w) c -> b c h w', h=h, w=w),
+            validity_conv,
             validity_avg_pool,
             get_act(validity_act)
         )
         return validity_head
+
+class SwinEncoder(SwinMultitask):
+    def __init__(self, img_size=512, patch_size=4,
+                in_channel=3, emb_channel=1024, self_condition=False,
+                norm_layer="rms", act_layer="silu",
+                embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
+                window_sizes=[8, 4, 4, 2], mlp_ratio=4., qkv_bias=True, ape=True, patch_norm=True,
+                drop_rate=0., attn_drop_rate=0., drop_path_rate=0.0,
+                use_checkpoint=False, pretrained_window_sizes=0):
+        super(SwinMultitask, self).__init__()
+        self.norm_layer = norm_layer
+        self.model_act_layer = act_layer
+        patch_size = int(patch_size)
+        self.img_dim = 2
+        # for compability with diffusion_sample
+        self.img_size = img_size
+        self.self_condition = self_condition
+        if self.self_condition:
+            in_channel *= 2
+        ##################################
+        self.patch_size = patch_size
+        self.patch_norm = patch_norm
+        self.embed_dim = embed_dim
+        self.depths = depths
+        self.num_heads = num_heads
+        self.window_sizes = window_sizes
+        self.mlp_ratio = mlp_ratio
+        self.qkv_bias = qkv_bias
+        self.drop_rate = drop_rate
+        self.attn_drop_rate = attn_drop_rate
+        ##################################
+        self.num_layers = len(depths)
+        self.ape = ape
+        self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
+        self.feature_dim = int(self.embed_dim * 2 ** self.num_layers)
+        if isinstance(pretrained_window_sizes, int):
+            pretrained_window_sizes = [pretrained_window_sizes for _ in num_heads]
+        self.pretrained_window_sizes = pretrained_window_sizes
+        if isinstance(use_checkpoint, bool):
+            use_checkpoint = [use_checkpoint for _ in num_heads]
+        self.use_checkpoint = use_checkpoint
+        # stochastic depth
+        self.dpr = [x.item() for x in torch.linspace(0, drop_path_rate,
+                                                sum(depths))]  # stochastic depth decay rule
+        self.emb_dim_list = []
+        self.emb_type_list = []
+        # split image into non-overlapping patches
+        self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size,
+                                    in_chans=in_channel, embed_dim=embed_dim,
+                                    norm_layer=self.norm_layer if self.patch_norm else None)
+
+        num_patches = self.patch_embed.num_patches
+        patches_resolution = self.patch_embed.patches_resolution
+        self.patches_resolution = patches_resolution
+        self.feature_hw = np.array(self.patches_resolution) // (2 ** self.num_layers)
+        if self.ape:
+            pos_embed_shape = torch.zeros(1, num_patches, embed_dim)
+            self.absolute_pos_embed = nn.Parameter(pos_embed_shape)
+            trunc_normal_(self.absolute_pos_embed, std=.02)
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        self.init_layer = self.get_init_layer()
+        self.encode_layers = self.get_encode_layers()
+        self.mid_layer_1, self.mid_attn, self.mid_layer_2 = self.get_mid_layer()
+        self.pool_layer = nn.Sequential(
+            get_norm(norm_layer, self.feature_dim),
+            get_act(act_layer),
+            MeanBN2BC(target_dim=1),
+            nn.Flatten(start_dim=1),
+            nn.Linear(self.feature_dim, emb_channel)
+        )
+
+    def forward(self, x):
+        x, _ = self.process_encode_layers(x)
+        x = self.process_mid_layers(x)
+        x = self.pool_layer(x)
+        return x

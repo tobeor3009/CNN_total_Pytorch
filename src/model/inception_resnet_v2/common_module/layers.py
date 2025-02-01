@@ -117,7 +117,7 @@ def get_norm(norm, shape, mode="2d"):
     elif norm == "group":
         norm_layer = GroupNorm32(num_channels=shape[0])
     elif norm == "rms":
-        norm_layer = RMSNorm(num_channels=shape[0])
+        norm_layer = RMSNorm(dim=shape[0])
     elif norm is None:
         norm_layer = nn.Identity()
     else:

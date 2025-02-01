@@ -8,8 +8,9 @@ from collections import namedtuple
 from torch.utils.checkpoint import checkpoint
 from timm.models.layers import DropPath, to_2tuple
 import numpy as np
-from .diffusion_layer import AttentionBlock, GroupNorm32
-from .diffusion_layer import apply_embedding
+from .nn import zero_module
+from .diffusion_layer import GroupNorm32, QKVAttention, QKVAttentionLegacy
+from .diffusion_layer import apply_embedding, conv_nd
 from src.model.inception_resnet_v2.common_module.layers import get_act, get_norm, DEFAULT_ACT, INPLACE
 from src.model.swin_transformer.model_2d.swin_layers import window_partition, window_reverse, check_hasattr_and_init
 from src.model.swin_transformer.model_2d.swin_layers import Mlp, WindowAttention
@@ -19,7 +20,6 @@ from einops import rearrange, repeat
 from functools import partial
 from functools import wraps
 from packaging import version
-
 
 DEFAULT_ACT = get_act("silu")
 
@@ -74,7 +74,20 @@ def process_checkpoint_block(use_checkpoint, block, x, *emb_args):
         output = checkpoint(block, x, *emb_args, use_reentrant=False)
     else:
         output = block(x, *emb_args)
-    return output         
+    return output
+
+class MeanBN2BC(nn.Module):
+    def __init__(self, target_dim=1):
+        super(MeanBN2BC, self).__init__()
+        self.target_dim = target_dim
+    def forward(self, x):
+        """
+        x: Tensor of shape (B, N, C)
+        Returns:
+            Tensor of shape (B, C), where N-dimension is averaged out.
+        """
+        return x.mean(dim=self.target_dim)
+    
 class SelfAttention(nn.MultiheadAttention):
     def forward(self, x):
         output = super().forward(query=x, key=x, value=x, need_weights=False)
@@ -170,6 +183,64 @@ def get_norm_layer(dim, norm_layer_str):
         raise NotImplementedError()
     return norm_layer
 
+class AttentionBlock(nn.Module):
+    """
+    An attention block that allows spatial positions to attend to each other.
+
+    Originally ported from here, but adapted to the N-d case.
+    https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
+    """
+    def __init__(
+        self,
+        channels,
+        num_heads=1,
+        num_head_channels=-1,
+        use_checkpoint=False,
+        use_new_attention_order=False,
+        norm_layer="group"
+    ):  
+        super().__init__()
+        assert norm_layer in ["rms", "group"]
+        self.channels = channels
+        if num_head_channels == -1:
+            self.num_heads = num_heads
+        else:
+            assert (
+                channels % num_head_channels == 0
+            ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
+            self.num_heads = channels // num_head_channels
+        self.use_checkpoint = use_checkpoint
+        if norm_layer == "group":
+            norm_layer = GroupNorm32
+        elif norm_layer == "rms":
+            norm_layer = RMSNorm
+        self.norm = norm_layer(channels)
+        self.qkv = conv_nd(1, channels, channels * 3, 1)
+        if use_new_attention_order:
+            # split qkv before split heads
+            self.attention = QKVAttention(self.num_heads)
+        else:
+            # split heads before split qkv
+            self.attention = QKVAttentionLegacy(self.num_heads)
+
+        self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
+
+    def forward(self, x, *args):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x, *args,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x, *args)
+
+    def _forward_impl(self, x, *args):
+        b, n, c = x.shape
+        x = self.norm(x)
+        x = x.permute(0, 2, 1)
+        qkv = self.qkv(x)
+        h = self.attention(qkv)
+        h = self.proj_out(h)
+        return (x + h).permute(0, 2, 1)
+    
 def get_emb_block_list(act_layer, emb_dim_list, emb_type_list, dim):
     assert len(emb_dim_list) == len(emb_type_list)
     emb_block_list = []
@@ -724,6 +795,7 @@ class BasicLayerV1(nn.Module):
                                      dim=dim, norm_layer=norm_layer)
         else:
             self.upsample = nn.Identity()
+        self._init_respostnorm()
 
     def forward(self, x, *emb_args):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
@@ -801,7 +873,7 @@ class BasicLayerV2(nn.Module):
                                  norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(depth)])
-
+        self._init_respostnorm()
     def forward(self, x, *emb_args):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
         x = process_checkpoint_block(self.use_checkpoint, self.downsample, x)
@@ -881,7 +953,7 @@ class BasicDecodeLayer(nn.Module):
                                  norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(after_depth)])
-        
+        self._init_respostnorm()
     def forward(self, x, skip, *emb_args):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
         for blk in self.blocks_before_skip:
