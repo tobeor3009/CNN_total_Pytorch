@@ -328,6 +328,33 @@ class QKVAttention(nn.Module):
                       v.reshape(bs * self.n_heads, ch, length))
         return a.reshape(bs, -1, length)
 
+class RMSNorm(nn.Module):
+    """
+    Root Mean Square Layer Normalization (RMSNorm).
+
+    Args:
+        dim (int): Dimension of the input tensor.
+        eps (float): Epsilon value for numerical stability. Defaults to 1e-6.
+    """
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.dim = dim
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+    def forward(self, x: torch.Tensor):
+
+        """
+        Forward pass for RMSNorm.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Normalized tensor with the same shape as input.
+        """
+        x = x.permute(0, 2, 1)
+        return F.rms_norm(x, (self.dim,), self.weight, self.eps).permute(0, 2, 1)
+    
 class AttentionBlock(nn.Module):
     """
     An attention block that allows spatial positions to attend to each other.
@@ -342,8 +369,8 @@ class AttentionBlock(nn.Module):
         num_head_channels=-1,
         use_checkpoint=False,
         use_new_attention_order=False,
-        norm_layer="group"
-    ):  
+        norm_layer="rms"
+    ): 
         super().__init__()
         assert norm_layer in ["rms", "group"]
         self.channels = channels
@@ -355,7 +382,11 @@ class AttentionBlock(nn.Module):
             ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
             self.num_heads = channels // num_head_channels
         self.use_checkpoint = use_checkpoint
-        self.norm = GroupNorm32(channels)
+        if norm_layer == "rms":
+            self.norm = RMSNorm(channels)
+        elif norm_layer== "group":
+            self.norm = GroupNorm32(channels)
+        
         self.qkv = conv_nd(1, channels, channels * 3, 1)
         if use_new_attention_order:
             # split qkv before split heads
@@ -848,10 +879,12 @@ class MultiDecoderND_V2(nn.Module):
     def __init__(self, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2, dropout_proba=0.0,
                  emb_dim_list=None, emb_type_list=None, attn_info=None, use_checkpoint=False,
-                 img_dim=2):
+                 image_shape=None, img_dim=2):
         super().__init__()
         conv_fn = get_conv_nd_fn(img_dim)
         self.use_checkpoint = use_checkpoint
+        if image_shape is not None:
+            image_shape = image_shape * 2
         conv_common_kwarg_dict = {
             "kernel_size": 3, "stride": 1, "padding": 1,
             "dropout_proba": dropout_proba,
@@ -860,6 +893,7 @@ class MultiDecoderND_V2(nn.Module):
             "emb_type_list": emb_type_list,
             "attn_info": attn_info,
             "use_checkpoint": use_checkpoint,
+            "image_shape": image_shape,
             "img_dim": img_dim
         }
         if isinstance(kernel_size, int):
