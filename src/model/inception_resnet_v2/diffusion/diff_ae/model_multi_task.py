@@ -28,6 +28,7 @@ def get_encode_feature_channel(block_size, last_channel_ratio):
 
 def get_time_emb_dim(block_size):
     # emb_dim = block_size * 16
+    # I found 512 is best size for all size
     emb_dim = 512
     time_emb_dim_init = emb_dim // 2
     time_emb_dim = emb_dim * 4
