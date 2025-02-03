@@ -15,7 +15,9 @@ from .model import MLPSkipNet
 from einops import rearrange, repeat
 
 def get_time_emb_dim(emb_dim):
-    time_emb_dim = max(512, emb_dim * 8)
+    # time_emb_dim = max(512, emb_dim * 8)
+    # I found 512 is best size. 256 is not enough, 1024 is too big so cosumes too much memory
+    time_emb_dim = 512
     time_emb_dim_init = time_emb_dim // 4
     return time_emb_dim_init, time_emb_dim
 
