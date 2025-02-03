@@ -369,7 +369,7 @@ class AttentionBlock(nn.Module):
         num_head_channels=-1,
         use_checkpoint=False,
         use_new_attention_order=False,
-        norm_layer="rms"
+        norm_layer="group"
     ): 
         super().__init__()
         assert norm_layer in ["rms", "group"]
