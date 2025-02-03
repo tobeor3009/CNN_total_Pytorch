@@ -27,7 +27,8 @@ def get_encode_feature_channel(block_size, last_channel_ratio):
     return int(round(feature_channel))
 
 def get_time_emb_dim(block_size):
-    emb_dim = block_size * 16
+    # emb_dim = block_size * 16
+    emb_dim = 512
     time_emb_dim_init = emb_dim // 2
     time_emb_dim = emb_dim * 4
     return emb_dim, time_emb_dim_init, time_emb_dim
