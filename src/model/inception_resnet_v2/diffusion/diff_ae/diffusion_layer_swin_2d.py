@@ -701,6 +701,55 @@ class PatchMerging(nn.Module):
         flops += H * W * self.dim // 2
         return flops
 
+# class PatchExpanding(nn.Module):
+#     def __init__(self, input_resolution, dim,
+#                  return_vector=True, dim_scale=2, 
+#                  decode_fn_str="pixel_shuffle", norm_layer="rms"):
+#         super().__init__()
+#         support_decode_fn_list = ["upsample", "pixel_shuffle", "conv_transpose"]
+#         assert decode_fn_str in support_decode_fn_list
+
+#         self.input_resolution = input_resolution
+#         self.dim = dim
+#         self.return_vector = return_vector
+#         self.dim_scale = dim_scale
+        
+        
+#         if decode_fn_str == "upsample":
+            
+#         elif decode_fn_str == "pixel_shuffle":
+#             pixel_conv = nn.Conv2d(dim, dim * (dim_scale ** 2) // 2,
+#                                 kernel_size=1, padding=0, bias=False)
+#             if dim_scale == 1:
+#                 pixel_shuffle = pixel_conv
+#             else:
+#                 pixel_shuffle = nn.Sequential(
+#                                 pixel_conv,
+#                                 nn.PixelShuffle(dim_scale)
+#                 )
+#             decode_layer = pixel_shuffle
+#         elif decode_fn_str == "conv_transpose":
+
+        
+#         self.decode_layer = decode_layer
+#         self.norm_layer = get_norm_layer(dim // 2, norm_layer)
+
+#     def forward(self, x):
+#         H, W = self.input_resolution
+#         B, L, C = x.shape
+#         assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
+#         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+#         x = x.permute(0, 2, 1).view(B, C, H, W)
+#         x = self.pixel_shuffle(x)
+        
+#         x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
+#         x = self.norm_layer(x)
+#         if not self.return_vector:
+#             x = x.permute(0, 2, 1).view(B, self.dim // 2,
+#                                         H * self.dim_scale,
+#                                         W * self.dim_scale)
+#         return x
+
 class PatchExpanding(nn.Module):
     def __init__(self, input_resolution, dim,
                  return_vector=True, dim_scale=2, norm_layer="rms"):
@@ -736,7 +785,7 @@ class PatchExpanding(nn.Module):
                                         H * self.dim_scale,
                                         W * self.dim_scale)
         return x
-
+    
 class BasicLayerV1(nn.Module):
     """ A basic Swin Transformer layer for one stage.
 

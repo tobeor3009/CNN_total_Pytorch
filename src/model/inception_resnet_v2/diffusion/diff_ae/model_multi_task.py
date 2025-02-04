@@ -35,9 +35,9 @@ def get_time_emb_dim(block_size):
     return emb_dim, time_emb_dim_init, time_emb_dim
 
 class InceptionResNetV2_UNet(nn.Module):
-    def __init__(self, in_channel=3, cond_channel=3, img_size=256, block_size=16,
+    def __init__(self, in_channel=3, cond_channel=3, img_size=256, block_size=8,
                  emb_channel=1024, decode_init_channel=None, block_depth_info="mini",
-                 norm=nn.RMSNorm, act="silu", num_class_embeds=None, drop_prob=0.0, cond_drop_prob=0.5,
+                 norm=GroupNorm32, act="silu", num_class_embeds=None, drop_prob=0.0, cond_drop_prob=0.5,
                  self_condition=False, use_checkpoint=[False, False, False, False, True],
                  attn_info_list=[None, None, None, None, True], attn_dim_head=32, num_head_list=[1, 1, 1, 1, 1],
                  diffusion_out_channel=1, diffusion_act=None,
@@ -46,7 +46,7 @@ class InceptionResNetV2_UNet(nn.Module):
                  recon_out_channel=None, recon_act="tanh",
                  validity_shape=(1, 8, 8), validity_act=None,
                  get_diffusion=False, get_seg=True, get_class=False, get_recon=False, get_validity=False,
-                 include_encoder=None, include_latent_net=None, img_dim=2, encoder_img_dim=None):
+                 include_encoder=False, include_latent_net=False, img_dim=2, encoder_img_dim=None):
         super().__init__()
         last_channel_ratio = 1
         self.include_encoder = include_encoder
@@ -103,7 +103,6 @@ class InceptionResNetV2_UNet(nn.Module):
         self.img_dim = img_dim
         self.encoder_img_dim = encoder_img_dim or img_dim
         ##################################
-
         assert len(attn_info_list) == 5, "check len(attn_info_list) == 5"
         assert len(use_checkpoint) == 5, "check len(use_checkpoint) == 5"
         assert len(num_head_list) == 5, "check len(num_head_list) == 5"
@@ -177,19 +176,22 @@ class InceptionResNetV2_UNet(nn.Module):
         self.cond_drop_prob = cond_drop_prob
         self.feature_channel = get_encode_feature_channel(block_size, last_channel_ratio)
 
+        self.set_encoder()
         if get_diffusion:
-            self.diffusion_decoder_list = self.get_decoder(diffusion_out_channel, diffusion_act, is_diffusion=True)
+            self.diffusion_decoder_list = self.get_decoder(diffusion_out_channel, diffusion_act,
+                                                           decode_fn_str_list=["upsample"], is_diffusion=True)
         if get_seg:
-            self.seg_decoder_list = self.get_decoder(seg_out_channel, seg_act, is_diffusion=False)
+            self.seg_decoder_list = self.get_decoder(seg_out_channel, seg_act,
+                                                     decode_fn_str_list=["conv_transpose"], is_diffusion=False)
         if get_class:
             self.class_head = ClassificationHeadSimple(self.feature_channel,
                                                       class_out_channel, drop_prob, class_act, img_dim)
         if get_recon:
             recon_out_channel = recon_out_channel or in_channel
-            self.recon_decoder_list = self.get_decoder(recon_out_channel, recon_act, is_diffusion=False)
+            self.recon_decoder_list = self.get_decoder(recon_out_channel, recon_act,
+                                                       decode_fn_str_list=["pixel_shuffle"], is_diffusion=False)
         if get_validity:
             self.validity_head = self.get_validity_block(validity_shape, validity_act)
-        self.set_encoder()
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -390,7 +392,7 @@ class InceptionResNetV2_UNet(nn.Module):
                                                 use_checkpoint=use_checkpoint[layer_idx], image_shape=self.get_image_shape(5), img_dim=self.img_dim)
     
     
-    def get_decoder(self, decode_out_channel, decode_out_act, is_diffusion=False):
+    def get_decoder(self, decode_out_channel, decode_out_act, decode_fn_str_list, is_diffusion=False):
         block_size = self.block_size
         decode_init_channel = self.decode_init_channel
         attn_info_list = self.attn_info_list
@@ -422,7 +424,7 @@ class InceptionResNetV2_UNet(nn.Module):
                                               kernel_size=3, stride=1, **common_kwarg_dict)
 
             decoder_layer_up = MultiDecoderND_V2(decode_block_out_channel, decode_block_out_channel,
-                                                kernel_size=2, **common_kwarg_dict)
+                                                kernel_size=2, decode_fn_str_list=decode_fn_str_list, **common_kwarg_dict)
             decoder_block_list.append(decoder_block)
             decoder_layer_up_list.append(decoder_layer_up)
         decoder_block_list = nn.ModuleList(decoder_block_list)
@@ -791,9 +793,6 @@ class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
         encode_feature = self.pool_layer(encode_feature)
         return encode_feature
 
-class LatentNetReturn(NamedTuple):
-    pred: torch.Tensor = None
-
 class MLPSkipNet(nn.Module):
     """
     concat x to hidden layers
@@ -868,7 +867,7 @@ class MLPSkipNet(nn.Module):
                 h = torch.cat([h, x], dim=1)
             h = self.layers[i].forward(x=h, cond=cond)
         h = self.last_act(h)
-        return LatentNetReturn(h)
+        return Return(pred=h)
 
 class Classifier(nn.Module):
     def __init__(self, block_size=16, last_channel_ratio=1, num_cls=None, z_normalize=True):

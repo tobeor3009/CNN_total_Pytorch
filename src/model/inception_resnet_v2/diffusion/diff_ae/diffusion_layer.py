@@ -879,8 +879,15 @@ class MultiDecoderND_V2(nn.Module):
     def __init__(self, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2, dropout_proba=0.0,
                  emb_dim_list=None, emb_type_list=None, attn_info=None, use_checkpoint=False,
-                 image_shape=None, img_dim=2):
+                 image_shape=None, decode_fn_str_list=["pixel_shuffle"], img_dim=2):
         super().__init__()
+
+        support_decode_fn_list = ["upsample", "pixel_shuffle", "conv_transpose"]
+        assert img_dim in [1, 2, 3]
+        
+        for decode_fn_str in decode_fn_str_list:
+            assert decode_fn_str in support_decode_fn_list
+
         conv_fn = get_conv_nd_fn(img_dim)
         self.use_checkpoint = use_checkpoint
         if image_shape is not None:
@@ -899,35 +906,52 @@ class MultiDecoderND_V2(nn.Module):
         if isinstance(kernel_size, int):
             kernel_size = tuple(kernel_size for _ in range(img_dim))
 
-        conv_before_pixel_shuffle = conv_fn(in_channels=in_channels,
-                                              out_channels=in_channels *
-                                              np.prod(kernel_size),
-                                              kernel_size=1)
+        decode_middle_channel = 0
+        decode_layer_list = []
+        upsample_layer = None
         pixel_shuffle_layer = None
         conv_transpose_fn = None
+
         if img_dim == 1:
+            upsample_mode = "linear"
             pixel_shuffle_layer = PixelShuffle1D(upscale_factor=kernel_size)
             conv_transpose_fn = nn.ConvTranspose1d
         elif img_dim == 2:
+            upsample_mode = "bilinear"
             pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=kernel_size[0])
             conv_transpose_fn = nn.ConvTranspose2d
         elif img_dim == 3:
+            upsample_mode = "trilinear"
             pixel_shuffle_layer = PixelShuffle3D(upscale_factor=kernel_size)
             conv_transpose_fn = nn.ConvTranspose3d
+            
 
-        conv_after_pixel_shuffle = conv_fn(in_channels=in_channels,
-                                             out_channels=out_channels,
-                                             kernel_size=1)
-        self.pixel_shuffle = nn.Sequential(
-            conv_before_pixel_shuffle,
-            pixel_shuffle_layer,
-            conv_after_pixel_shuffle
-        )
+        if "upsample" in decode_fn_str_list:
+            upsample_layer = nn.Upsample(scale_factor=kernel_size, mode=upsample_mode)
+            decode_layer_list.append(upsample_layer)
+            decode_middle_channel += in_channels
 
-        self.conv_transpose = conv_transpose_fn(in_channels, out_channels,
-                                                stride=kernel_size,
-                                                **conv_transpose_kwarg_dict)
-        self.concat_conv = ResNetBlockND(in_channels=out_channels * 2,
+        if "pixel_shuffle" in decode_fn_str_list:
+            conv_before_pixel_shuffle = conv_fn(in_channels=in_channels,
+                                        out_channels=in_channels *
+                                        np.prod(kernel_size),
+                                        kernel_size=1)
+            pixel_shuffle = nn.Sequential(
+                conv_before_pixel_shuffle,
+                pixel_shuffle_layer
+            )
+            decode_layer_list.append(pixel_shuffle)
+            decode_middle_channel += in_channels
+
+        if "conv_transpose" in decode_fn_str_list:
+            conv_transpose = conv_transpose_fn(in_channels, in_channels,
+                                                    stride=kernel_size,
+                                                    **conv_transpose_kwarg_dict)
+            decode_layer_list.append(conv_transpose)
+            decode_middle_channel += in_channels
+
+        self.decode_layer_list = nn.ModuleList(decode_layer_list)
+        self.concat_conv = ResNetBlockND(in_channels=decode_middle_channel,
                                        out_channels=out_channels, **conv_common_kwarg_dict)
     def forward(self, x, *args):
         if self.use_checkpoint:
@@ -937,12 +961,11 @@ class MultiDecoderND_V2(nn.Module):
             return self._forward_impl(x, *args)
         
     def _forward_impl(self, x, *args):
-        pixel_shuffle = self.pixel_shuffle(x)
-        conv_transpose = self.conv_transpose(x)
 
-        out = torch.cat([pixel_shuffle, conv_transpose], dim=1)
-        out = self.concat_conv(out, *args)
-        return out
+        decode_output_list = [decode_layer(x) for decode_layer in self.decode_layer_list]
+        decode_output = torch.cat(decode_output_list, dim=1)
+        decode_output = self.concat_conv(decode_output, *args)
+        return decode_output
 
 class OutputND(nn.Module):
     def __init__(self, in_channels, out_channels, act=None, img_dim=2):
