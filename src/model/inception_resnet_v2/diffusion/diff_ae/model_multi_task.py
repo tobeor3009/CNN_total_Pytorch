@@ -252,16 +252,16 @@ class InceptionResNetV2_UNet(nn.Module):
             encode_feature, skip_connect_list = self.encode_forward(x_start, *non_diffusion_emb_list)
             if self.get_seg:
                 seg_decode_feature = self.decode_forward(self.seg_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
-                output["seg_output"] = seg_decode_feature
+                output["seg_pred"] = seg_decode_feature
             if self.get_class:
                 class_output = self.class_head(x)
-                output["class_output"] = class_output
+                output["class_pred"] = class_output
             if self.get_recon:
                 recon_decode_feature = self.decode_forward(self.recon_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
-                output["recon_output"] = recon_decode_feature
+                output["recon_pred"] = recon_decode_feature
             if self.get_validity:
                 validitiy_output = self.validity_head(x)
-                output["validitiy_output"] = validitiy_output
+                output["validitiy_pred"] = validitiy_output
         return output
     
     def encode_forward(self, x, *args):

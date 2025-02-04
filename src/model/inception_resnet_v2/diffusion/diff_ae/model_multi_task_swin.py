@@ -246,18 +246,18 @@ class SwinMultitask(nn.Module):
                 seg_output = self.process_decode_layers(x, self.seg_decode_layers,
                                                         self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv,
                                                         skip_connect_list, non_diffusion_emb_list)
-                output["seg_output"] = seg_output
+                output["seg_pred"] = seg_output
             if self.get_class:
                 class_output = self.class_head(x)
-                output["class_output"] = class_output
+                output["class_pred"] = class_output
             if self.get_recon:
                 recon_output = self.process_decode_layers(x, self.recon_decode_layers,
                                                         self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv,
                                                         skip_connect_list, non_diffusion_emb_list)
-                output["recon_output"] = recon_output
+                output["recon_pred"] = recon_output
             if self.get_validity:
                 validitiy_output = self.validity_head(x)
-                output["validitiy_output"] = validitiy_output
+                output["validitiy_pred"] = validitiy_output
         return output
     
     def process_class_emb(self, x, class_labels, cond_drop_prob):

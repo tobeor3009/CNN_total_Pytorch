@@ -213,15 +213,16 @@ def get_thresholded_seg_mask(y_pred, y_true, mask_threshold=0.5):
         y_pred = get_one_hot_argmax(y_pred)
     return y_pred, y_true
 
+@torch.no_grad
 def get_dice_score(y_pred, y_true, mask_threshold=0.5, per_image=False, per_channel=False):
     y_pred, y_true = get_thresholded_seg_mask(y_pred, y_true, mask_threshold=mask_threshold)
     dice_loss = get_dice_loss(y_pred, y_true, log=False, per_image=per_image)
     dice_score = 1 - dice_loss
     if (not per_channel) and per_image:
         dice_score = dice_score.mean(1)
-
     return dice_score
 
+@torch.no_grad
 def get_seg_precision(y_pred, y_true, mask_threshold=0.5, per_image=False, per_channel=False, smooth=SMOOTH):
     y_pred, y_true = get_thresholded_seg_mask(y_pred, y_true, mask_threshold=mask_threshold)
     num_dims = y_true.ndim
@@ -234,6 +235,7 @@ def get_seg_precision(y_pred, y_true, mask_threshold=0.5, per_image=False, per_c
     else:
         return torch.mean(precision)
 
+@torch.no_grad
 def get_seg_recall(y_pred, y_true, mask_threshold=0.5, per_image=False, per_channel=False, smooth=SMOOTH):
     y_pred, y_true = get_thresholded_seg_mask(y_pred, y_true, mask_threshold=mask_threshold)
     num_dims = y_true.ndim
@@ -245,7 +247,8 @@ def get_seg_recall(y_pred, y_true, mask_threshold=0.5, per_image=False, per_chan
         return recall
     else:
         return torch.mean(recall)
-    
+
+@torch.no_grad    
 def accuracy_metric(preds, gt, per_image=False):
     # 예측된 클래스 얻기 (가장 높은 확률을 가진 클래스)
     predicted_classes = torch.argmax(preds, dim=1)
