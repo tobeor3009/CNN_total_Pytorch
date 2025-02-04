@@ -202,12 +202,13 @@ class InceptionResNetV2_UNet(nn.Module):
                 
     def forward(self, x, t, t_cond=None,
                 x_start=None, cond=None,
-                x_self_cond=None, class_labels=None, cond_drop_prob=None):
+                x_self_cond=None, class_labels=None, cond_drop_prob=None,
+                infer_diffusion=True):
         
         output = Return()
         emb_list = []
 
-        if self.get_diffusion:
+        if self.get_diffusion and infer_diffusion:
             time_emb = timestep_embedding(t, self.time_emb_dim_init)
             time_emb = self.time_mlp(time_emb)
             emb_list.append(time_emb)
@@ -244,24 +245,25 @@ class InceptionResNetV2_UNet(nn.Module):
         else:
             non_diffusion_emb_list = []
         
-        if self.get_diffusion:
+        if self.get_diffusion and infer_diffusion:
             diff_encode_feature, diff_skip_connect_list = self.encode_forward(x, *emb_list)
             diff_decode_feature = self.decode_forward(self.diffusion_decoder_list, diff_encode_feature, diff_skip_connect_list, *emb_list)
             output["pred"] = diff_decode_feature
-        if self.use_non_diffusion:
-            encode_feature, skip_connect_list = self.encode_forward(x_start, *non_diffusion_emb_list)
-            if self.get_seg:
-                seg_decode_feature = self.decode_forward(self.seg_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
-                output["seg_pred"] = seg_decode_feature
-            if self.get_class:
-                class_output = self.class_head(x)
-                output["class_pred"] = class_output
-            if self.get_recon:
-                recon_decode_feature = self.decode_forward(self.recon_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
-                output["recon_pred"] = recon_decode_feature
-            if self.get_validity:
-                validitiy_output = self.validity_head(x)
-                output["validitiy_pred"] = validitiy_output
+        else:
+            if self.use_non_diffusion:
+                encode_feature, skip_connect_list = self.encode_forward(x_start, *non_diffusion_emb_list)
+                if self.get_seg:
+                    seg_decode_feature = self.decode_forward(self.seg_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
+                    output["seg_pred"] = seg_decode_feature
+                if self.get_class:
+                    class_output = self.class_head(x)
+                    output["class_pred"] = class_output
+                if self.get_recon:
+                    recon_decode_feature = self.decode_forward(self.recon_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
+                    output["recon_pred"] = recon_decode_feature
+                if self.get_validity:
+                    validitiy_output = self.validity_head(x)
+                    output["validitiy_pred"] = validitiy_output
         return output
     
     def encode_forward(self, x, *args):

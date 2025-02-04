@@ -211,10 +211,11 @@ class SwinMultitask(nn.Module):
     
     def forward(self, x, t, t_cond=None,
                 x_start=None, cond=None,
-                x_self_cond=None, class_labels=None, cond_drop_prob=None):
+                x_self_cond=None, class_labels=None, cond_drop_prob=None,
+                infer_diffusion=True):
         emb_list = []
         output = Return()
-        if self.get_diffusion:
+        if self.get_diffusion and infer_diffusion:
             time_emb = timestep_embedding(t, self.time_emb_dim_init)
             time_emb = self.time_mlp(time_emb)
             emb_list.append(time_emb)
@@ -232,32 +233,33 @@ class SwinMultitask(nn.Module):
         else:
             non_diffusion_emb_list = []
 
-        if self.get_diffusion:
+        if self.get_diffusion and infer_diffusion:
             diff_x, diff_skip_connect_list = self.process_encode_layers(x, emb_list)
             diff_x = self.process_mid_layers(diff_x, emb_list)
             diff_output = self.process_decode_layers(diff_x, self.diff_decode_layers,
                                                     self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv,
                                                     diff_skip_connect_list, emb_list)
             output["pred"] = diff_output
-        if self.use_non_diffusion:
-            x, skip_connect_list = self.process_encode_layers(x_start, non_diffusion_emb_list)
-            x = self.process_mid_layers(x, non_diffusion_emb_list)
-            if self.get_seg:
-                seg_output = self.process_decode_layers(x, self.seg_decode_layers,
-                                                        self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv,
-                                                        skip_connect_list, non_diffusion_emb_list)
-                output["seg_pred"] = seg_output
-            if self.get_class:
-                class_output = self.class_head(x)
-                output["class_pred"] = class_output
-            if self.get_recon:
-                recon_output = self.process_decode_layers(x, self.recon_decode_layers,
-                                                        self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv,
-                                                        skip_connect_list, non_diffusion_emb_list)
-                output["recon_pred"] = recon_output
-            if self.get_validity:
-                validitiy_output = self.validity_head(x)
-                output["validitiy_pred"] = validitiy_output
+        else:
+            if self.use_non_diffusion:
+                x, skip_connect_list = self.process_encode_layers(x_start, non_diffusion_emb_list)
+                x = self.process_mid_layers(x, non_diffusion_emb_list)
+                if self.get_seg:
+                    seg_output = self.process_decode_layers(x, self.seg_decode_layers,
+                                                            self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv,
+                                                            skip_connect_list, non_diffusion_emb_list)
+                    output["seg_pred"] = seg_output
+                if self.get_class:
+                    class_output = self.class_head(x)
+                    output["class_pred"] = class_output
+                if self.get_recon:
+                    recon_output = self.process_decode_layers(x, self.recon_decode_layers,
+                                                            self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv,
+                                                            skip_connect_list, non_diffusion_emb_list)
+                    output["recon_pred"] = recon_output
+                if self.get_validity:
+                    validitiy_output = self.validity_head(x)
+                    output["validitiy_pred"] = validitiy_output
         return output
     
     def process_class_emb(self, x, class_labels, cond_drop_prob):
