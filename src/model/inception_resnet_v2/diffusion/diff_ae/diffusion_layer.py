@@ -73,10 +73,10 @@ def z_normalize(x, eps=1e-5):
 @dataclass
 class Return:
     pred: Optional[torch.Tensor] = None
-    seg_output: Optional[torch.Tensor] = None
-    class_output: Optional[torch.Tensor] = None
-    recon_output: Optional[torch.Tensor] = None
-    validity_output: Optional[torch.Tensor] = None
+    seg_pred: Optional[torch.Tensor] = None
+    class_pred: Optional[torch.Tensor] = None
+    recon_pred: Optional[torch.Tensor] = None
+    validity_pred: Optional[torch.Tensor] = None
 
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
