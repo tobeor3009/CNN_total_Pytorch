@@ -444,15 +444,18 @@ def get_scale_shift_list(emb_block_list, emb_type_list, emb_args, img_dim):
     unsqueeze_dim = tuple(1 for _ in range(img_dim))
     scale_shift_list = []
     for emb_block, emb_type, emb in zip(emb_block_list, emb_type_list, emb_args):
-        emb = emb_block(emb)
-        emb_shape = emb.shape
-        emb = emb.view(*emb_shape, *unsqueeze_dim)
-        if emb_type == "cond":
-            scale = emb
-            shift = torch.zeros_like(emb)
+        if emb is None:
+            emb = emb_block(emb)
+            emb_shape = emb.shape
+            emb = emb.view(*emb_shape, *unsqueeze_dim)
+            if emb_type == "cond":
+                scale = emb
+                shift = torch.zeros_like(emb)
+            else:
+                scale, shift = emb.chunk(2, dim=1)
+            scale_shift_list.append([scale, shift])
         else:
-            scale, shift = emb.chunk(2, dim=1)
-        scale_shift_list.append([scale, shift])
+            scale_shift_list.append([0, 0])
     return scale_shift_list
 
 def apply_embedding(x, scale_shift_list, scale_bias=1):

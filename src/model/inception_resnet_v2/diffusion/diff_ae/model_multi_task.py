@@ -219,9 +219,6 @@ class InceptionResNetV2_UNet(nn.Module):
                             x_self_cond=None, class_emb=None):
         output = Return()
         emb_list = []
-        time_emb = timestep_embedding(t, self.time_emb_dim_init)
-        time_emb = self.time_mlp(time_emb)
-        emb_list.append(time_emb)
         # autoencoder original source not used t_cond varaiable
         if t_cond is None:
             t_cond = t
@@ -229,6 +226,9 @@ class InceptionResNetV2_UNet(nn.Module):
             x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
             x = torch.cat((x_self_cond, x), dim=1)
         
+        time_emb = timestep_embedding(t, self.time_emb_dim_init)
+        time_emb = self.time_mlp(time_emb)
+        emb_list.append(time_emb)
         if cond is None and self.include_encoder:
             assert x.shape == x_start.shape, f"x.shape: {x.shape}, x_start.shape: {x_start.shape}"
             latent_feature = self.encoder(x_start)
@@ -244,10 +244,15 @@ class InceptionResNetV2_UNet(nn.Module):
     
     def _forward_non_diffusion(self, x, class_emb):
         output = Return()
+        non_diffusion_emb_list = []
+
+        if self.include_encoder:
+            latent_feature = self.encoder(x)
+            non_diffusion_emb_list.append(None)
+            non_diffusion_emb_list.append(latent_feature)
         if class_emb is None:
-            non_diffusion_emb_list = []
-        else:
-            non_diffusion_emb_list = [class_emb]
+            non_diffusion_emb_list.append(class_emb)
+
         encode_feature, skip_connect_list = self.encode_forward(x, *non_diffusion_emb_list)
         if self.get_seg:
             seg_decode_feature = self.decode_forward(self.seg_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
