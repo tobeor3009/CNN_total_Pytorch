@@ -72,11 +72,11 @@ def z_normalize(x, eps=1e-5):
 
 @dataclass
 class Return:
-    pred: Optional[torch.Tensor] = None
-    seg_pred: Optional[torch.Tensor] = None
-    class_pred: Optional[torch.Tensor] = None
-    recon_pred: Optional[torch.Tensor] = None
-    validity_pred: Optional[torch.Tensor] = None
+    pred: Optional[torch.Tensor] = 0
+    seg_pred: Optional[torch.Tensor] = 0
+    class_pred: Optional[torch.Tensor] = 0
+    recon_pred: Optional[torch.Tensor] = 0
+    validity_pred: Optional[torch.Tensor] = 0
 
     def __getitem__(self, key: str) -> Any:
         return getattr(self, key)
@@ -445,6 +445,8 @@ def get_scale_shift_list(emb_block_list, emb_type_list, emb_args, img_dim):
     scale_shift_list = []
     for emb_block, emb_type, emb in zip(emb_block_list, emb_type_list, emb_args):
         if emb is None:
+            scale_shift_list.append([0, 0])
+        else:
             emb = emb_block(emb)
             emb_shape = emb.shape
             emb = emb.view(*emb_shape, *unsqueeze_dim)
@@ -454,8 +456,6 @@ def get_scale_shift_list(emb_block_list, emb_type_list, emb_args, img_dim):
             else:
                 scale, shift = emb.chunk(2, dim=1)
             scale_shift_list.append([scale, shift])
-        else:
-            scale_shift_list.append([0, 0])
     return scale_shift_list
 
 def apply_embedding(x, scale_shift_list, scale_bias=1):
