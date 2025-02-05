@@ -826,16 +826,16 @@ class MultiDecoderND(nn.Module):
                                               out_channels=in_channels *
                                               np.prod(kernel_size),
                                               kernel_size=1)
-        pixel_shuffle_layer = None
+        pixel_shuffle_fn = None
         upsample_mode = None
         if img_dim == 1:
-            pixel_shuffle_layer = PixelShuffle1D(upscale_factor=kernel_size)
+            pixel_shuffle_fn = PixelShuffle1D
             upsample_mode = "linear"
         elif img_dim == 2:
-            pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=kernel_size[0])
+            pixel_shuffle_fn = nn.PixelShuffle
             upsample_mode = "bilinear"
         elif img_dim == 3:
-            pixel_shuffle_layer = PixelShuffle3D(upscale_factor=kernel_size)
+            pixel_shuffle_fn = PixelShuffle3D
             upsample_mode = "trilinear"
             
         conv_after_pixel_shuffle = conv_fn(in_channels=in_channels,
@@ -843,7 +843,7 @@ class MultiDecoderND(nn.Module):
                                              kernel_size=1)
         self.pixel_shuffle = nn.Sequential(
             conv_before_pixel_shuffle,
-            pixel_shuffle_layer,
+            pixel_shuffle_fn(upscale_factor=kernel_size[0]),
             conv_after_pixel_shuffle
         )
         upsample_layer = nn.Upsample(scale_factor=kernel_size,
@@ -908,21 +908,21 @@ class MultiDecoderND_V2(nn.Module):
 
         decode_middle_channel = 0
         decode_layer_list = []
-        upsample_layer = None
-        pixel_shuffle_layer = None
+        upsample_mode = None
+        pixel_shuffle_fn = None
         conv_transpose_fn = None
 
         if img_dim == 1:
             upsample_mode = "linear"
-            pixel_shuffle_layer = PixelShuffle1D(upscale_factor=kernel_size)
+            pixel_shuffle_fn = PixelShuffle1D
             conv_transpose_fn = nn.ConvTranspose1d
         elif img_dim == 2:
             upsample_mode = "bilinear"
-            pixel_shuffle_layer = nn.PixelShuffle(upscale_factor=kernel_size[0])
+            pixel_shuffle_fn = nn.PixelShuffle
             conv_transpose_fn = nn.ConvTranspose2d
         elif img_dim == 3:
             upsample_mode = "trilinear"
-            pixel_shuffle_layer = PixelShuffle3D(upscale_factor=kernel_size)
+            pixel_shuffle_fn = PixelShuffle3D
             conv_transpose_fn = nn.ConvTranspose3d
             
 
@@ -938,7 +938,7 @@ class MultiDecoderND_V2(nn.Module):
                                         kernel_size=1)
             pixel_shuffle = nn.Sequential(
                 conv_before_pixel_shuffle,
-                pixel_shuffle_layer
+                pixel_shuffle_fn(upscale_factor=kernel_size[0])
             )
             decode_layer_list.append(pixel_shuffle)
             decode_middle_channel += in_channels

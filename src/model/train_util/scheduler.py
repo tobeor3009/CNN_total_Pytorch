@@ -14,6 +14,7 @@ def one_cycle_lr(step, step_size,
         # 그 다음 90 에포크 동안 max => min
         return max_min_lr_ratio - (max_min_lr_ratio - 1) * ((step - first_step) / second_step)
     else:
+        step = min(total_step, step)
         # 그 후 50 에포크마다 0.5배 감소
         factor = 1 - (1 - decay_lr) * ((step - first_step - second_step) / (total_step - first_step - second_step))
         return factor

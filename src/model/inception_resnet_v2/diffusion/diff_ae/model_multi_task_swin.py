@@ -24,10 +24,10 @@ def get_time_emb_dim(emb_dim):
 class SwinMultitask(nn.Module):
     def __init__(self, img_size=512, patch_size=4,
                  in_channel=3, cond_channel=3, self_condition=False,
-                 norm_layer="rms", act_layer="silu",
-                 diffusion_out_channel=1, diffusion_out_act=None, emb_channel=1024,
-                 seg_out_channel=2, seg_out_act="softmax",
-                 num_classes=1000, class_act="softmax", recon_act="sigmoid",
+                 norm_layer="rms", act_layer="silu", emb_channel=1024,
+                 diffusion_out_channel=1, diffusion_out_act=None, diffusion_decode_fn_str="upsample",
+                 seg_out_channel=2, seg_out_act="softmax", seg_decode_fn_str="conv_transpose",
+                 num_classes=1000, class_act="softmax", recon_act="sigmoid", recon_decode_fn_str="pixel_shuffle",
                  validity_shape=(1, 8, 8), validity_act=None,
                 num_class_embeds=None, cond_drop_prob=0.5,
                 embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24],
@@ -174,15 +174,15 @@ class SwinMultitask(nn.Module):
         self.mid_layer_1, self.mid_attn, self.mid_layer_2 = self.get_mid_layer()
         ###################### Define Parts ########################
         if get_diffusion:
-            self.diff_decode_layers = self.get_decode_layers(is_diffusion=True)
+            self.diff_decode_layers = self.get_decode_layers(decode_fn_str=diffusion_decode_fn_str, is_diffusion=True)
             self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv = self.get_decode_final_layers(diffusion_out_channel, diffusion_out_act, is_diffusion=True)
         if get_seg:
-            self.seg_decode_layers = self.get_decode_layers()
+            self.seg_decode_layers = self.get_decode_layers(decode_fn_str=seg_decode_fn_str)
             self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv = self.get_decode_final_layers(seg_out_channel, seg_out_act)
         if get_class:
             self.class_head = self.get_class_head(num_classes, class_act)
         if get_recon:
-            self.recon_decode_layers = self.get_decode_layers()
+            self.recon_decode_layers = self.get_decode_layers(decode_fn_str=recon_decode_fn_str)
             self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv = self.get_decode_final_layers(in_channel, recon_act)
         if get_validity:
             self.validity_dim = int(embed_dim * (2 ** self.num_layers))
@@ -209,73 +209,90 @@ class SwinMultitask(nn.Module):
     def no_weight_decay_keywords(self):
         return {"cpb_mlp", "logit_scale", 'relative_position_bias_table'}
     
-    def forward(self, x, t, t_cond=None,
+    def forward(self, x, t=None, t_cond=None,
                 x_start=None, cond=None,
                 x_self_cond=None, class_labels=None, cond_drop_prob=None,
                 infer_diffusion=True):
-        emb_list = []
+        output = None
+        class_emb = self.process_class_emb(x, class_labels, cond_drop_prob)
+        
+        if infer_diffusion:
+            output = self._forward_diffusion(x=x, t=t, t_cond=t_cond, x_start=x_start, cond=cond,
+                                             x_self_cond=x_self_cond, class_emb=class_emb)
+        else:
+            output = self._forward_non_diffusion(x=x, class_emb=class_emb)
+        return output
+    
+    def _forward_diffusion(self, x, t, t_cond=None,
+                            x_start=None, cond=None,
+                            x_self_cond=None, class_emb=None):
         output = Return()
-        if self.get_diffusion and infer_diffusion:
-            time_emb = timestep_embedding(t, self.time_emb_dim_init)
-            time_emb = self.time_mlp(time_emb)
-            emb_list.append(time_emb)
-            if self.encoder is not None:
-                if cond is None:
-                    latent_emb = self.encoder(x_start)
-                else:
-                    latent_emb = cond
-                emb_list.append(latent_emb)
+        emb_list = []
+        
+        time_emb = timestep_embedding(t, self.time_emb_dim_init)
+        time_emb = self.time_mlp(time_emb)
+        emb_list.append(time_emb)
+        if self.encoder is not None:
+            if cond is None:
+                latent_emb = self.encoder(x_start)
+            else:
+                latent_emb = cond
+            emb_list.append(latent_emb)
 
-        if self.num_class_embeds is not None:
-            class_emb = self.process_class_emb(x, class_labels, cond_drop_prob)
+        if class_emb is not None:
             emb_list.append(class_emb)
-            non_diffusion_emb_list = emb_list[-1:]
-        else:
-            non_diffusion_emb_list = []
 
-        if self.get_diffusion and infer_diffusion:
-            diff_x, diff_skip_connect_list = self.process_encode_layers(x, emb_list)
-            diff_x = self.process_mid_layers(diff_x, emb_list)
-            diff_output = self.process_decode_layers(diff_x, self.diff_decode_layers,
-                                                    self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv,
-                                                    diff_skip_connect_list, emb_list)
-            output["pred"] = diff_output
+        diff_feature, diff_skip_connect_list = self.process_encode_layers(x, emb_list)
+        diff_feature = self.process_mid_layers(diff_feature, emb_list)
+        diff_output = self.process_decode_layers(diff_feature, self.diff_decode_layers,
+                                                 self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv,
+                                                 diff_skip_connect_list, emb_list)
+        output["pred"] = diff_output
+        return output
+
+    def _forward_non_diffusion(self, x, class_emb):
+        output = Return()
+        if class_emb is None:
+            non_diffusion_emb_list = []
         else:
-            if self.use_non_diffusion:
-                x, skip_connect_list = self.process_encode_layers(x_start, non_diffusion_emb_list)
-                x = self.process_mid_layers(x, non_diffusion_emb_list)
-                if self.get_seg:
-                    seg_output = self.process_decode_layers(x, self.seg_decode_layers,
-                                                            self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv,
-                                                            skip_connect_list, non_diffusion_emb_list)
-                    output["seg_pred"] = seg_output
-                if self.get_class:
-                    class_output = self.class_head(x)
-                    output["class_pred"] = class_output
-                if self.get_recon:
-                    recon_output = self.process_decode_layers(x, self.recon_decode_layers,
-                                                            self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv,
-                                                            skip_connect_list, non_diffusion_emb_list)
-                    output["recon_pred"] = recon_output
-                if self.get_validity:
-                    validitiy_output = self.validity_head(x)
-                    output["validitiy_pred"] = validitiy_output
+            non_diffusion_emb_list = [class_emb]
+
+        encoded_feature, skip_connect_list = self.process_encode_layers(x, non_diffusion_emb_list)
+        encoded_feature = self.process_mid_layers(encoded_feature, non_diffusion_emb_list)
+        if self.get_seg:
+            seg_output = self.process_decode_layers(encoded_feature, self.seg_decode_layers,
+                                                    self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv,
+                                                    skip_connect_list, non_diffusion_emb_list)
+            output["seg_pred"] = seg_output
+        if self.get_class:
+            class_output = self.class_head(encoded_feature)
+            output["class_pred"] = class_output
+        if self.get_recon:
+            recon_output = self.process_decode_layers(encoded_feature, self.recon_decode_layers,
+                                                    self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv,
+                                                    skip_connect_list, non_diffusion_emb_list)
+            output["recon_pred"] = recon_output
+        if self.get_validity:
+            validitiy_output = self.validity_head(encoded_feature)
+            output["validitiy_pred"] = validitiy_output
         return output
     
     def process_class_emb(self, x, class_labels, cond_drop_prob):
-        cond_drop_prob = default(cond_drop_prob, self.cond_drop_prob)
-        batch, device = x.size(0), x.device
-        class_emb = self.class_emb_layer(class_labels).to(dtype=x.dtype)
-        if cond_drop_prob > 0:
-            keep_mask = prob_mask_like((batch,), 1 - cond_drop_prob, device=device)
-            null_classes_emb = repeat(self.null_class_emb, 'd -> b d', b=batch)
+        if self.num_class_embeds is not None:
+            cond_drop_prob = default(cond_drop_prob, self.cond_drop_prob)
+            batch, device = x.size(0), x.device
+            class_emb = self.class_emb_layer(class_labels).to(dtype=x.dtype)
+            if cond_drop_prob > 0:
+                keep_mask = prob_mask_like((batch,), 1 - cond_drop_prob, device=device)
+                null_classes_emb = repeat(self.null_class_emb, 'd -> b d', b=batch)
 
-            class_emb = torch.where(
-                rearrange(keep_mask, 'b -> b 1'),
-                class_emb, null_classes_emb
-            )
-
-        class_emb = self.class_mlp(class_emb)
+                class_emb = torch.where(
+                    rearrange(keep_mask, 'b -> b 1'),
+                    class_emb, null_classes_emb
+                )
+            class_emb = self.class_mlp(class_emb)
+        else:
+            class_emb = None
         return class_emb
     
     def process_encode_layers(self, x, emb_list=[]):
@@ -339,7 +356,8 @@ class SwinMultitask(nn.Module):
                             "pretrained_window_size":self.pretrained_window_sizes[i_layer],
                             "use_checkpoint":self.use_checkpoint[i_layer],
                             "emb_dim_list": emb_dim_list,
-                            "emb_type_list": emb_type_list 
+                            "emb_type_list": emb_type_list,
+                            "img_dim": self.img_dim
                             }
         return common_kwarg_dict
     
@@ -371,7 +389,7 @@ class SwinMultitask(nn.Module):
         mid_layer_2 = BasicLayerV2(**common_kwarg_dict)
         return mid_layer_1, mid_attn, mid_layer_2
     
-    def get_decode_layers(self, is_diffusion=False):
+    def get_decode_layers(self, decode_fn_str="pixel_shuffle", is_diffusion=False):
         decode_layers = nn.ModuleList()
         for d_i_layer in range(self.num_layers, 0, -1):
             i_layer = d_i_layer - 1
@@ -380,6 +398,7 @@ class SwinMultitask(nn.Module):
             common_kwarg_dict = self.get_layer_config_dict(layer_dim, feature_resolution, i_layer, is_diffusion)
             common_kwarg_dict["skip_dim"] = layer_dim // 2
             common_kwarg_dict["upsample"] = PatchExpanding
+            common_kwarg_dict["decode_fn_str"] = decode_fn_str
             decode_layer = BasicDecodeLayer(**common_kwarg_dict)
             decode_layers.append(decode_layer)
         return decode_layers
@@ -393,7 +412,9 @@ class SwinMultitask(nn.Module):
                                                     dim=self.embed_dim,
                                                     return_vector=False,
                                                     dim_scale=self.patch_size,
-                                                    norm_layer=self.norm_layer
+                                                    norm_layer=self.norm_layer,
+                                                    ecode_fn_str="pixel_shuffle",
+                                                    img_dim=self.img_dim
                                                     )
         out_conv = OutputND(self.embed_dim // 2, decode_out_channel, act=decode_out_act, img_dim=self.img_dim)
         return seg_final_layer, seg_final_expanding, out_conv

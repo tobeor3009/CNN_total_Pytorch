@@ -10,7 +10,8 @@ from timm.models.layers import DropPath, to_2tuple
 import numpy as np
 from .nn import zero_module
 from .diffusion_layer import GroupNorm32, QKVAttention, QKVAttentionLegacy
-from .diffusion_layer import apply_embedding, conv_nd
+from .diffusion_layer import PixelShuffle1D, PixelShuffle3D
+from .diffusion_layer import get_conv_nd_fn, conv_nd, conv_transpose_kwarg_dict
 from src.model.inception_resnet_v2.common_module.layers import get_act, get_norm, DEFAULT_ACT, INPLACE
 from src.model.swin_transformer.model_2d.swin_layers import window_partition, window_reverse, check_hasattr_and_init
 from src.model.swin_transformer.model_2d.swin_layers import Mlp, WindowAttention
@@ -20,7 +21,7 @@ from einops import rearrange, repeat
 from functools import partial
 from functools import wraps
 from packaging import version
-
+import itertools
 DEFAULT_ACT = get_act("silu")
 
 def exists(x):
@@ -662,36 +663,46 @@ class PatchMerging(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: rms
     """
 
-    def __init__(self, input_resolution, dim, norm_layer="rms"):
+    def __init__(self, input_resolution, dim, norm_layer="rms", img_dim=2):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+        self.img_multiply = (2 ** img_dim)
+        binary_seq = self.generate_binary_sequences(img_dim)
+        self.slice_tuple_list = self.get_slice_tuple_list(binary_seq)
+        self.reduction = nn.Linear(self.img_multiply * dim, 2 * dim, bias=False)
         self.norm = get_norm_layer(2 * dim, norm_layer)
 
     def forward(self, x):
         """
         x: B, H*W, C
         """
-        H, W = self.input_resolution
+        img_resolution = self.input_resolution
         B, L, C = x.shape
-        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
-        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+        assert L == np.prod(img_resolution), f"input feature has wrong size {L} != {img_resolution}"
+        assert (img_resolution % 2).sum() == 0, f"x size ({img_resolution}) are not even."
 
-        x = x.view(B, H, W, C)
-
-        x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
-        x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
-        x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
-        x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
-        x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
-        x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
+        x = x.view(B, *img_resolution, C)
+        x = [x[slice_tuple] for slice_tuple in self.slice_tuple_list]
+        x = torch.cat(x, -1)  # B H/2 W/2 4*C
+        x = x.view(B, -1, self.img_multiply * C)  # B H/2*W/2 4*C
 
         x = self.reduction(x)
         x = self.norm(x)
-
         return x
 
+    def generate_binary_sequences(self, img_dim):
+        return [tuple(seq) for seq in itertools.product([0, 1], repeat=img_dim)]
+    
+    def get_slice_tuple_list(self, binary_seq):
+        slice_tuple_list = []
+        all_slice = slice(0, None)
+        for slice_start_idx_list in binary_seq:
+            img_slice_tuple = [slice(slice_start_idx, 0, None) for slice_start_idx in slice_start_idx_list]
+            slice_tuple = tuple((all_slice, *img_slice_tuple, all_slice))
+        slice_tuple_list.append(slice_tuple)
+        return slice_tuple_list
+    
     def extra_repr(self) -> str:
         return f"input_resolution={self.input_resolution}, dim={self.dim}"
 
@@ -701,37 +712,95 @@ class PatchMerging(nn.Module):
         flops += H * W * self.dim // 2
         return flops
 
+class PatchExpanding(nn.Module):
+    def __init__(self, input_resolution, dim,
+                 return_vector=True, dim_scale=2,
+                 decode_fn_str="pixel_shuffle", norm_layer="rms", img_dim=2):
+        super().__init__()
+        support_decode_fn_list = ["upsample", "pixel_shuffle", "conv_transpose"]
+        assert decode_fn_str in support_decode_fn_list
+
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.return_vector = return_vector
+        self.dim_scale = dim_scale
+        
+        conv_fn = get_conv_nd_fn(img_dim)
+        upsample_mode = None
+        pixel_shuffle_fn = None
+        conv_transpose_fn = None
+        decode_layer = None
+        if img_dim == 1:
+            upsample_mode = "linear"
+            pixel_shuffle_fn = PixelShuffle1D
+            conv_transpose_fn = nn.ConvTranspose1d
+        elif img_dim == 2:
+            upsample_mode = "bilinear"
+            pixel_shuffle_fn = nn.PixelShuffle
+            conv_transpose_fn = nn.ConvTranspose2d
+        elif img_dim == 3:
+            upsample_mode = "trilinear"
+            pixel_shuffle_fn = PixelShuffle3D
+            conv_transpose_fn = nn.ConvTranspose3d
+
+        if decode_fn_str == "upsample":
+            upsample_conv = conv_fn(dim, dim // 2,
+                                    kernel_size=1, padding=0, bias=False)
+            decode_layer = nn.Sequential(
+                upsample_conv,
+                nn.Upsample(scale_factor=dim_scale, mode=upsample_mode)
+            )
+        elif decode_fn_str == "pixel_shuffle":
+            pixel_conv = conv_fn(dim, dim * (dim_scale ** img_dim) // 2,
+                                    kernel_size=1, padding=0, bias=False)
+            if dim_scale == 1:
+                pixel_shuffle = pixel_conv
+            else:
+                pixel_shuffle = nn.Sequential(
+                                pixel_conv,
+                                pixel_shuffle_fn(upscale_factor=dim_scale)
+                )
+            decode_layer = pixel_shuffle
+        elif decode_fn_str == "conv_transpose":
+            decode_layer = conv_transpose_fn(dim, dim // 2, stride=dim_scale,
+                                             **conv_transpose_kwarg_dict)
+        
+        self.decode_layer = decode_layer
+        self.norm_layer = get_norm_layer(dim // 2, norm_layer)
+
+    def forward(self, x):
+        img_resolution = self.input_resolution
+        permute_tuple = tuple(range(2, 2 + len(img_resolution)))
+        B, L, C = x.shape
+        assert L == np.prod(img_resolution), f"input feature has wrong size {L} != {img_resolution}"
+        assert (img_resolution % 2).sum() == 0, f"x size ({img_resolution}) are not even."
+        x = x.permute(0, 2, 1).view(B, C, *img_resolution)
+        x = self.decode_layer(x)
+        
+        x = x.permute(0, *permute_tuple, 1).view(B, -1, self.dim // 2)
+        x = self.norm_layer(x)
+        if not self.return_vector:
+            x = x.permute(0, 2, 1).view(B, self.dim // 2, *(img_resolution * self.dim_scale))
+        return x
+
 # class PatchExpanding(nn.Module):
 #     def __init__(self, input_resolution, dim,
-#                  return_vector=True, dim_scale=2, 
-#                  decode_fn_str="pixel_shuffle", norm_layer="rms"):
+#                  return_vector=True, dim_scale=2, norm_layer="rms"):
 #         super().__init__()
-#         support_decode_fn_list = ["upsample", "pixel_shuffle", "conv_transpose"]
-#         assert decode_fn_str in support_decode_fn_list
-
 #         self.input_resolution = input_resolution
 #         self.dim = dim
 #         self.return_vector = return_vector
 #         self.dim_scale = dim_scale
         
-        
-#         if decode_fn_str == "upsample":
-            
-#         elif decode_fn_str == "pixel_shuffle":
-#             pixel_conv = nn.Conv2d(dim, dim * (dim_scale ** 2) // 2,
-#                                 kernel_size=1, padding=0, bias=False)
-#             if dim_scale == 1:
-#                 pixel_shuffle = pixel_conv
-#             else:
-#                 pixel_shuffle = nn.Sequential(
-#                                 pixel_conv,
-#                                 nn.PixelShuffle(dim_scale)
-#                 )
-#             decode_layer = pixel_shuffle
-#         elif decode_fn_str == "conv_transpose":
-
-        
-#         self.decode_layer = decode_layer
+#         pixel_conv = nn.Conv2d(dim, dim * (dim_scale ** 2) // 2,
+#                                kernel_size=1, padding=0, bias=False)
+#         if dim_scale == 1:
+#             self.pixel_shuffle = pixel_conv
+#         else:
+#             self.pixel_shuffle = nn.Sequential(
+#                             pixel_conv,
+#                             nn.PixelShuffle(dim_scale)
+#             )
 #         self.norm_layer = get_norm_layer(dim // 2, norm_layer)
 
 #     def forward(self, x):
@@ -749,42 +818,6 @@ class PatchMerging(nn.Module):
 #                                         H * self.dim_scale,
 #                                         W * self.dim_scale)
 #         return x
-
-class PatchExpanding(nn.Module):
-    def __init__(self, input_resolution, dim,
-                 return_vector=True, dim_scale=2, norm_layer="rms"):
-        super().__init__()
-        self.input_resolution = input_resolution
-        self.dim = dim
-        self.return_vector = return_vector
-        self.dim_scale = dim_scale
-        
-        pixel_conv = nn.Conv2d(dim, dim * (dim_scale ** 2) // 2,
-                               kernel_size=1, padding=0, bias=False)
-        if dim_scale == 1:
-            self.pixel_shuffle = pixel_conv
-        else:
-            self.pixel_shuffle = nn.Sequential(
-                            pixel_conv,
-                            nn.PixelShuffle(dim_scale)
-            )
-        self.norm_layer = get_norm_layer(dim // 2, norm_layer)
-
-    def forward(self, x):
-        H, W = self.input_resolution
-        B, L, C = x.shape
-        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
-        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
-        x = x.permute(0, 2, 1).view(B, C, H, W)
-        x = self.pixel_shuffle(x)
-        
-        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
-        x = self.norm_layer(x)
-        if not self.return_vector:
-            x = x.permute(0, 2, 1).view(B, self.dim // 2,
-                                        H * self.dim_scale,
-                                        W * self.dim_scale)
-        return x
     
 class BasicLayerV1(nn.Module):
     """ A basic Swin Transformer layer for one stage.
@@ -808,7 +841,7 @@ class BasicLayerV1(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer="rms", act_layer=DEFAULT_ACT, downsample=None, upsample=None,
+                 drop_path=0., norm_layer="rms", act_layer=DEFAULT_ACT, downsample=None, upsample=None, decode_fn_str="pixel_shuffle",
                  use_checkpoint=False, pretrained_window_size=0, emb_dim_list=[], emb_type_list=[], img_dim=2):
 
         super().__init__()
@@ -828,20 +861,20 @@ class BasicLayerV1(nn.Module):
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
                                  drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
-                                 drop_path=drop_path[i] if isinstance(
-                                     drop_path, list) else drop_path,
+                                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                                  norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(depth)])
         # patch merging layer
         if downsample is not None:
             self.downsample = downsample(input_resolution,
-                                         dim=dim, norm_layer=norm_layer)
+                                         dim=dim, norm_layer=norm_layer, img_dim=img_dim)
         else:
             self.downsample = nn.Identity()
         if upsample is not None:
             self.upsample = upsample(input_resolution,
-                                     dim=dim, norm_layer=norm_layer)
+                                     dim=dim, norm_layer=norm_layer,
+                                     decode_fn_str=decode_fn_str, img_dim=img_dim)
         else:
             self.upsample = nn.Identity()
         self._init_respostnorm()
@@ -875,10 +908,12 @@ class BasicLayerV1(nn.Module):
 class BasicLayerV2(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, downsample=None, upsample=None,
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, downsample=None, upsample=None, decode_fn_str="pixel_shuffle",
                  use_checkpoint=False, pretrained_window_size=0, emb_dim_list=[], emb_type_list=[], img_dim=2):
 
         super().__init__()
+
+        input_resolution = np.array(input_resolution)
         self.dim = dim
         self.input_resolution = input_resolution
         self.depth = depth
@@ -888,22 +923,21 @@ class BasicLayerV2(nn.Module):
         # patch merging layer
         if downsample is not None:
             self.downsample = downsample(input_resolution,
-                                         dim=dim, norm_layer=norm_layer)
+                                         dim=dim, norm_layer=norm_layer, img_dim=img_dim)
             dim *= 2
             num_heads *= 2
             window_size = max(window_size // 2, 2)
-            input_resolution = [input_resolution[0] // 2,
-                                input_resolution[1] // 2]
+            input_resolution = input_resolution // 2
         else:
             self.downsample = nn.Identity()
         if upsample is not None:
             self.upsample = upsample(input_resolution,
-                                     dim=dim, norm_layer=norm_layer)
+                                     dim=dim, norm_layer=norm_layer,
+                                     decode_fn_str=decode_fn_str, img_dim=img_dim)
             dim //= 2
             num_heads = max(num_heads // 2, 1)
             window_size *= 2
-            input_resolution = [input_resolution[0] * 2,
-                                input_resolution[1] * 2]
+            input_resolution = input_resolution * 2
         else:
             self.upsample = nn.Identity()
 
@@ -917,8 +951,7 @@ class BasicLayerV2(nn.Module):
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
                                  drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
-                                 drop_path=drop_path[i] if isinstance(
-                                     drop_path, list) else drop_path,
+                                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                                  norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(depth)])

@@ -37,13 +37,13 @@ def get_time_emb_dim(block_size):
 class InceptionResNetV2_UNet(nn.Module):
     def __init__(self, in_channel=3, cond_channel=3, img_size=256, block_size=8,
                  emb_channel=1024, decode_init_channel=None, block_depth_info="mini",
-                 norm=GroupNorm32, act="silu", num_class_embeds=None, drop_prob=0.0, cond_drop_prob=0.5,
+                 norm=GroupNorm32, act="silu", num_class_embeds=None, drop_prob=0.05, cond_drop_prob=0.5,
                  self_condition=False, use_checkpoint=[False, False, False, False, True],
                  attn_info_list=[None, None, None, None, True], attn_dim_head=32, num_head_list=[1, 1, 1, 1, 1],
-                 diffusion_out_channel=1, diffusion_act=None,
-                 seg_out_channel=2, seg_act="softmax",
+                 diffusion_out_channel=1, diffusion_act=None, diffusion_decode_fn_str_list=["upsample"],
+                 seg_out_channel=2, seg_act="softmax", seg_decode_fn_str_list=["conv_transpose"],
                  class_out_channel=2, class_act="softmax",
-                 recon_out_channel=None, recon_act="tanh",
+                 recon_out_channel=None, recon_act="tanh", recon_decode_fn_str_list=["conv_transpose"],
                  validity_shape=(1, 8, 8), validity_act=None,
                  get_diffusion=False, get_seg=True, get_class=False, get_recon=False, get_validity=False,
                  include_encoder=False, include_latent_net=False, img_dim=2, encoder_img_dim=None):
@@ -179,17 +179,17 @@ class InceptionResNetV2_UNet(nn.Module):
         self.set_encoder()
         if get_diffusion:
             self.diffusion_decoder_list = self.get_decoder(diffusion_out_channel, diffusion_act,
-                                                           decode_fn_str_list=["upsample"], is_diffusion=True)
+                                                           decode_fn_str_list=diffusion_decode_fn_str_list, is_diffusion=True)
         if get_seg:
             self.seg_decoder_list = self.get_decoder(seg_out_channel, seg_act,
-                                                     decode_fn_str_list=["conv_transpose"], is_diffusion=False)
+                                                     decode_fn_str_list=seg_decode_fn_str_list, is_diffusion=False)
         if get_class:
             self.class_head = ClassificationHeadSimple(self.feature_channel,
                                                       class_out_channel, drop_prob, class_act, img_dim)
         if get_recon:
             recon_out_channel = recon_out_channel or in_channel
             self.recon_decoder_list = self.get_decoder(recon_out_channel, recon_act,
-                                                       decode_fn_str_list=["pixel_shuffle"], is_diffusion=False)
+                                                       decode_fn_str_list=recon_decode_fn_str_list, is_diffusion=False)
         if get_validity:
             self.validity_head = self.get_validity_block(validity_shape, validity_act)
 
@@ -200,35 +200,73 @@ class InceptionResNetV2_UNet(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
                 
-    def forward(self, x, t, t_cond=None,
+    def forward(self, x, t=None, t_cond=None,
                 x_start=None, cond=None,
                 x_self_cond=None, class_labels=None, cond_drop_prob=None,
                 infer_diffusion=True):
+        output = None
+        class_emb = self.process_class_emb(x, class_labels, cond_drop_prob)
         
+        if infer_diffusion:
+            output = self._forward_diffusion(x=x, t=t, t_cond=t_cond, x_start=x_start, cond=cond,
+                                             x_self_cond=x_self_cond, class_emb=class_emb)
+        else:
+            output = self._forward_non_diffusion(x=x, class_emb=class_emb)
+        return output
+    
+    def _forward_diffusion(self, x, t, t_cond=None,
+                            x_start=None, cond=None,
+                            x_self_cond=None, class_emb=None):
         output = Return()
         emb_list = []
-
-        if self.get_diffusion and infer_diffusion:
-            time_emb = timestep_embedding(t, self.time_emb_dim_init)
-            time_emb = self.time_mlp(time_emb)
-            emb_list.append(time_emb)
-            # autoencoder original source not used t_cond varaiable
-            if t_cond is None:
-                t_cond = t
-            cond_drop_prob = default(cond_drop_prob, self.cond_drop_prob)
-            batch, device = x.size(0), x.device
-            if self.self_condition:
-                x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
-                x = torch.cat((x_self_cond, x), dim=1)
-            
-            if cond is None and self.include_encoder:
-                assert x.shape == x_start.shape, f"x.shape: {x.shape}, x_start.shape: {x_start.shape}"
-                latent_feature = self.encoder(x_start)
-            else:
-                latent_feature = cond
-            emb_list.append(latent_feature)
-            
+        time_emb = timestep_embedding(t, self.time_emb_dim_init)
+        time_emb = self.time_mlp(time_emb)
+        emb_list.append(time_emb)
+        # autoencoder original source not used t_cond varaiable
+        if t_cond is None:
+            t_cond = t
+        if self.self_condition:
+            x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
+            x = torch.cat((x_self_cond, x), dim=1)
+        
+        if cond is None and self.include_encoder:
+            assert x.shape == x_start.shape, f"x.shape: {x.shape}, x_start.shape: {x_start.shape}"
+            latent_feature = self.encoder(x_start)
+        else:
+            latent_feature = cond
+        emb_list.append(latent_feature)
+        if class_emb is not None:
+            emb_list.append(class_emb)
+        diff_encode_feature, diff_skip_connect_list = self.encode_forward(x, *emb_list)
+        diff_decode_feature = self.decode_forward(self.diffusion_decoder_list, diff_encode_feature, diff_skip_connect_list, *emb_list)
+        output["pred"] = diff_decode_feature
+        return output
+    
+    def _forward_non_diffusion(self, x, class_emb):
+        output = Return()
+        if class_emb is None:
+            non_diffusion_emb_list = []
+        else:
+            non_diffusion_emb_list = [class_emb]
+        encode_feature, skip_connect_list = self.encode_forward(x, *non_diffusion_emb_list)
+        if self.get_seg:
+            seg_decode_feature = self.decode_forward(self.seg_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
+            output["seg_pred"] = seg_decode_feature
+        if self.get_class:
+            class_output = self.class_head(x)
+            output["class_pred"] = class_output
+        if self.get_recon:
+            recon_decode_feature = self.decode_forward(self.recon_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
+            output["recon_pred"] = recon_decode_feature
+        if self.get_validity:
+            validitiy_output = self.validity_head(x)
+            output["validitiy_pred"] = validitiy_output
+        return output
+    
+    def process_class_emb(self, x, class_labels, cond_drop_prob):
+        cond_drop_prob = default(cond_drop_prob, self.cond_drop_prob)
         if self.num_class_embeds is not None:
+            batch, device = x.size(0), x.device
             class_emb = self.class_emb_layer(class_labels).to(dtype=x.dtype)
             if cond_drop_prob > 0:
                 keep_mask = prob_mask_like((batch,), 1 - cond_drop_prob, device=device)
@@ -238,34 +276,10 @@ class InceptionResNetV2_UNet(nn.Module):
                     rearrange(keep_mask, 'b -> b 1'),
                     class_emb, null_classes_emb
                 )
-
             class_emb = self.class_mlp(class_emb)
-            emb_list.append(class_emb)
-            non_diffusion_emb_list = emb_list[-1:]
         else:
-            non_diffusion_emb_list = []
-        
-        if self.get_diffusion and infer_diffusion:
-            diff_encode_feature, diff_skip_connect_list = self.encode_forward(x, *emb_list)
-            diff_decode_feature = self.decode_forward(self.diffusion_decoder_list, diff_encode_feature, diff_skip_connect_list, *emb_list)
-            output["pred"] = diff_decode_feature
-        else:
-            if self.use_non_diffusion:
-                encode_feature, skip_connect_list = self.encode_forward(x_start, *non_diffusion_emb_list)
-                if self.get_seg:
-                    seg_decode_feature = self.decode_forward(self.seg_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
-                    output["seg_pred"] = seg_decode_feature
-                if self.get_class:
-                    class_output = self.class_head(x)
-                    output["class_pred"] = class_output
-                if self.get_recon:
-                    recon_decode_feature = self.decode_forward(self.recon_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
-                    output["recon_pred"] = recon_decode_feature
-                if self.get_validity:
-                    validitiy_output = self.validity_head(x)
-                    output["validitiy_pred"] = validitiy_output
-        return output
-    
+            class_emb = None
+        return class_emb
     def encode_forward(self, x, *args):
         # skip connection name list
         # ["stem_layer_1", "stem_layer_4", "stem_layer_7", "mixed_6a", "mixed_7a"]
