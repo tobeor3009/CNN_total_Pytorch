@@ -222,10 +222,6 @@ class InceptionResNetV2_UNet(nn.Module):
         # autoencoder original source not used t_cond varaiable
         if t_cond is None:
             t_cond = t
-        if self.self_condition:
-            x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
-            x = torch.cat((x_self_cond, x), dim=1)
-        
         time_emb = timestep_embedding(t, self.time_emb_dim_init)
         time_emb = self.time_mlp(time_emb)
         emb_list.append(time_emb)
@@ -237,6 +233,10 @@ class InceptionResNetV2_UNet(nn.Module):
         emb_list.append(latent_feature)
         if class_emb is not None:
             emb_list.append(class_emb)
+        if self.self_condition:
+            x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
+            x = torch.cat((x_self_cond, x), dim=1)
+
         diff_encode_feature, diff_skip_connect_list = self.encode_forward(x, *emb_list)
         diff_decode_feature = self.decode_forward(self.diffusion_decoder_list, diff_encode_feature, diff_skip_connect_list, *emb_list)
         output["pred"] = diff_decode_feature
