@@ -36,14 +36,14 @@ def get_time_emb_dim(block_size):
 
 class InceptionResNetV2_UNet(nn.Module):
     def __init__(self, in_channel=3, cond_channel=3, img_size=256, block_size=8,
-                 emb_channel=1024, decode_init_channel=None, block_depth_info="mini",
+                 emb_channel=1024, decode_init_channel=None, block_depth_info="middle",
                  norm=GroupNorm32, act="silu", num_class_embeds=None, drop_prob=0.05, cond_drop_prob=0.5,
                  self_condition=False, use_checkpoint=[False, False, False, False, True],
                  attn_info_list=[None, None, None, None, True], attn_dim_head=32, num_head_list=[1, 1, 1, 1, 1],
-                 diffusion_out_channel=1, diffusion_act=None, diffusion_decode_fn_str_list=["upsample"],
-                 seg_out_channel=2, seg_act="softmax", seg_decode_fn_str_list=["conv_transpose"],
+                 diffusion_out_channel=1, diffusion_act=None, diffusion_decode_fn_str_list=["conv_transpose", "pixel_shuffle"],
+                 seg_out_channel=2, seg_act="softmax", seg_decode_fn_str_list=["conv_transpose", "pixel_shuffle"],
                  class_out_channel=2, class_act="softmax",
-                 recon_out_channel=None, recon_act="tanh", recon_decode_fn_str_list=["conv_transpose"],
+                 recon_out_channel=None, recon_act="tanh", recon_decode_fn_str_list=["pixel_shuffle"],
                  validity_shape=(1, 8, 8), validity_act=None,
                  get_diffusion=False, get_seg=True, get_class=False, get_recon=False, get_validity=False,
                  include_encoder=False, include_latent_net=False, img_dim=2, encoder_img_dim=None):
