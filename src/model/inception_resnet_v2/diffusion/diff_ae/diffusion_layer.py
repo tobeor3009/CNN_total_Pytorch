@@ -595,22 +595,6 @@ class ResNetBlockND(nn.Module):
         x = self.attn(x)
         return x
 
-class ResNetBlockNDSkip(ResNetBlockND):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def forward(self, x, skip, *args):
-        if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x, skip, *args,
-                              use_reentrant=False)
-        else:
-            return self._forward_impl(x, skip, *args)
-
-    def _forward_impl(self, x, skip, *emb_args):
-        x = torch.cat([x, skip], dim=1)
-        x = super().forward(x, *emb_args)
-        return x
-
 class ConvBlockND(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
@@ -663,18 +647,55 @@ class ConvBlockND(nn.Module):
 
     def forward(self, x, *args):
         if self.use_checkpoint:
-            return checkpoint(self._forward_impl, x, *args,
+            conv_output = checkpoint(self._forward_conv, x, *args,
                               use_reentrant=False)
         else:
-            return self._forward_impl(x, *args)
-
-    def _forward_impl(self, x, *emb_args):
+            conv_output = self._forward_conv(x, *args)
+        attn_output = self._forward_attn(conv_output)
+        return attn_output
+    
+    def _forward_conv(self, x, *emb_args):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list,
                                                 emb_args, self.img_dim)
         x = self.block_1(x, scale_shift_list)
         x = self.attn(x)
         return x
 
+    def _forward_attn(self, x):
+        x = self.attn(x)
+        return x
+
+class ResNetBlockNDSkip(ResNetBlockND):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x, skip, *emb_args):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x, skip, *emb_args,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x, skip, *emb_args)
+
+    def _forward_impl(self, x, skip, *emb_args):
+        x = torch.cat([x, skip], dim=1)
+        x = super().forward(x, *emb_args)
+        return x
+    
+class ConvBlockNDSkip(ConvBlockND):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x, skip, *emb_args):
+        if self.use_checkpoint:
+            return checkpoint(self._forward_impl, x, skip, *emb_args,
+                              use_reentrant=False)
+        else:
+            return self._forward_impl(x, skip, *emb_args)
+
+    def _forward_impl(self, x, skip, *emb_args):
+        x = torch.cat([x, skip], dim=1)
+        x = super().forward(x, *emb_args)
+        return x
 
 class Inception_Resnet_BlockND(nn.Module):
     def __init__(self, in_channels, scale, block_type, block_size=16,
@@ -887,7 +908,7 @@ class MultiDecoderND_V2(nn.Module):
     def __init__(self, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2, dropout_proba=0.0,
                  emb_dim_list=None, emb_type_list=None, attn_info=None, use_checkpoint=False,
-                 image_shape=None, decode_fn_str_list=["pixel_shuffle"], img_dim=2):
+                 image_shape=None, decode_fn_str_list=["pixel_shuffle"], img_dim=2, use_residual_conv=True):
         super().__init__()
 
         support_decode_fn_list = ["upsample", "pixel_shuffle", "conv_transpose"]
@@ -959,8 +980,12 @@ class MultiDecoderND_V2(nn.Module):
             decode_middle_channel += in_channels
 
         self.decode_layer_list = nn.ModuleList(decode_layer_list)
-        self.concat_conv = ResNetBlockND(in_channels=decode_middle_channel,
-                                       out_channels=out_channels, **conv_common_kwarg_dict)
+        if use_residual_conv:
+            conv_block = ResNetBlockND
+        else:
+            conv_block = ConvBlockND
+        self.concat_conv = conv_block(in_channels=decode_middle_channel,
+                                      out_channels=out_channels, **conv_common_kwarg_dict)
     def forward(self, x, *args):
         if self.use_checkpoint:
             return checkpoint(self._forward_impl, x, *args,

@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, einsum
 from collections import namedtuple
-
+from copy import deepcopy
 from torch.utils.checkpoint import checkpoint
 from timm.models.layers import DropPath, to_2tuple
 import numpy as np
@@ -481,8 +481,7 @@ class SwinTransformerBlock(nn.Module):
                                     pretrained_window_size=to_2tuple(pretrained_window_size),
                                     cbp_dim=np.clip(np.prod(input_resolution) // 16, 256, 1024))
 
-        self.drop_path = DropPath(
-            drop_path) if drop_path > 0. else nn.Identity()
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = get_norm_layer(dim, norm_layer)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
@@ -490,19 +489,18 @@ class SwinTransformerBlock(nn.Module):
 
         if self.shift_size > 0:
             # calculate attention mask for SW-MSA
-            H, W = self.input_resolution
-            img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
-            h_slices = (slice(0, -self.window_size),
-                        slice(-self.window_size, -self.shift_size),
-                        slice(-self.shift_size, None))
-            w_slices = (slice(0, -self.window_size),
-                        slice(-self.window_size, -self.shift_size),
-                        slice(-self.shift_size, None))
+            img_mask = torch.zeros((1, *self.input_resolution, 1))  # 1 H W 1
+
+            window_partition_slice = (slice(0, -self.window_size),
+                                    slice(-self.window_size, -self.shift_size),
+                                    slice(-self.shift_size, None))
+            img_size_slice_list = [deepcopy(window_partition_slice) for _ in range(self.input_resolution)]
             cnt = 0
-            for h in h_slices:
-                for w in w_slices:
-                    img_mask[:, h, w, :] = cnt
-                    cnt += 1
+            
+            for img_size_slice in itertools.product(img_size_slice_list):
+                slice_tuple = tuple((slice(None), *img_size_slice, slice(None)))
+                img_mask[slice_tuple] = cnt
+                cnt += 1
 
             # nW, window_size, window_size, 1
             mask_windows = window_partition(img_mask, self.window_size)

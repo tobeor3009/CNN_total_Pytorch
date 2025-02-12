@@ -6,7 +6,8 @@ from torch import nn
 from torch.nn import init
 from .nn import timestep_embedding
 from .diffusion_layer import default, Return
-from .diffusion_layer import ConvBlockND, ResNetBlockND, ResNetBlockNDSkip, MultiDecoderND_V2, OutputND
+from .diffusion_layer import ConvBlockND, ResNetBlockND, OutputND
+from .diffusion_layer import ResNetBlockNDSkip, ConvBlockNDSkip, MultiDecoderND_V2
 from .diffusion_layer import get_maxpool_nd, get_avgpool_nd
 from .diffusion_layer import LinearAttention, Attention, AttentionBlock, MaxPool2d, AvgPool2d, MultiInputSequential
 from .diffusion_layer import default, prob_mask_like, LearnedSinusoidalPosEmb, SinusoidalPosEmb, GroupNorm32
@@ -43,10 +44,10 @@ class InceptionResNetV2_UNet(nn.Module):
                  diffusion_out_channel=1, diffusion_act=None, diffusion_decode_fn_str_list=["conv_transpose", "pixel_shuffle"],
                  seg_out_channel=2, seg_act="softmax", seg_decode_fn_str_list=["conv_transpose", "pixel_shuffle"],
                  class_out_channel=2, class_act="softmax",
-                 recon_out_channel=None, recon_act="tanh", recon_decode_fn_str_list=["pixel_shuffle"],
+                 recon_out_channel=None, recon_act="tanh", recon_decode_fn_str_list=["conv_transpose", "pixel_shuffle"],
                  validity_shape=(1, 8, 8), validity_act=None,
                  get_diffusion=False, get_seg=True, get_class=False, get_recon=False, get_validity=False,
-                 include_encoder=False, include_latent_net=False, img_dim=2, encoder_img_dim=None):
+                 include_encoder=False, include_latent_net=False, img_dim=2, encoder_img_dim=None, use_residual_conv=True):
         super().__init__()
         last_channel_ratio = 1
         self.include_encoder = include_encoder
@@ -69,11 +70,6 @@ class InceptionResNetV2_UNet(nn.Module):
         else:
             block_depth_list = block_depth_info
         self.block_depth_list = block_depth_list
-
-        if norm == nn.RMSNorm:
-            self.image_shape = np.array(tuple(img_size for _ in range(img_dim)))
-        else:
-            self.image_shape = None
 
         # for compability with diffusion_sample
         self.img_size = img_size
@@ -115,6 +111,17 @@ class InceptionResNetV2_UNet(nn.Module):
         self.get_recon = get_recon
         self.get_validity = get_validity
         ##################################
+        if use_residual_conv:
+            conv_block = ResNetBlockND
+            conv_skip_block = ResNetBlockNDSkip
+        else:
+            conv_block = ConvBlockND
+            conv_skip_block = ConvBlockNDSkip
+        self.use_residual_conv = use_residual_conv
+        self.conv_block = conv_block
+        self.conv_skip_block = conv_skip_block
+        self.image_shape = self.get_image_init_shape()
+        ##################################
         emb_dim, time_emb_dim_init, time_emb_dim = get_time_emb_dim(block_size)
         self.time_emb_dim_init = time_emb_dim_init
         emb_dim_list = []
@@ -135,7 +142,8 @@ class InceptionResNetV2_UNet(nn.Module):
                                                                 emb_channel=emb_channel, norm=norm, act=act, last_channel_ratio=last_channel_ratio,
                                                                 use_checkpoint=use_checkpoint, attn_info_list=attn_info_list,
                                                                 attn_dim_head=attn_dim_head, num_head_list=num_head_list,
-                                                                block_depth_info=block_depth_info, img_dim=self.encoder_img_dim)
+                                                                block_depth_info=block_depth_info, img_dim=self.encoder_img_dim,
+                                                                use_residual_conv=use_residual_conv)
                 emb_dim_list.append(emb_channel)
                 emb_type_list.append("cond")
             if self.include_latent_net:
@@ -199,7 +207,7 @@ class InceptionResNetV2_UNet(nn.Module):
             elif isinstance(m, nn.GroupNorm):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
-                
+
     def forward(self, x, t=None, t_cond=None,
                 x_start=None, cond=None,
                 x_self_cond=None, class_labels=None, cond_drop_prob=None,
@@ -381,6 +389,7 @@ class InceptionResNetV2_UNet(nn.Module):
         act = self.act
         use_checkpoint = self.use_checkpoint
         feature_channel = self.feature_channel
+        conv_block = self.conv_block
         # Stem block
         self.stem = self.get_encode_stem()
         # Mixed 5b (Inception-A block):
@@ -403,12 +412,12 @@ class InceptionResNetV2_UNet(nn.Module):
                                                                                           block_size * 130, 4)
         layer_idx = 4
         # attn_info = self.get_attn_info(self.attn_info_list[layer_idx], self.num_head_list[layer_idx])
-        self.encode_final_block1 = ResNetBlockND(block_size * 130, feature_channel, 3,
+        self.encode_final_block1 = conv_block(block_size * 130, feature_channel, 3,
                                       norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=None,
                                       use_checkpoint=use_checkpoint[layer_idx], image_shape=self.get_image_shape(5), img_dim=self.img_dim)
         self.encode_final_attn = self.get_attn_layer(feature_channel, self.num_head_list[layer_idx], self.attn_dim_head[layer_idx],
                                                      True, use_checkpoint=self.use_checkpoint[layer_idx])
-        self.encode_final_block2 = ResNetBlockND(feature_channel, feature_channel, 3,
+        self.encode_final_block2 = conv_block(feature_channel, feature_channel, 3,
                                                 norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=None,
                                                 use_checkpoint=use_checkpoint[layer_idx], image_shape=self.get_image_shape(5), img_dim=self.img_dim)
     
@@ -438,14 +447,15 @@ class InceptionResNetV2_UNet(nn.Module):
 
             if decode_idx > 0:
                 skip_channel = skip_channel_list[4 - decode_idx + 1]
-                decoder_block = ResNetBlockNDSkip(decode_in_channel + skip_channel, decode_block_out_channel,
+                decoder_block = self.conv_skip_block(decode_in_channel + skip_channel, decode_block_out_channel,
                                                   kernel_size=3, stride=1, **common_kwarg_dict)
             else:
-                decoder_block = ResNetBlockND(decode_in_channel, decode_block_out_channel, 
+                decoder_block = self.conv_block(decode_in_channel, decode_block_out_channel,
                                               kernel_size=3, stride=1, **common_kwarg_dict)
 
             decoder_layer_up = MultiDecoderND_V2(decode_block_out_channel, decode_block_out_channel,
-                                                kernel_size=2, decode_fn_str_list=decode_fn_str_list, **common_kwarg_dict)
+                                                kernel_size=2, decode_fn_str_list=decode_fn_str_list,
+                                                use_residual_conv=self.use_residual_conv, **common_kwarg_dict)
             decoder_block_list.append(decoder_block)
             decoder_layer_up_list.append(decoder_layer_up)
         decoder_block_list = nn.ModuleList(decoder_block_list)
@@ -505,6 +515,12 @@ class InceptionResNetV2_UNet(nn.Module):
         else:
             return nn.Identity()
 
+    def get_image_init_shape(self):
+        image_shape = None
+        if (self.norm == nn.RMSNorm) or (self.norm == nn.LayerNorm):
+            image_shape = np.array(tuple(self.img_size for _ in range(self.img_dim)))
+        return image_shape
+    
     def get_image_shape(self, down_level):
         if self.image_shape is None:
             image_shape = None
@@ -519,30 +535,31 @@ class InceptionResNetV2_UNet(nn.Module):
         attn_info_list = self.attn_info_list
         emb_type_list = self.emb_type_list
         common_kwarg_dict = self.get_common_kwarg_dict(use_checkpoint=None, is_diffusion=True)
+        conv_block = self.conv_block
         return nn.ModuleDict({
-            'stem_layer_0_0': ResNetBlockND(in_channel, block_size * 2, 3, stride=1,
+            'stem_layer_0_0': conv_block(in_channel, block_size * 2, 3, stride=1,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
-            'stem_layer_0_1': ResNetBlockND(block_size * 2, block_size * 2, 3, stride=1,
+            'stem_layer_0_1': conv_block(block_size * 2, block_size * 2, 3, stride=1,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
-            'stem_layer_1_0': ResNetBlockND(block_size * 2, block_size * 2, 3, stride=1,
+            'stem_layer_1_0': conv_block(block_size * 2, block_size * 2, 3, stride=1,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
-            'stem_layer_1_1': ResNetBlockND(block_size * 2, block_size * 2, 3, stride=2, padding=self.padding_3x3,
+            'stem_layer_1_1': conv_block(block_size * 2, block_size * 2, 3, stride=2, padding=self.padding_3x3,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
-            'stem_layer_2': ResNetBlockND(block_size * 2, block_size * 2, 3,
+            'stem_layer_2': conv_block(block_size * 2, block_size * 2, 3,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(1), **common_kwarg_dict),
-            'stem_layer_3': ResNetBlockND(block_size * 2, block_size * 4, 3,
+            'stem_layer_3': conv_block(block_size * 2, block_size * 4, 3,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[1], self.attn_dim_head[1]),
                                         use_checkpoint=self.use_checkpoint[1], image_shape=self.get_image_shape(1), **common_kwarg_dict),
             'stem_layer_4': get_maxpool_nd(self.img_dim)(3, stride=2, padding=self.padding_3x3),
-            'stem_layer_5': ResNetBlockND(block_size * 4, block_size * 8, 1,
+            'stem_layer_5': conv_block(block_size * 4, block_size * 8, 1,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[1], self.attn_dim_head[1]),
                                         use_checkpoint=self.use_checkpoint[1], image_shape=self.get_image_shape(2), **common_kwarg_dict),
-            'stem_layer_6': ResNetBlockND(block_size * 8, block_size * 12, 3,
+            'stem_layer_6': conv_block(block_size * 8, block_size * 12, 3,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[2], self.attn_dim_head[2]),
                                         use_checkpoint=self.use_checkpoint[2], image_shape=self.get_image_shape(2), **common_kwarg_dict),
             'stem_layer_7': get_maxpool_nd(self.img_dim)(3, stride=2, padding=self.padding_3x3)
@@ -742,7 +759,7 @@ class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
                  norm=GroupNorm32, act="silu", last_channel_ratio=1,
                  use_checkpoint=False, attn_info_list=[None, False, False, False, True],
                  attn_dim_head=32, num_head_list=[2, 4, 8, 8, 16],
-                 block_depth_info="mini", img_dim=2):
+                 block_depth_info="mini", img_dim=2, use_residual_conv=False):
         super(InceptionResNetV2_UNet, self).__init__()
 
         self.use_inception_block_attn = True
@@ -781,19 +798,22 @@ class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
         self.act_layer = get_act(act)
         self.img_dim = img_dim
         self.feature_channel = get_encode_feature_channel(block_size, last_channel_ratio)
-
-        if norm == nn.RMSNorm or nn.LayerNorm:
-            self.image_shape = np.array(tuple(img_size for _ in range(img_dim)))
+        ##################################
+        if use_residual_conv:
+            conv_block = ResNetBlockND
         else:
-            self.image_shape = None
-
+            conv_block = ConvBlockND
+        self.use_residual_conv = use_residual_conv
+        self.conv_block = conv_block
+        self.image_shape = self.get_image_init_shape()
         ##################################
         self.set_encoder()
-        image_shape = self.get_image_shape(5)
-        if norm == nn.RMSNorm:
+        if self.image_shape is not None:
+            image_shape = self.get_image_shape(5)
             norm_shape = (self.feature_channel, *image_shape)
         else:
             norm_shape = self.feature_channel
+
         self.pool_layer = nn.Sequential(
             self.norm(norm_shape),
             get_act(self.act),

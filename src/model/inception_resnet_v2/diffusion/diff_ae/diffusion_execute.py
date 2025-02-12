@@ -29,6 +29,7 @@ class TargetStepDataset(Dataset):
     def __getitem__(self, idx):
         idx = idx % self.dataset_real_len
         return self.dataset[idx]
+
 class LatentDataset(Dataset):
     def __init__(self, batch_cond):
         self.batch_cond = batch_cond
