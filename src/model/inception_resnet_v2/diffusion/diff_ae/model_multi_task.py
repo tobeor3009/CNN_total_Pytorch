@@ -782,7 +782,7 @@ class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
         self.img_dim = img_dim
         self.feature_channel = get_encode_feature_channel(block_size, last_channel_ratio)
 
-        if norm == nn.RMSNorm:
+        if norm == nn.RMSNorm or nn.LayerNorm:
             self.image_shape = np.array(tuple(img_size for _ in range(img_dim)))
         else:
             self.image_shape = None

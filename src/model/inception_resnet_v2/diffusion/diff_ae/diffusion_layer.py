@@ -444,8 +444,8 @@ def get_scale_shift_list(emb_block_list, emb_type_list, emb_args, img_dim):
     unsqueeze_dim = tuple(1 for _ in range(img_dim))
     scale_shift_list = []
     for emb_block, emb_type, emb in zip(emb_block_list, emb_type_list, emb_args):
-        if emb is None:
-            scale_shift_list.append([0, 0])
+        if (emb_block is None) or (emb is None):
+            scale_shift_list.append([None, None])
         else:
             emb = emb_block(emb)
             emb_shape = emb.shape
@@ -460,7 +460,8 @@ def get_scale_shift_list(emb_block_list, emb_type_list, emb_args, img_dim):
 
 def apply_embedding(x, scale_shift_list, scale_bias=1):
     for scale, shift in scale_shift_list:
-        x = x * (scale_bias + scale) + shift
+        if scale is not None:
+            x = x * (scale_bias + scale) + shift
     return x
 
 class GroupNorm32(nn.GroupNorm):
@@ -498,9 +499,9 @@ class BaseBlockND(nn.Module):
         
         if (not bias) and (norm is not None):
             if image_shape is None:
-                image_shape = in_channels
+                image_shape = out_channels
             else:
-                image_shape = (in_channels, *image_shape)
+                image_shape = (out_channels, *image_shape)
             self.norm_layer = norm(image_shape)
         else:
             self.norm_layer = nn.Identity()
@@ -508,12 +509,12 @@ class BaseBlockND(nn.Module):
         self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=INPLACE)
     
     def forward(self, x, scale_shift_list=[]):
-        norm = self.norm_layer(x)
-        drop = self.dropout_layer(norm)
-        act = self.act_layer(drop)
-        conv = self.conv(act)
-        conv = apply_embedding(conv, scale_shift_list)
-        return conv
+        conv = self.conv(x)
+        norm = self.norm_layer(conv)
+        embedded = apply_embedding(norm, scale_shift_list)
+        act = self.act_layer(embedded)
+        drop = self.dropout_layer(act)
+        return drop
 
 #attn_info.keys = ["emb_type_list", "num_heads", "full_attn"]
 class ResNetBlockND(nn.Module):
@@ -542,6 +543,8 @@ class ResNetBlockND(nn.Module):
             elif emb_type == "nd":
                 emb_block = BaseBlockND(emb_dim, out_channels * 2, kernel_size,
                                         1, padding, norm, groups, act, bias, dropout_proba=0.0, img_dim=img_dim)
+            elif emb_type == "none" or (emb_type is None):
+                emb_block = None
             else:
                 raise NotImplementedError(f"emb_type must be in [seq, cond, nd]")
             emb_block_list.append(emb_block)
@@ -638,6 +641,8 @@ class ConvBlockND(nn.Module):
             elif emb_type == "nd":
                 emb_block = BaseBlockND(emb_dim, out_channels * 2, kernel_size,
                                         1, padding, norm, groups, act, bias, dropout_proba=0.0, img_dim=img_dim)
+            elif emb_type == "none" or (emb_type is None):
+                emb_block = None
             else:
                 raise NotImplementedError(f"emb_type must be in [seq, cond, nd]")
             emb_block_list.append(emb_block)
@@ -990,17 +995,15 @@ class OutputND(nn.Module):
         self.conv_3x3 = conv_fn(in_channels=in_channels,
                                   out_channels=conv_out_channels,
                                   kernel_size=3, padding=1)
-        self.concat_conv = ResNetBlockND(in_channels=conv_out_channels * 2,
+        self.concat_conv = ConvBlockND(in_channels=conv_out_channels * 2,
                                        out_channels=out_channels,
                                       **conv_common_kwarg_dict)
-        self.act = get_act(act)
 
     def forward(self, x):
         conv_5x5 = self.conv_5x5(x)
         conv_3x3 = self.conv_3x3(x)
         output = torch.cat([conv_5x5, conv_3x3], dim=1)
         output = self.concat_conv(output)
-        output = self.act(output)
         return output
 
 class MaxPool1d(nn.MaxPool1d):

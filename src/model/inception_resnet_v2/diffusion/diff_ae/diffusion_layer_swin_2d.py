@@ -9,7 +9,7 @@ from torch.utils.checkpoint import checkpoint
 from timm.models.layers import DropPath, to_2tuple
 import numpy as np
 from .nn import zero_module
-from .diffusion_layer import GroupNorm32, QKVAttention, QKVAttentionLegacy
+from .diffusion_layer import GroupNorm32, QKVAttention, QKVAttentionLegacy, ConvBlockND
 from .diffusion_layer import PixelShuffle1D, PixelShuffle3D
 from .diffusion_layer import get_conv_nd_fn, conv_nd, conv_transpose_kwarg_dict
 from src.model.inception_resnet_v2.common_module.layers import get_act, get_norm, DEFAULT_ACT, INPLACE
@@ -720,6 +720,7 @@ class PatchExpanding(nn.Module):
         support_decode_fn_list = ["upsample", "pixel_shuffle", "conv_transpose"]
         assert decode_fn_str in support_decode_fn_list
 
+        input_resolution = np.array(input_resolution)
         self.input_resolution = input_resolution
         self.dim = dim
         self.return_vector = return_vector
@@ -743,6 +744,7 @@ class PatchExpanding(nn.Module):
             pixel_shuffle_fn = PixelShuffle3D
             conv_transpose_fn = nn.ConvTranspose3d
 
+        middle_dim = 0
         if decode_fn_str == "upsample":
             upsample_conv = conv_fn(dim, dim // 2,
                                     kernel_size=1, padding=0, bias=False)
@@ -750,6 +752,7 @@ class PatchExpanding(nn.Module):
                 upsample_conv,
                 nn.Upsample(scale_factor=dim_scale, mode=upsample_mode)
             )
+            middle_dim += dim // 2
         elif decode_fn_str == "pixel_shuffle":
             pixel_conv = conv_fn(dim, dim * (dim_scale ** img_dim) // 2,
                                     kernel_size=1, padding=0, bias=False)
@@ -761,10 +764,13 @@ class PatchExpanding(nn.Module):
                                 pixel_shuffle_fn(upscale_factor=dim_scale)
                 )
             decode_layer = pixel_shuffle
+            middle_dim += dim // 2
         elif decode_fn_str == "conv_transpose":
             decode_layer = conv_transpose_fn(dim, dim // 2, stride=dim_scale,
                                              **conv_transpose_kwarg_dict)
-        
+            middle_dim += dim // 2
+        self.concat_conv = ConvBlockND(middle_dim, dim // 2, kernel_size=3, stride=1, padding=1, norm=nn.RMSNorm, act="silu",
+                                       bias=False, dropout_proba=0.0, image_shape=input_resolution, img_dim=img_dim)
         self.decode_layer = decode_layer
         self.norm_layer = get_norm_layer(dim // 2, norm_layer)
 
