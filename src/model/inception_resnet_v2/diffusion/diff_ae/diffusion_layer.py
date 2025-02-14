@@ -658,7 +658,6 @@ class ConvBlockND(nn.Module):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list,
                                                 emb_args, self.img_dim)
         x = self.block_1(x, scale_shift_list)
-        x = self.attn(x)
         return x
 
     def _forward_attn(self, x):
