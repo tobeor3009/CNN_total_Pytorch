@@ -24,7 +24,7 @@ def get_skip_connect_channel_list(block_size, mini=False):
                         block_size * 68])
 
 def get_encode_feature_channel(block_size, last_channel_ratio):
-    feature_channel = block_size * 96 * last_channel_ratio
+    feature_channel = block_size * 130 * last_channel_ratio
     return int(round(feature_channel))
 
 def get_time_emb_dim(block_size):
@@ -321,11 +321,11 @@ class InceptionResNetV2_UNet(nn.Module):
         block_8 = self.process_inception_block(self.block_8_mixed, self.block_8_attn, self.block_8_up,
                                                mixed_7a, self.block_scale_list[2], *args)
         # final_output
-        output = self.encode_final_block1(block_8, *args)
-        output = self.encode_final_attn(output)
-        output = self.encode_final_block2(output, *args)
+        # output = self.encode_final_block1(block_8, *args)
+        # output = self.encode_final_attn(output)
+        # output = self.encode_final_block2(output, *args)
 
-        return output, skip_connect_list[::-1]
+        return block_8, skip_connect_list[::-1]
     
     def process_encode_block(self, block, attn, x, *args):
         output = []
@@ -413,14 +413,14 @@ class InceptionResNetV2_UNet(nn.Module):
                                                                                           block_size * 130, 4)
         layer_idx = 4
         # attn_info = self.get_attn_info(self.attn_info_list[layer_idx], self.num_head_list[layer_idx])
-        self.encode_final_block1 = conv_block(block_size * 130, feature_channel, 3,
-                                      norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=None,
-                                      use_checkpoint=use_checkpoint[layer_idx], image_shape=self.get_image_shape(5), img_dim=self.img_dim)
-        self.encode_final_attn = self.get_attn_layer(feature_channel, self.num_head_list[layer_idx], self.attn_dim_head[layer_idx],
-                                                     True, use_checkpoint=self.use_checkpoint[layer_idx])
-        self.encode_final_block2 = conv_block(feature_channel, feature_channel, 3,
-                                                norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=None,
-                                                use_checkpoint=use_checkpoint[layer_idx], image_shape=self.get_image_shape(5), img_dim=self.img_dim)
+        # self.encode_final_block1 = conv_block(block_size * 130, feature_channel, 3,
+        #                               norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=None,
+        #                               use_checkpoint=use_checkpoint[layer_idx], image_shape=self.get_image_shape(5), img_dim=self.img_dim)
+        # self.encode_final_attn = self.get_attn_layer(feature_channel, self.num_head_list[layer_idx], self.attn_dim_head[layer_idx],
+        #                                              True, use_checkpoint=self.use_checkpoint[layer_idx])
+        # self.encode_final_block2 = conv_block(feature_channel, feature_channel, 3,
+        #                                         norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=None,
+        #                                         use_checkpoint=use_checkpoint[layer_idx], image_shape=self.get_image_shape(5), img_dim=self.img_dim)
     
     
     def get_decoder(self, decode_out_channel, decode_out_act, decode_fn_str_list, is_diffusion=False):
@@ -441,7 +441,7 @@ class InceptionResNetV2_UNet(nn.Module):
             decode_block_out_channel = decode_init_channel // (2 ** (decode_idx + 1))
 
             if decode_idx == 0:
-                decode_in_channel = block_size * 96
+                decode_in_channel = self.feature_channel
             else:
                 decode_in_channel = decode_init_channel // (2 ** decode_idx)
 
