@@ -100,6 +100,9 @@ def get_npy_array(path, target_size, data_key, shape, dtype):
 
     return memmap_array, lock_path
 
+def save_dict_as_json(data, json_path, indent=4):
+    with open(json_path, "w", encoding="utf-8") as json_file:
+        json.dump(data, json_file, ensure_ascii=False, indent=indent)
 
 def read_json_as_dict(json_path):
     json_file = open(json_path, encoding="utf-8")
@@ -107,7 +110,6 @@ def read_json_as_dict(json_path):
     json_dict = json.loads(json_str)
 
     return json_dict
-
 
 def find_directory_upwards(target_dir_name):
     # 현재 디렉토리부터 시작합니다.
