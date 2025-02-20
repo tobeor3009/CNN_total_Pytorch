@@ -27,7 +27,7 @@ def render_uncondition(model, x_T, sampler: GaussianSampler, latent_sampler: Gau
             clip_denoised=latent_clip_sample,
         )
         if (cond_mean is not None) and (cond_std is not None):
-            cond = cond * cond_std + cond_mean 
+            cond = cond * cond_std + cond_mean
         # the diffusion on the model
         return sampler.sample(model=model, image_mask_cat_fn=image_mask_cat_fn, image_mask_split_fn=image_mask_split_fn,
                               noise=x_T, model_kwargs={'cond': cond}, clip_denoised=clip_denoised)

@@ -212,10 +212,10 @@ class WindowAttention(nn.Module):
         else:
             self.q_bias = None
             self.v_bias = None
-        self.qkv_drop = ChannelDropout(qkv_drop, inplace=DROPOUT_INPLACE)
+        self.qkv_drop = nn.Dropout(qkv_drop, inplace=DROPOUT_INPLACE)
         self.attn_drop = nn.Dropout(attn_drop, inplace=DROPOUT_INPLACE)
         self.proj = nn.Linear(dim, dim)
-        self.proj_drop = ChannelDropout(proj_drop, inplace=DROPOUT_INPLACE)
+        self.proj_drop = nn.Dropout(proj_drop, inplace=DROPOUT_INPLACE)
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x, mask=None):

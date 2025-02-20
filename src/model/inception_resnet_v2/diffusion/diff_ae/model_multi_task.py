@@ -151,10 +151,10 @@ class InceptionResNetV2_UNet(nn.Module):
                     self.latent_net = include_latent_net
                 else:
                     self.emb_channel = emb_channel
-                    self.latent_net = MLPSkipNet(emb_channel=emb_channel, block_size=block_size, num_time_layers=2, time_last_act=None,
+                    self.latent_net = MLPSkipNet(emb_channel=emb_channel, num_time_layers=2, num_time_emb_channels=64, time_last_act=None,
+                                                activation="silu", use_norm=True, num_hid_channels=1024,
                                                 num_latent_layers=10, latent_last_act=None, latent_dropout=0., latent_condition_bias=1,
-                                                act=act, use_norm=True, skip_layers=[1, 2, 3, 4, 5, 6, 7, 8, 9])
-        
+                                                skip_layers=[1, 2, 3, 4, 5, 6, 7, 8, 9])
         # 1. time embedding is default setting
         # 2. if include_encoder, then add it to emb_dim_list, emb_type_list
         # 2. if num_class_embeds is not None, then add it to emb_dim_list, emb_type_list
@@ -816,8 +816,6 @@ class InceptionResNetV2_Encoder(InceptionResNetV2_UNet):
             norm_shape = self.feature_channel
 
         self.pool_layer = nn.Sequential(
-            self.norm(norm_shape),
-            get_act(self.act),
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(start_dim=1),
             nn.Linear(self.feature_channel, emb_channel)
@@ -841,47 +839,46 @@ class MLPSkipNet(nn.Module):
 
     default MLP for the latent DPM in the paper!
     """
-    def __init__(self, emb_channel, block_size=16, num_time_layers=2, time_last_act=None,
+    def __init__(self, emb_channel, num_time_layers=2, num_time_emb_channels=64, time_last_act=None,
+                 activation="silu", use_norm=True, num_hid_channels=1024,
                  num_latent_layers=10, latent_last_act=None, latent_dropout=0., latent_condition_bias=1,
-                 act="silu", use_norm=True, skip_layers=[1, 2, 3, 4, 5, 6, 7, 8, 9]):
+                 skip_layers=[1, 2, 3, 4, 5, 6, 7, 8, 9]):
         super().__init__()
+        self.num_time_emb_channels = num_time_emb_channels
         self.skip_layers = skip_layers
-        _, time_emb_dim_init, time_emb_dim = get_time_emb_dim(block_size)
-        self.time_emb_dim_init = time_emb_dim_init
-        latent_hid_channels = time_emb_dim * 2
         layers = []
         for i in range(num_time_layers):
             if i == 0:
-                a = time_emb_dim_init
-                b = time_emb_dim
+                a = num_time_emb_channels
+                b = emb_channel
             else:
-                a = time_emb_dim
-                b = time_emb_dim
+                a = emb_channel
+                b = emb_channel
             layers.append(nn.Linear(a, b))
-            if i < num_time_layers - 1:
+            if i < num_time_layers - 1 or (time_last_act is not None):
                 layers.append(get_act(time_last_act))
         self.time_embed = nn.Sequential(*layers)
 
         self.layers = nn.ModuleList([])
         for i in range(num_latent_layers):
             if i == 0:
-                mlp_act = act
-                mlp_norm = use_norm
+                act = activation
+                norm = use_norm
                 cond = True
-                a, b = emb_channel, latent_hid_channels
-                mlp_dropout = latent_dropout
+                a, b = emb_channel, num_hid_channels
+                dropout = latent_dropout
             elif i == num_latent_layers - 1:
-                mlp_act = None
-                mlp_norm = False
+                act = None
+                norm = False
                 cond = False
-                a, b = latent_hid_channels, emb_channel
-                mlp_dropout = 0
+                a, b = num_hid_channels, emb_channel
+                dropout = 0
             else:
-                mlp_act = act
-                mlp_norm = use_norm
+                act = activation
+                norm = use_norm
                 cond = True
-                a, b = latent_hid_channels, latent_hid_channels
-                mlp_dropout = latent_dropout
+                a, b = num_hid_channels, num_hid_channels
+                dropout = latent_dropout
 
             if i in skip_layers:
                 a += emb_channel
@@ -890,17 +887,17 @@ class MLPSkipNet(nn.Module):
                 MLPLNAct(
                     a,
                     b,
-                    norm=mlp_norm,
-                    activation=mlp_act,
-                    cond_channels=time_emb_dim,
+                    norm=norm,
+                    activation=act,
+                    cond_channels=emb_channel,
                     use_cond=cond,
                     condition_bias=latent_condition_bias,
-                    dropout=mlp_dropout,
+                    dropout=dropout,
                 ))
         self.last_act = get_act(latent_last_act)
 
     def forward(self, x, t, **kwargs):
-        t = timestep_embedding(t, self.time_emb_dim_init)
+        t = timestep_embedding(t, self.num_time_emb_channels)
         cond = self.time_embed(t)
         h = x
         for i in range(len(self.layers)):
