@@ -9,6 +9,7 @@ from .diffusion_sampler import GaussianSampler
 from .renderer import render_uncondition, render_condition
 from src.model.train_util.common import _z_normalize, feature_z_normalize, z_normalize
 from tqdm import tqdm
+import random
 
 def identity_cat_fn(x, cond):
     return x
@@ -20,14 +21,18 @@ class TargetStepDataset(Dataset):
     def __init__(self, dataset, batch_size, target_stepsize):
         self.dataset = dataset
         self.dataset_real_len = len(dataset)
+        self.dataset_real_range = range(self.dataset_real_len)
         self.dataset_len = target_stepsize * batch_size
+        self.dataset_quotient = self.dataset_len // self.dataset_real_len
         assert self.dataset_real_len >= len(dataset), "target_stepsize * batch_size is smaller than dataset_real_len"
- 
     def __len__(self):
         return self.dataset_len
 
     def __getitem__(self, idx):
-        idx = idx % self.dataset_real_len
+        if idx // self.dataset_real_len == self.dataset_quotient:
+            idx = random.choice(self.dataset_real_range)
+        else:    
+            idx = idx % self.dataset_real_len
         return self.dataset[idx]
 
 class LatentDataset(Dataset):
