@@ -274,7 +274,7 @@ class SwinMultitask(nn.Module):
             output["recon_pred"] = recon_output
         if self.get_validity:
             validitiy_output = self.validity_head(encoded_feature)
-            output["validitiy_pred"] = validitiy_output
+            output["validity_pred"] = validitiy_output
         return output
     
     def process_class_emb(self, x, class_labels, cond_drop_prob):

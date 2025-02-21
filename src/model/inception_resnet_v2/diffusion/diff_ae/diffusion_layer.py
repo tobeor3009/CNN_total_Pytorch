@@ -70,6 +70,16 @@ def z_normalize(x, eps=1e-5):
     target_dim_tuple = tuple(range(2, x.ndim))
     return _z_normalize(x, target_dim_tuple, eps=eps)
 
+class EmbedSequential(nn.Sequential):
+    """
+    A sequential module that passes timestep embeddings to the children that
+    support it as an extra input.
+    """
+    def forward(self, x, *emb_arg):
+        for layer in self:
+            x = layer(x, *emb_arg)
+        return x
+
 @dataclass
 class Return:
     pred: Optional[torch.Tensor] = None
