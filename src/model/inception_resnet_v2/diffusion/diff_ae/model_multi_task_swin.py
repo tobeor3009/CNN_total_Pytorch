@@ -216,7 +216,7 @@ class SwinMultitask(nn.Module):
         output = None
         class_emb = self.process_class_emb(x, class_labels, cond_drop_prob)
         
-        if infer_diffusion:
+        if infer_diffusion and self.get_diffusion:
             output = self._forward_diffusion(x=x, t=t, t_cond=t_cond, x_start=x_start, cond=cond,
                                              x_self_cond=x_self_cond, class_emb=class_emb)
         else:

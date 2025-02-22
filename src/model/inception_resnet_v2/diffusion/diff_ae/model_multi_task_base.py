@@ -17,13 +17,6 @@ from src.model.inception_resnet_v2.common_module.layers import get_act, get_norm
 from einops import rearrange, repeat
 from .sub_models import MLPSkipNet, Classifier
 
-def get_skip_connect_channel_list(block_size, mini=False):
-    if mini:
-        return np.array([block_size * 2, block_size * 4, block_size * 12])
-    else:
-        return np.array([block_size * 2, block_size * 2, block_size * 4, block_size * 12,
-                        block_size * 68])
-
 def get_encode_feature_channel(block_size, model_depth):
     feature_channel = block_size * (2 ** model_depth)
     return int(round(feature_channel))
@@ -200,7 +193,7 @@ class BasicUNet(nn.Module):
         output = None
         class_emb = self.process_class_emb(x, class_labels, cond_drop_prob)
         
-        if infer_diffusion:
+        if infer_diffusion and self.get_diffusion:
             output = self._forward_diffusion(x=x, t=t, t_cond=t_cond, x_start=x_start, cond=cond,
                                              x_self_cond=x_self_cond, class_emb=class_emb)
         else:
