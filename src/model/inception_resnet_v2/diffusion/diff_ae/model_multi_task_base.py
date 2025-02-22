@@ -529,8 +529,14 @@ class BasicEncoder(BasicUNet):
         else:
             norm_shape = self.feature_channel
 
+        if img_dim == 1:
+            pool_layer = nn.AdaptiveAvgPool1d((1, ))
+        elif img_dim == 2:
+            pool_layer = nn.AdaptiveAvgPool2d((1, 1))
+        elif img_dim == 3:
+            pool_layer = nn.AdaptiveAvgPool3d((1, 1, 1))
         self.pool_layer = nn.Sequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
+            pool_layer,
             nn.Flatten(start_dim=1),
             nn.Linear(self.feature_channel, emb_channel)
         )
