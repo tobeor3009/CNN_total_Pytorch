@@ -369,17 +369,13 @@ class BasicUNet(nn.Module):
 
         layer_idx = -1
         encode_final_block = conv_block(feature_channel, feature_channel, 3,
-                                            norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=None,
+                                            norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, 
+                                            attn_info=get_attn_info(emb_type_list, self.attn_info_list[-1], attn_dim_head),
                                             use_checkpoint=self.use_checkpoint[layer_idx], image_shape=self.get_image_shape(self.model_depth), img_dim=self.img_dim)        
-        encode_final_attn = self.get_attn_layer(feature_channel, self.num_head_list[layer_idx], self.attn_dim_head[layer_idx],
-                                                     True, use_checkpoint=self.use_checkpoint[layer_idx])
-        encode_final_block2 = conv_block(feature_channel, feature_channel, 3,
-                                                norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=None,
-                                                use_checkpoint=self.use_checkpoint[layer_idx], image_shape=self.get_image_shape(self.model_depth), img_dim=self.img_dim)
         
         self.init_block = EmbedSequential(init_block_0, init_block_1)
         self.encode_block_list = nn.ModuleList(encode_block_list)
-        self.encode_final_block = EmbedSequential(encode_final_block, encode_final_attn, encode_final_block2)
+        self.encode_final_block = encode_final_block
 
 
     def get_decoder(self, decode_out_channel, decode_out_act, decode_fn_str_list, is_diffusion=False):
