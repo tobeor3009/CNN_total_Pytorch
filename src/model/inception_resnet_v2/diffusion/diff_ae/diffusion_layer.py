@@ -499,14 +499,14 @@ def get_conv_nd_fn(img_dim):
 
 class BaseBlockND(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
-                 stride=1, padding='same',
-                 norm=nn.LayerNorm, groups=1, act=DEFAULT_ACT, bias=False, dropout_proba=0.0, image_shape=None, img_dim=2):
+                 stride=1, padding='same', norm=nn.LayerNorm, groups=1, act=DEFAULT_ACT, bias=False,
+                 dropout_proba=0.0, attn_layer=nn.Identity(), image_shape=None, img_dim=2):
         super().__init__()
         conv_fn = get_conv_nd_fn(img_dim)
         self.conv = conv_fn(in_channels=in_channels, out_channels=out_channels,
                               kernel_size=kernel_size, stride=stride, padding=padding,
                               groups=groups, bias=bias)
-        
+        self.attn_layer = attn_layer
         if (not bias) and (norm is not None):
             if image_shape is None:
                 image_shape = out_channels
@@ -519,12 +519,13 @@ class BaseBlockND(nn.Module):
         self.dropout_layer = nn.Dropout(p=dropout_proba, inplace=INPLACE)
     
     def forward(self, x, scale_shift_list=[]):
-        conv = self.conv(x)
-        norm = self.norm_layer(conv)
-        embedded = apply_embedding(norm, scale_shift_list)
-        act = self.act_layer(embedded)
-        drop = self.dropout_layer(act)
-        return drop
+        x = self.conv(x)
+        x = apply_embedding(x, scale_shift_list)
+        x = self.attn_layer(x)
+        x = self.norm_layer(x)
+        x = self.act_layer(x)
+        x = self.dropout_layer(x)
+        return x
 
 #attn_info.keys = ["emb_type_list", "num_heads", "full_attn"]
 class ResNetBlockND(nn.Module):
@@ -561,36 +562,34 @@ class ResNetBlockND(nn.Module):
         self.emb_block_list = nn.ModuleList(emb_block_list)
         self.emb_type_list = emb_type_list
 
-        self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
-                                    1, padding, norm, groups, act, bias, dropout_proba=dropout_proba,
-                                    image_shape=image_shape, img_dim=img_dim)
-        self.block_2 = BaseBlockND(out_channels, out_channels, kernel_size,
-                                    stride, padding, norm, groups, act, bias, dropout_proba=dropout_proba, 
-                                    image_shape=image_shape, img_dim=img_dim)
-
         if in_channels != out_channels or stride != 1:
             self.residiual_conv = conv_fn(in_channels, out_channels, 1, stride, bias=False)
         else:
             self.residiual_conv = nn.Identity()
 
         if attn_info is None:
-            self.attn = nn.Identity()
+            attn_layer = nn.Identity()
         elif attn_info["full_attn"] is None:
-            self.attn = nn.Identity()
+            attn_layer = nn.Identity()
         elif attn_info["full_attn"] is True:
-            self.attn = AttentionBlock(out_channels, attn_info["num_heads"], use_checkpoint=use_checkpoint)
+            attn_layer = AttentionBlock(out_channels, attn_info["num_heads"], use_checkpoint=use_checkpoint)
         else:
-            self.attn = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"], use_checkpoint=use_checkpoint)
+            attn_layer = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"], use_checkpoint=use_checkpoint)
 
-
+        self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
+                                    1, padding, norm, groups, act, bias, dropout_proba=dropout_proba,
+                                    image_shape=image_shape, attn_layer=nn.Identity(), img_dim=img_dim)
+        self.block_2 = BaseBlockND(out_channels, out_channels, kernel_size,
+                                    stride, padding, norm, groups, act, bias, dropout_proba=dropout_proba,
+                                    image_shape=image_shape, attn_layer=attn_layer, img_dim=img_dim)
+        
     def forward(self, x, *args):
         if self.use_checkpoint:
             conv_output = checkpoint(self._forward_conv, x, *args,
                               use_reentrant=False)
         else:
             conv_output = self._forward_conv(x, *args)
-        attn_output = self._forward_attn(conv_output)
-        return attn_output
+        return conv_output
     
     def _forward_conv(self, x, *emb_args):
         skip_x = x
@@ -600,11 +599,7 @@ class ResNetBlockND(nn.Module):
         x = self.block_2(x, scale_shift_list)
         x = x + self.residiual_conv(skip_x)
         return x
-
-    def _forward_attn(self, x):
-        x = self.attn(x)
-        return x
-
+    
 class ConvBlockND(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
                  stride=1, padding='same',
@@ -643,17 +638,19 @@ class ConvBlockND(nn.Module):
         self.emb_block_list = nn.ModuleList(emb_block_list)
         self.emb_type_list = emb_type_list
 
+        if attn_info is None:
+            attn_layer = nn.Identity()
+        elif attn_info["full_attn"] is None:
+            attn_layer = nn.Identity()
+        elif attn_info["full_attn"] is True:
+            attn_layer = AttentionBlock(out_channels, attn_info["num_heads"])
+        else:
+            attn_layer = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"])
+        
         self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
                                     stride, padding, norm, groups, act, bias,
-                                    dropout_proba=dropout_proba, image_shape=image_shape, img_dim=img_dim)
-        if attn_info is None:
-            self.attn = nn.Identity()
-        elif attn_info["full_attn"] is None:
-            self.attn = nn.Identity()
-        elif attn_info["full_attn"] is True:
-            self.attn = AttentionBlock(out_channels, attn_info["num_heads"])
-        else:
-            self.attn = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"])
+                                    dropout_proba=dropout_proba, attn_layer=attn_layer,
+                                    image_shape=image_shape, img_dim=img_dim)
 
     def forward(self, x, *args):
         if self.use_checkpoint:
@@ -661,17 +658,12 @@ class ConvBlockND(nn.Module):
                               use_reentrant=False)
         else:
             conv_output = self._forward_conv(x, *args)
-        attn_output = self._forward_attn(conv_output)
-        return attn_output
+        return conv_output
     
     def _forward_conv(self, x, *emb_args):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list,
                                                 emb_args, self.img_dim)
         x = self.block_1(x, scale_shift_list)
-        return x
-
-    def _forward_attn(self, x):
-        x = self.attn(x)
         return x
 
 class ResNetBlockNDSkip(ResNetBlockND):
