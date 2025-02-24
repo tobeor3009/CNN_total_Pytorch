@@ -54,7 +54,7 @@ class InceptionResNetV2_UNet(nn.Module):
         self.include_latent_net = include_latent_net
         self.use_inception_block_attn = True
         if decode_init_channel is None:
-            decode_init_channel = block_size * 24
+            decode_init_channel = block_size * 48
         self.decode_init_channel = decode_init_channel
         if isinstance(block_depth_info, str):
             if block_depth_info == "tiny":
