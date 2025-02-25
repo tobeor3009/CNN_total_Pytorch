@@ -264,8 +264,6 @@ class InceptionResNetV2_UNet(nn.Module):
             non_diffusion_emb_list.append(class_emb)
 
         encode_feature, skip_connect_list = self.encode_forward(x, *non_diffusion_emb_list)
-        for skip_connect in skip_connect_list:
-            print(skip_connect.shape)
         if self.get_seg:
             seg_decode_feature = self.decode_forward(self.seg_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
             output["seg_pred"] = seg_decode_feature
@@ -353,11 +351,8 @@ class InceptionResNetV2_UNet(nn.Module):
     def decode_forward(self, decoder_list, encode_feature, skip_connect_list, *args):
         decode_block_list, decode_layer_up_list, deocde_final_skip_conv, decode_final_conv = decoder_list
         decode_feature = encode_feature
-        for skip in skip_connect_list:
-            print(skip.shape)
         for decode_idx, (decode_block, decode_layer_up) in enumerate(zip(decode_block_list, decode_layer_up_list)):
             skip = skip_connect_list[decode_idx]
-            print(decode_feature.shape, skip.shape)
             decode_feature = decode_block(decode_feature, skip, *args)
             decode_feature = decode_layer_up(decode_feature, *args)
         decode_feature = deocde_final_skip_conv(decode_feature, skip_connect_list[-1])
