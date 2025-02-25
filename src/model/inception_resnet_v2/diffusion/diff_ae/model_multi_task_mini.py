@@ -38,7 +38,7 @@ def get_time_emb_dim(block_size):
 class InceptionResNetV2_UNet(nn.Module):
     def __init__(self, in_channel=3, cond_channel=3, img_size=256, block_size=8,
                  emb_channel=1024, decode_init_channel=None, block_depth_info="middle",
-                 norm=GroupNorm32, act="silu", num_class_embeds=None, drop_prob=0.05, cond_drop_prob=0.5,
+                 norm=GroupNorm32, act="silu", num_class_embeds=None, drop_prob=0.2, cond_drop_prob=0.5,
                  self_condition=False, use_checkpoint=[False, False, False, ],
                  attn_info_list=[None, None, True], attn_dim_head=32, num_head_list=[1, 1, 1],
                  diffusion_out_channel=1, diffusion_act=None, diffusion_decode_fn_str_list=["conv_transpose", "pixel_shuffle"],
