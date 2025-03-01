@@ -79,7 +79,7 @@ def get_act(act):
     elif act == "tanh":
         act = torch.tanh
     elif act == "softmax":
-        act = partial(torch.softmax, dim=1)
+        act = nn.Softmax(dim=1)
     elif act is None:
         act = nn.Identity()
     else:

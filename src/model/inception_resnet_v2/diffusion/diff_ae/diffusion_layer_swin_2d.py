@@ -75,11 +75,11 @@ def window_partition(x, window_size_tuple):
     B, *img_size_list, C = x.shape
     img_dim = len(img_size_list)
     permute_tuple = tuple(closed_form_sequence(n, img_dim) for n in range(0, img_dim * 2))
-    view_tuple = tuple(item for img_size, window_size in zip(img_size_list, window_size_tuple) 
+    view_tuple = tuple(item for img_size, window_size in zip(img_size_list, window_size_tuple)
                       for item in (img_size // window_size, window_size))
     x = x.view(B, *view_tuple, C)
     windows = x.permute(0, *permute_tuple, -1).contiguous()
-    windows = windows.view(-1, window_size_tuple, C)
+    windows = windows.view(-1, *window_size_tuple, C)
     return windows
 
 def window_reverse(windows, window_size_tuple, img_resolution):
@@ -632,15 +632,16 @@ class SwinTransformerBlock(nn.Module):
         self.dim = dim
         self.input_resolution = np.array(input_resolution)
         self.num_heads = num_heads
+        self.shift_size = shift_size
         self.window_size_tuple = _ntuple(img_dim)(window_size)
         self.shift_size_tuple = _ntuple(img_dim)(shift_size)
         self.shift_dim_tuple = tuple(range(1, img_dim + 1))
         self.mlp_ratio = mlp_ratio
         if min(self.input_resolution) <= window_size:
             # if window size is larger than input resolution, we don't partition windows
-            self.shift_size = 0
-            self.window_size = min(self.input_resolution)
-        assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
+            self.window_size_tuple = _ntuple(img_dim)(min(self.input_resolution))
+            self.shift_size_tuple = _ntuple(img_dim)(0)
+        assert 0 <= min(self.shift_size_tuple) < min(self.window_size_tuple), "shift_size must in 0-window_size"
 
         self.norm1 = get_norm_layer(dim, norm_layer)
         if img_dim == 1:
@@ -674,10 +675,9 @@ class SwinTransformerBlock(nn.Module):
             window_partition_slice = (slice(0, -window_size),
                                     slice(-window_size, -shift_size),
                                     slice(-shift_size, None))
-            img_size_slice_list = [deepcopy(window_partition_slice) for _ in range(self.input_resolution)]
+            img_size_slice_list = [deepcopy(window_partition_slice) for _ in self.input_resolution]
             cnt = 0
-            
-            for img_size_slice in itertools.product(img_size_slice_list):
+            for img_size_slice in itertools.product(*img_size_slice_list):
                 slice_tuple = tuple((slice(None), *img_size_slice, slice(None)))
                 img_mask[slice_tuple] = cnt
                 cnt += 1
@@ -690,7 +690,6 @@ class SwinTransformerBlock(nn.Module):
                 attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
         else:
             attn_mask = None
-
         self.register_buffer("attn_mask", attn_mask)
 
     def forward(self, x, scale_shift_list=[]):
@@ -857,11 +856,11 @@ class PatchMerging(nn.Module):
     
     def get_slice_tuple_list(self, binary_seq):
         slice_tuple_list = []
-        all_slice = slice(0, None)
+        all_slice = slice(None, None)
         for slice_start_idx_list in binary_seq:
-            img_slice_tuple = [slice(slice_start_idx, 0, None) for slice_start_idx in slice_start_idx_list]
+            img_slice_tuple = [slice(slice_start_idx, None, 2) for slice_start_idx in slice_start_idx_list]
             slice_tuple = tuple((all_slice, *img_slice_tuple, all_slice))
-        slice_tuple_list.append(slice_tuple)
+            slice_tuple_list.append(slice_tuple)
         return slice_tuple_list
     
     def extra_repr(self) -> str:
@@ -1006,21 +1005,23 @@ class BasicLayerV1(nn.Module):
             self.downsample = downsample(input_resolution,
                                          dim=dim, norm_layer=norm_layer, img_dim=img_dim)
         else:
-            self.downsample = nn.Identity()
+            self.downsample = None
         if upsample is not None:
             self.upsample = upsample(input_resolution,
                                      dim=dim, norm_layer=norm_layer,
                                      decode_fn_str=decode_fn_str, img_dim=img_dim)
         else:
-            self.upsample = nn.Identity()
+            self.upsample = None
         self._init_respostnorm()
 
     def forward(self, x, *emb_args):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
         for blk in self.blocks:
             x = process_checkpoint_block(self.use_checkpoint, blk, x, scale_shift_list)
-        x = process_checkpoint_block(self.use_checkpoint, self.downsample, x)
-        x = process_checkpoint_block(self.use_checkpoint, self.upsample, x)
+        if self.downsample is not None:
+            x = process_checkpoint_block(self.use_checkpoint, self.downsample, x)
+        elif self.upsample is not None:
+            x = process_checkpoint_block(self.use_checkpoint, self.upsample, x)
         return x
 
     def extra_repr(self) -> str:
@@ -1065,7 +1066,7 @@ class BasicLayerV2(nn.Module):
             window_size = max(window_size // 2, 2)
             input_resolution = input_resolution // 2
         else:
-            self.downsample = nn.Identity()
+            self.downsample = None
         if upsample is not None:
             self.upsample = upsample(input_resolution,
                                      dim=dim, norm_layer=norm_layer,
@@ -1075,7 +1076,7 @@ class BasicLayerV2(nn.Module):
             window_size *= 2
             input_resolution = input_resolution * 2
         else:
-            self.upsample = nn.Identity()
+            self.upsample = None
 
         self.emb_block_list = get_emb_block_list(act_layer, emb_dim_list, emb_type_list, dim)
         self.emb_type_list = emb_type_list
@@ -1094,8 +1095,10 @@ class BasicLayerV2(nn.Module):
         self._init_respostnorm()
     def forward(self, x, *emb_args):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
-        x = process_checkpoint_block(self.use_checkpoint, self.downsample, x)
-        x = process_checkpoint_block(self.use_checkpoint, self.upsample, x)
+        if self.downsample is not None:
+            x = process_checkpoint_block(self.use_checkpoint, self.downsample, x)
+        elif self.upsample is not None:
+            x = process_checkpoint_block(self.use_checkpoint, self.upsample, x)
         for blk in self.blocks:
             x = process_checkpoint_block(self.use_checkpoint, blk, x, scale_shift_list)
         return x
@@ -1121,7 +1124,7 @@ class BasicLayerV2(nn.Module):
 class BasicDecodeLayer(nn.Module):
     def __init__(self, dim, skip_dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, upsample=None,
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, upsample=None, decode_fn_str="pixel_shuffle",
                  use_checkpoint=False, pretrained_window_size=0, emb_dim_list=[], emb_type_list=[], img_dim=2):
 
         super().__init__()
@@ -1131,10 +1134,7 @@ class BasicDecodeLayer(nn.Module):
         self.use_checkpoint = use_checkpoint
         before_depth = depth // 2
         after_depth = depth - before_depth
-        # patch merging layer
-        assert upsample is not None
-        self.upsample = upsample(input_resolution,
-                                    dim=dim, norm_layer=norm_layer)
+
         self.blocks_before_skip = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
@@ -1147,11 +1147,16 @@ class BasicDecodeLayer(nn.Module):
                                  norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(before_depth)])
-        dim //= 2
-        num_heads = max(num_heads // 2, 1)
-        window_size *= 2
-        input_resolution = [input_resolution[0] * 2,
-                            input_resolution[1] * 2]
+        if upsample is not None:
+            self.upsample = upsample(input_resolution,
+                                    dim=dim, norm_layer=norm_layer,
+                                    decode_fn_str=decode_fn_str, img_dim=img_dim)
+            dim //= 2
+            num_heads = max(num_heads // 2, 1)
+            window_size *= 2
+            input_resolution = input_resolution * 2
+        else:
+            self.upsample = None
 
         self.emb_block_list = get_emb_block_list(act_layer, emb_dim_list, emb_type_list, dim)
         self.emb_type_list = emb_type_list
@@ -1169,14 +1174,16 @@ class BasicDecodeLayer(nn.Module):
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
                                  norm_layer=norm_layer, act_layer=act_layer,
-                                 pretrained_window_size=pretrained_window_size)
+                                 pretrained_window_size=pretrained_window_size,
+                                 img_dim=img_dim)
             for i in range(after_depth)])
         self._init_respostnorm()
     def forward(self, x, skip, *emb_args):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
         for blk in self.blocks_before_skip:
             x = process_checkpoint_block(self.use_checkpoint, blk, x, scale_shift_list)
-        x = process_checkpoint_block(self.use_checkpoint, self.upsample, x)
+        if self.upsample is not None:
+            x = process_checkpoint_block(self.use_checkpoint, self.upsample, x)
         x = torch.cat([x, skip], dim=-1)
         x = self.mlp_after_skip(x)
         for blk in self.blocks_after_skip:
@@ -1244,5 +1251,3 @@ class AttentionPool1d(nn.Module):
             need_weights=False
         )
         return x.squeeze(0)
-
-

@@ -5,7 +5,7 @@ from functools import partial
 from torch import nn
 from einops.layers.torch import Rearrange
 from .nn import timestep_embedding
-from .diffusion_layer import OutputND, ConvBlockND, Return
+from .diffusion_layer import OutputND, ConvBlockND, Return, GroupNorm32
 from src.model.swin_transformer.model_2d.swin_layers import Mlp
 from .diffusion_layer_swin_2d import AttentionPool1d, RMSNorm, AttentionBlock
 from .diffusion_layer_swin_2d import BasicLayerV1, BasicLayerV2, MeanBN2BC
@@ -175,15 +175,18 @@ class SwinMultitask(nn.Module):
         ###################### Define Parts ########################
         if get_diffusion:
             self.diff_decode_layers = self.get_decode_layers(decode_fn_str=diffusion_decode_fn_str, is_diffusion=True)
-            self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv = self.get_decode_final_layers(diffusion_out_channel, diffusion_out_act, is_diffusion=True)
+            diffusion_layer_list = self.get_decode_final_layers(diffusion_out_channel, diffusion_out_act, is_diffusion=True)
+            self.diffusion_layer_list = nn.ModuleList(diffusion_layer_list)
         if get_seg:
             self.seg_decode_layers = self.get_decode_layers(decode_fn_str=seg_decode_fn_str)
-            self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv = self.get_decode_final_layers(seg_out_channel, seg_out_act)
+            seg_layer_list = self.get_decode_final_layers(seg_out_channel, seg_out_act)
+            self.seg_layer_list = nn.ModuleList(seg_layer_list)
         if get_class:
             self.class_head = self.get_class_head(num_classes, class_act)
         if get_recon:
             self.recon_decode_layers = self.get_decode_layers(decode_fn_str=recon_decode_fn_str)
-            self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv = self.get_decode_final_layers(in_channel, recon_act)
+            recon_layer_list = self.get_decode_final_layers(in_channel, recon_act)
+            self.recon_layer_list = nn.ModuleList(recon_layer_list)
         if get_validity:
             self.validity_dim = int(embed_dim * (2 ** self.num_layers))
             self.validity_head = self.get_validity_head(validity_shape, validity_act)
@@ -245,32 +248,33 @@ class SwinMultitask(nn.Module):
         diff_feature, diff_skip_connect_list = self.process_encode_layers(x, emb_list)
         diff_feature = self.process_mid_layers(diff_feature, emb_list)
         diff_output = self.process_decode_layers(diff_feature, self.diff_decode_layers,
-                                                 self.diff_final_layer, self.diff_final_expanding, self.diff_out_conv,
-                                                 diff_skip_connect_list, emb_list)
+                                                 self.diffusion_layer_list, diff_skip_connect_list, emb_list)
         output["pred"] = diff_output
         return output
 
     def _forward_non_diffusion(self, x, class_emb):
         output = Return()
-        if class_emb is None:
-            non_diffusion_emb_list = []
+        non_diffusion_emb_list = [None]
+        if self.include_encoder:
+            latent_feature = self.encoder(x)
+            non_diffusion_emb_list.append(latent_feature)
         else:
-            non_diffusion_emb_list = [class_emb]
+            non_diffusion_emb_list.append(None)
+        if class_emb is None:
+            non_diffusion_emb_list.append(class_emb)
 
         encoded_feature, skip_connect_list = self.process_encode_layers(x, non_diffusion_emb_list)
         encoded_feature = self.process_mid_layers(encoded_feature, non_diffusion_emb_list)
         if self.get_seg:
             seg_output = self.process_decode_layers(encoded_feature, self.seg_decode_layers,
-                                                    self.seg_final_layer, self.seg_final_expanding, self.seg_out_conv,
-                                                    skip_connect_list, non_diffusion_emb_list)
+                                                    self.seg_layer_list, skip_connect_list, non_diffusion_emb_list)
             output["seg_pred"] = seg_output
         if self.get_class:
             class_output = self.class_head(encoded_feature)
             output["class_pred"] = class_output
         if self.get_recon:
             recon_output = self.process_decode_layers(encoded_feature, self.recon_decode_layers,
-                                                    self.recon_final_layer, self.recon_final_expanding, self.recon_out_conv,
-                                                    skip_connect_list, non_diffusion_emb_list)
+                                                    self.recon_layer_list, skip_connect_list, non_diffusion_emb_list)
             output["recon_pred"] = recon_output
         if self.get_validity:
             validitiy_output = self.validity_head(encoded_feature)
@@ -318,13 +322,14 @@ class SwinMultitask(nn.Module):
         return x
 
     def process_decode_layers(self, x, decode_layers,
-                              decode_final_layer, decode_final_expanding, decode_out_conv,
-                              skip_connect_list, emb_list=[]):
+                              decode_layer_list, skip_connect_list, emb_list=[]):
+        decode_final_layer_1, decode_final_layer_2, decode_final_expanding, decode_out_conv = decode_layer_list
         for decode_idx, decode_layer in enumerate(decode_layers, start=0):
             skip_x = skip_connect_list[decode_idx]
             x = decode_layer(x, skip_x, *emb_list)
 
-        x = decode_final_layer(x, *emb_list)
+        x = decode_final_layer_1(x, skip_connect_list[-1], *emb_list)
+        x = decode_final_layer_2(x, *emb_list)
         x = decode_final_expanding(x)
         x = decode_out_conv(x)
         return x
@@ -407,17 +412,18 @@ class SwinMultitask(nn.Module):
         
         i_layer = 0
         common_kwarg_dict = self.get_layer_config_dict(self.embed_dim, self.patches_resolution, i_layer, is_diffusion)
-        seg_final_layer = BasicLayerV1(**common_kwarg_dict)
-        seg_final_expanding = PatchExpanding(input_resolution=self.patches_resolution,
+        decode_final_layer_1 = BasicDecodeLayer(skip_dim=self.embed_dim, upsample=None, **common_kwarg_dict)
+        decode_final_layer_2 = BasicLayerV1(**common_kwarg_dict)
+        decode_final_expanding = PatchExpanding(input_resolution=self.patches_resolution,
                                                     dim=self.embed_dim,
                                                     return_vector=False,
                                                     dim_scale=self.patch_size,
                                                     norm_layer=self.norm_layer,
-                                                    ecode_fn_str="pixel_shuffle",
+                                                    decode_fn_str="pixel_shuffle",
                                                     img_dim=self.img_dim
                                                     )
-        out_conv = OutputND(self.embed_dim // 2, decode_out_channel, act=decode_out_act, img_dim=self.img_dim)
-        return seg_final_layer, seg_final_expanding, out_conv
+        decode_out_conv = OutputND(self.embed_dim // 2, decode_out_channel, act=decode_out_act, img_dim=self.img_dim)
+        return decode_final_layer_1, decode_final_layer_2, decode_final_expanding, decode_out_conv
     
     def get_class_head(self, num_classes, class_act):
         feature_dim = self.feature_dim
@@ -450,7 +456,7 @@ class SwinMultitask(nn.Module):
         elif self.img_dim == 3:
             pool_layer = nn.AdaptiveAvgPool3d
         validity_conv = ConvBlockND(in_channels=self.feature_dim, out_channels=validity_shape[0],
-                                    kernel_size=3, stride=1, padding=1, norm="group", act=self.model_act_layer, 
+                                    kernel_size=3, stride=1, padding=1, norm=GroupNorm32, act=self.model_act_layer,
                                     dropout_proba=self.drop_rate)
         validity_avg_pool = pool_layer(validity_shape[1:])
         validity_head = nn.Sequential(
