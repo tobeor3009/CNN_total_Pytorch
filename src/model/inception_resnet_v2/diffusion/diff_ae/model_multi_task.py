@@ -20,7 +20,7 @@ def get_skip_connect_channel_list(block_size, mini=False):
     if mini:
         return np.array([block_size * 2, block_size * 4, block_size * 12])
     else:
-        return np.array([block_size * 4, block_size * 4, block_size * 12,
+        return np.array([block_size * 8, block_size * 8, block_size * 12,
                         block_size * 68, block_size * 130])
 
 def get_encode_feature_channel(block_size, last_channel_ratio):
@@ -522,26 +522,26 @@ class InceptionResNetV2_UNet(nn.Module):
         common_kwarg_dict = self.get_common_kwarg_dict(use_checkpoint=None, is_diffusion=True)
         conv_block = self.conv_block
         return nn.ModuleDict({
-            'stem_layer_0_0': conv_block(in_channel, block_size * 4, 3, stride=1,
+            'stem_layer_0_0': conv_block(in_channel, block_size * 8, 3, stride=1,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
-            'stem_layer_0_1': conv_block(block_size * 4, block_size * 4, 3, stride=1,
+            'stem_layer_0_1': conv_block(block_size * 8, block_size * 8, 3, stride=1,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
-            'stem_layer_1_0': conv_block(block_size * 4, block_size * 4, 3, stride=1,
+            'stem_layer_1_0': conv_block(block_size * 8, block_size * 8, 3, stride=1,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
-            'stem_layer_1_1': conv_block(block_size * 4, block_size * 4, 3, stride=2, padding=self.padding_3x3,
+            'stem_layer_1_1': conv_block(block_size * 8, block_size * 8, 3, stride=2, padding=self.padding_3x3,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
-            'stem_layer_2': conv_block(block_size * 4, block_size * 4, 3,
+            'stem_layer_2': conv_block(block_size * 8, block_size * 8, 3,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(1), **common_kwarg_dict),
-            'stem_layer_3': conv_block(block_size * 4, block_size * 4, 3,
+            'stem_layer_3': conv_block(block_size * 8, block_size * 8, 3,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[1], self.attn_dim_head[1]),
                                         use_checkpoint=self.use_checkpoint[1], image_shape=self.get_image_shape(1), **common_kwarg_dict),
             'stem_layer_4': get_maxpool_nd(self.img_dim)(3, stride=2, padding=self.padding_3x3),
-            'stem_layer_5': conv_block(block_size * 4, block_size * 8, 1,
+            'stem_layer_5': conv_block(block_size * 8, block_size * 8, 1,
                                         attn_info=get_attn_info(emb_type_list, attn_info_list[1], self.attn_dim_head[1]),
                                         use_checkpoint=self.use_checkpoint[1], image_shape=self.get_image_shape(2), **common_kwarg_dict),
             'stem_layer_6': conv_block(block_size * 8, block_size * 12, 3,
