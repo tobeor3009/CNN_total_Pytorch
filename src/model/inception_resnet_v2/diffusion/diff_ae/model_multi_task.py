@@ -7,7 +7,7 @@ from torch.nn import init
 from .nn import timestep_embedding
 from .diffusion_layer import default, Return
 from .diffusion_layer import ConvBlockND, ResNetBlockND, OutputND
-from .diffusion_layer import ResNetBlockNDSkip, ConvBlockNDSkip, MultiDecoderND_V2
+from .diffusion_layer import ResNetBlockNDSkip, ConvBlockNDSkip, MultiDecoderND_V3
 from .diffusion_layer import get_maxpool_nd, get_avgpool_nd
 from .diffusion_layer import LinearAttention, Attention, AttentionBlock, MaxPool2d, AvgPool2d, MultiInputSequential
 from .diffusion_layer import default, prob_mask_like, LearnedSinusoidalPosEmb, SinusoidalPosEmb, GroupNorm32
@@ -20,7 +20,7 @@ def get_skip_connect_channel_list(block_size, mini=False):
     if mini:
         return np.array([block_size * 2, block_size * 4, block_size * 12])
     else:
-        return np.array([block_size * 8, block_size * 8, block_size * 12,
+        return np.array([block_size * 8, block_size * 8, block_size * 8, block_size * 12,
                         block_size * 68, block_size * 130])
 
 def get_encode_feature_channel(block_size, last_channel_ratio):
@@ -349,13 +349,12 @@ class InceptionResNetV2_UNet(nn.Module):
         return x
         
     def decode_forward(self, decoder_list, encode_feature, skip_connect_list, *args):
-        decode_block_list, decode_layer_up_list, deocde_final_skip_conv, decode_final_conv = decoder_list
+        decode_layer_up_list, decode_block_list, decode_final_conv = decoder_list
         decode_feature = encode_feature
-        for decode_idx, (decode_block, decode_layer_up) in enumerate(zip(decode_block_list, decode_layer_up_list)):
-            skip = skip_connect_list[decode_idx]
-            decode_feature = decode_block(decode_feature, skip, *args)
-            decode_feature = decode_layer_up(decode_feature, *args)
-        decode_feature = deocde_final_skip_conv(decode_feature, skip_connect_list[-1])
+        for decode_idx, (decode_layer_up, decode_block) in enumerate(zip(decode_layer_up_list, decode_block_list)):
+            skip = skip_connect_list[decode_idx + 1]
+            decode_feature = decode_layer_up(decode_feature, skip, *args)
+            decode_feature = decode_block(decode_feature, *args)
         decode_feature = decode_final_conv(decode_feature)
         return decode_feature
     
@@ -419,12 +418,12 @@ class InceptionResNetV2_UNet(nn.Module):
         num_head_list = self.num_head_list
         use_checkpoint = self.use_checkpoint
 
-        decoder_block_list = []
         decoder_layer_up_list = []
-        for decode_idx, skip_channel in enumerate(self.skip_channel_list):
-            attn_info = self.get_attn_info(attn_info_list[3 - decode_idx], num_head_list[3 - decode_idx])
-            common_kwarg_dict = self.get_common_kwarg_dict(use_checkpoint=use_checkpoint[3 - decode_idx], is_diffusion=is_diffusion)
-            common_kwarg_dict["image_shape"] = self.get_image_shape(4 - decode_idx)
+        decoder_block_list = []
+        for decode_idx, skip_channel in enumerate(range(self.model_depth)):
+            attn_info = self.get_attn_info(attn_info_list[4 - decode_idx], num_head_list[4 - decode_idx])
+            common_kwarg_dict = self.get_common_kwarg_dict(use_checkpoint=use_checkpoint[4 - decode_idx], is_diffusion=is_diffusion)
+            common_kwarg_dict["image_shape"] = self.get_image_shape(5 - decode_idx)
             decode_block_out_channel = decode_init_channel // (2 ** (decode_idx + 1))
 
             if decode_idx == 0:
@@ -432,22 +431,19 @@ class InceptionResNetV2_UNet(nn.Module):
             else:
                 decode_in_channel = decode_init_channel // (2 ** decode_idx)
 
-            skip_channel = self.skip_channel_list[-(decode_idx + 1)]
-            decoder_block = self.conv_skip_block(decode_in_channel + skip_channel, decode_block_out_channel,
-                                                kernel_size=3, stride=1, **common_kwarg_dict)
-            decoder_layer_up = MultiDecoderND_V2(decode_block_out_channel, decode_block_out_channel, 
-                                                kernel_size=2, decode_fn_str_list=decode_fn_str_list, attn_info=attn_info,
-                                                use_residual_conv=self.use_residual_conv, **common_kwarg_dict)
-            decoder_block_list.append(decoder_block)
+            skip_channel = self.skip_channel_list[-(decode_idx + 2)]
+            decoder_layer_up = MultiDecoderND_V3(decode_in_channel, skip_channel, decode_block_out_channel,
+                                                kernel_size=2, decode_fn_str_list=decode_fn_str_list,
+                                                use_residual_conv=self.use_residual_conv, attn_info=attn_info, **common_kwarg_dict)
+            decoder_block = self.conv_block(decode_block_out_channel, decode_block_out_channel,
+                                            kernel_size=3, stride=1, **common_kwarg_dict)
             decoder_layer_up_list.append(decoder_layer_up)
-        decoder_block_list = nn.ModuleList(decoder_block_list)
+            decoder_block_list.append(decoder_block)
         decoder_layer_up_list = nn.ModuleList(decoder_layer_up_list)
-        skip_channel = self.skip_channel_list[0]
-        decode_final_skip_conv = self.conv_skip_block(decode_block_out_channel + skip_channel, decode_block_out_channel,
-                                                  kernel_size=3, stride=1, **common_kwarg_dict)
+        decoder_block_list = nn.ModuleList(decoder_block_list)
         decode_final_conv = OutputND(decode_block_out_channel, decode_out_channel,
                                      act=decode_out_act, img_dim=self.img_dim)
-        return nn.ModuleList([decoder_block_list, decoder_layer_up_list, decode_final_skip_conv, decode_final_conv])
+        return nn.ModuleList([decoder_layer_up_list, decoder_block_list, decode_final_conv])
 
     def get_validity_block(self, validity_shape, validity_act):
         validity_init_channel = self.block_size * 32
