@@ -204,11 +204,16 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         return seg_output
     
     def forward(self, input_tensor, inject_class=None):
-        output = {}
+        output = {
+            "pred": None,
+            "seg_pred": None,
+            "class_pred": None,
+            "recon_pred": None,
+            "validity_pred": None
+        }
         encode_feature_list = self.base_model(input_tensor)
         encode_feature = encode_feature_list.pop()
         skip_list = encode_feature_list[::-1]
-        output["pred"] = encode_feature
         if self.get_seg:
             seg_output = self.forward_decode_block(encode_feature, inject_class, skip_list,
                                                    *self.seg_module_list)
