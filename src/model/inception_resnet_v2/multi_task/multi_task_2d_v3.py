@@ -121,7 +121,6 @@ class InceptionResNetV2MultiTask2D(nn.Module):
                                             include_conv_transpose=not include_upsample,
                                             **conv_block_common_arg_dict)
 
-
             decode_conv = ConvBlock2D(in_channels=decode_out_channels,
                                         out_channels=decode_out_channels,
                                         kernel_size=3, **conv_block_common_arg_dict)
@@ -209,6 +208,7 @@ class InceptionResNetV2MultiTask2D(nn.Module):
         encode_feature_list = self.base_model(input_tensor)
         encode_feature = encode_feature_list.pop()
         skip_list = encode_feature_list[::-1]
+        output["pred"] = encode_feature
         if self.get_seg:
             seg_output = self.forward_decode_block(encode_feature, inject_class, skip_list,
                                                    *self.seg_module_list)
