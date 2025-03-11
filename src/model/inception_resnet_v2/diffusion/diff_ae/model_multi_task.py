@@ -254,14 +254,15 @@ class InceptionResNetV2_UNet(nn.Module):
     
     def _forward_non_diffusion(self, x, class_emb):
         output = Return()
-        non_diffusion_emb_list = [None]
-        if self.include_encoder:
-            latent_feature = self.encoder(x)
-            non_diffusion_emb_list.append(latent_feature)
-        else:
-            non_diffusion_emb_list.append(None)
-        if class_emb is None:
-            non_diffusion_emb_list.append(class_emb)
+        non_diffusion_emb_list = []
+        # non_diffusion_emb_list = [None]
+        # if self.include_encoder:
+        #     latent_feature = self.encoder(x)
+        #     non_diffusion_emb_list.append(latent_feature)
+        # else:
+        #     non_diffusion_emb_list.append(None)
+        # if class_emb is None:
+        #     non_diffusion_emb_list.append(class_emb)
 
         encode_feature, skip_connect_list = self.encode_forward(x, *non_diffusion_emb_list)
         if self.get_seg:
