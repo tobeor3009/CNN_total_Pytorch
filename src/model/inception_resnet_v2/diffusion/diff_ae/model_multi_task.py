@@ -278,7 +278,7 @@ class InceptionResNetV2_UNet(nn.Module):
         assert cond is not None, "cond must be not None in seg_diffusion"
         assert self.include_encoder, "include_encoder set to be True in seg_diffusion"
         assert x.shape == x_start.shape, f"x.shape: {x.shape}, x_start.shape: {x_start.shape}"
-        latent_feature, anch_list, anch_output = self.encoder(x_start)
+        latent_feature, anch_list, anch_output = self.encoder(cond)
         emb_list.append(latent_feature)
         if class_emb is not None:
             emb_list.append(class_emb)

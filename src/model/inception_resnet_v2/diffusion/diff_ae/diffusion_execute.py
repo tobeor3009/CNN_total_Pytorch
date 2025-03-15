@@ -387,9 +387,8 @@ class AutoEncoder(nn.Module):
         # with autocast(device_type=torch_device, enabled=False):
         if self.train_mode in ["autoencoder", "ddpm"]:
             t, weight = self.T_sampler.sample(len(x_start), torch_device)
-            encoded_feature = self.encode(cond_start)
             result_dict = self.sampler.training_losses_segmentation(model=self.diffusion_model,
-                                                                    image=x_start, mask=cond_start, image_encoded=encoded_feature, t=t,
+                                                                    image=x_start, mask=cond_start, t=t,
                                                                     image_mask_cat_fn=self.image_mask_cat_fn, model_kwargs=None)
         elif self.train_mode == "latent_net":
             raise NotImplementedError()

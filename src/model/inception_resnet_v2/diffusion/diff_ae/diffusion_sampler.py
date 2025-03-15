@@ -480,13 +480,13 @@ class GaussianSampler():
         return terms
 
     def training_losses_segmentation(self, model,
-                                    image: torch.Tensor, mask: torch.Tensor, image_encoded: torch.Tensor,
+                                    image: torch.Tensor, mask: torch.Tensor,
                                     t: torch.Tensor, image_mask_cat_fn: Callable,
                                     model_kwargs=None, noise: torch.Tensor = None):
         model = self._wrap_model(model)
         if model_kwargs is None:
             model_kwargs = {}
-        model_kwargs = {'cond': image_encoded}
+        model_kwargs = {'cond': image}
         
         if noise is None:
             noise = self.get_noise_like(mask)
