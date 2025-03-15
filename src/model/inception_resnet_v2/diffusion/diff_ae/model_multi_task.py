@@ -215,7 +215,7 @@ class InceptionResNetV2_UNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x, t=None, t_cond=None,
-                x_start=None, cond=None,
+                x_start=None, cond=None, latent_feature=None,
                 x_self_cond=None, class_labels=None, cond_drop_prob=None,
                 infer_diffusion=True):
         output = None
@@ -224,10 +224,10 @@ class InceptionResNetV2_UNet(nn.Module):
         if infer_diffusion and self.get_diffusion:
             if self.encoder_unet:
                 output = self._forward_anch_diffusion(x=x, t=t, t_cond=t_cond, x_start=x_start, cond=cond,
-                                                      x_self_cond=x_self_cond, class_emb=class_emb)
+                                                      latent_feature=latent_feature, x_self_cond=x_self_cond, class_emb=class_emb)
             else:
                 output = self._forward_diffusion(x=x, t=t, t_cond=t_cond, x_start=x_start, cond=cond,
-                                                x_self_cond=x_self_cond, class_emb=class_emb)
+                                                latent_feature=latent_feature, x_self_cond=x_self_cond, class_emb=class_emb)
         else:
             if self.encoder_unet:
                 output = self._forward_anch_non_diffusion(x=x, class_emb=class_emb)
@@ -237,7 +237,7 @@ class InceptionResNetV2_UNet(nn.Module):
         return output
     
     def _forward_diffusion(self, x, t, t_cond=None,
-                            x_start=None, cond=None,
+                            x_start=None, cond=None, latent_feature=None,
                             x_self_cond=None, class_emb=None):
         output = Return()
         emb_list = []
@@ -247,11 +247,11 @@ class InceptionResNetV2_UNet(nn.Module):
         time_emb = timestep_embedding(t, self.time_emb_dim_init)
         time_emb = self.time_mlp(time_emb)
         emb_list.append(time_emb)
-        if cond is None and self.include_encoder:
+        if (cond is None) and (latent_feature is None)  and self.include_encoder:
             assert x.shape == x_start.shape, f"x.shape: {x.shape}, x_start.shape: {x_start.shape}"
             latent_feature = self.encoder(x_start)
         else:
-            latent_feature = cond
+            latent_feature = latent_feature or cond
         emb_list.append(latent_feature)
         if class_emb is not None:
             emb_list.append(class_emb)
@@ -265,7 +265,7 @@ class InceptionResNetV2_UNet(nn.Module):
         return output
     
     def _forward_anch_diffusion(self, x, t, t_cond=None,
-                                x_start=None, cond=None,
+                                x_start=None, cond=None, latent_feature=None,
                                 x_self_cond=None, class_emb=None):
         output = Return()
         emb_list = []
@@ -275,10 +275,12 @@ class InceptionResNetV2_UNet(nn.Module):
         time_emb = timestep_embedding(t, self.time_emb_dim_init)
         time_emb = self.time_mlp(time_emb)
         emb_list.append(time_emb)
-        assert cond is not None, "cond must be not None in seg_diffusion"
+        assert (cond is not None) or (latent_feature is not None), "cond must be not None in seg_diffusion"
         assert self.include_encoder, "include_encoder set to be True in seg_diffusion"
-        assert x.shape == x_start.shape, f"x.shape: {x.shape}, x_start.shape: {x_start.shape}"
-        latent_feature, anch_list, anch_output = self.encoder(cond)
+        if latent_feature is None:
+            latent_feature, anch_list, anch_output = self.encoder(cond)
+        else:
+            latent_feature, anch_list, anch_output = latent_feature
         emb_list.append(latent_feature)
         if class_emb is not None:
             emb_list.append(class_emb)
@@ -397,10 +399,12 @@ class InceptionResNetV2_UNet(nn.Module):
         # ["stem_layer_1", "stem_layer_4", "stem_layer_7", "mixed_6a", "mixed_7a"]
         skip_connect_list = []
         stem = x
+        anch_idx = -1
         for idx, (_, layer) in enumerate(self.stem.items()):
             if idx in [1, 6, 9]:
-                anch = anch_list.pop()
+                anch = anch_list[anch_idx]
                 stem = torch.cat([stem, anch], dim=1)
+                anch_idx += -1
             stem = layer(stem, *args)
             if idx in [1, 3, 6, 9]:
                 skip_connect_list.append(stem)
@@ -410,7 +414,7 @@ class InceptionResNetV2_UNet(nn.Module):
         block_35 = self.process_inception_block(self.block_35_mixed, self.block_35_up,
                                                 mixed_5b, self.block_scale_list[0], *args)
         # mixed_6a: skip connect target
-        anch = anch_list.pop()
+        anch = anch_list[-4]
         block_35 = torch.cat([block_35, anch], dim=1)
         mixed_6a = self.process_encode_block(self.mixed_6a, self.mixed_6a_attn, block_35, *args)
         skip_connect_list.append(mixed_6a)
@@ -418,7 +422,7 @@ class InceptionResNetV2_UNet(nn.Module):
         block_17 = self.process_inception_block(self.block_17_mixed, self.block_17_up,
                                                 mixed_6a, self.block_scale_list[1], *args)
         # mixed_7a: skip connect target
-        anch = anch_list.pop()
+        anch = anch_list[-5]
         block_17 = torch.cat([block_17, anch], dim=1)
         mixed_7a = self.process_encode_block(self.mixed_7a, self.mixed_7a_attn, block_17, *args)
         skip_connect_list.append(mixed_7a)

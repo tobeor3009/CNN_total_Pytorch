@@ -6,7 +6,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from .resample import UniformSampler
 from .diffusion_sampler import GaussianSampler
-from .renderer import render_uncondition, render_condition
+from .renderer import render_uncondition, render_condition, render_condition_segmentation
 from src.model.train_util.common import _z_normalize, feature_z_normalize, z_normalize
 from tqdm import tqdm
 import random
@@ -290,6 +290,27 @@ class AutoEncoder(nn.Module):
         pred_img = (pred_img + 1) / 2
         return pred_img
 
+    def render_segmentation(self, noise, latent_feature=None, T=None, clip_denoised=True, get_mask_only=True):
+        if T is None:
+            sampler = self.eval_sampler
+        else:
+            sampler = self.get_sampler(T=self.T, T_eval=T)
+
+        assert latent_feature is not None, "latent_feature should be provided"
+        pred_img = render_condition_segmentation(self.diffusion_model,
+                                                noise, sampler,
+                                                latent_feature=latent_feature,
+                                                train_mode=self.train_mode,
+                                                clip_denoised=clip_denoised,
+                                                image_mask_cat_fn=self.image_mask_cat_fn,
+                                                image_mask_split_fn=self.image_mask_split_fn)
+        pred_img = (pred_img + 1) / 2
+
+        if get_mask_only:
+            pred_img = self.image_mask_split_fn(pred_img)[1]
+        return pred_img
+
+
     def encode(self, x):
         assert getattr(self.diffusion_model, "encoder", None) is not None
         cond = self.diffusion_model.encoder.forward(x)
@@ -305,8 +326,10 @@ class AutoEncoder(nn.Module):
                                                clip_denoised=clip_denoised)
         return out['sample']
 
-    def encode_stochastic_segmentation(self, image, mask, T=None, clip_denoised=True):
+    def encode_stochastic_segmentation(self, image, mask, latent_feature=None, T=None, clip_denoised=True):
         x = self.image_mask_cat_fn(image, mask)
+        if latent_feature is None:
+            latent_feature = self.encode(image)
         if T is None:
             sampler = self.eval_sampler
         else:
@@ -314,7 +337,7 @@ class AutoEncoder(nn.Module):
         out = sampler.ddim_reverse_sample_loop(self.diffusion_model, x,
                                                image_mask_cat_fn=self.image_mask_cat_fn,
                                                image_mask_split_fn=self.image_mask_split_fn,
-                                               model_kwargs={'cond': image},
+                                               model_kwargs={'latent_feature': latent_feature},
                                                clip_denoised=clip_denoised)
         return out['sample']
 
@@ -376,16 +399,16 @@ class AutoEncoder(nn.Module):
         return result_dict['loss']
 
     def _get_loss_segmentation(self, x_start=None, cond_start=None):
-        assert x_start is not None, "get_loss_segmentation requires x_start with image shape like (B, C, H, W)"
-        assert cond_start is not None, "get_loss_segmentation requires cond_start with image shape like (B, C, H, W)"
-
-        x_start_device = getattr(x_start, "device", None)
-        torch_device = x_start_device
+        assert x_start is not None, "get_loss_segmentation requires image with shape like (B, C, H, W)"
+        assert cond_start is not None, "get_loss_segmentation requires mask with shape like (B, C, H, W)"
+        image, mask = cond_start, x_start
+        image_device = getattr(image, "device", None)
+        torch_device = image_device
         # with autocast(device_type=torch_device, enabled=False):
         if self.train_mode in ["autoencoder", "ddpm"]:
             t, weight = self.T_sampler.sample(len(x_start), torch_device)
             result_dict = self.sampler.training_losses_segmentation(model=self.diffusion_model,
-                                                                    image=x_start, mask=cond_start, t=t,
+                                                                    image=image, mask=mask, t=t,
                                                                     image_mask_cat_fn=self.image_mask_cat_fn, model_kwargs=None)
         elif self.train_mode == "latent_net":
             raise NotImplementedError()

@@ -89,3 +89,22 @@ def render_condition(
                               clip_denoised=clip_denoised)
     else:
         raise NotImplementedError()
+
+def render_condition_segmentation(
+    model, x_T, sampler,
+    latent_feature=None,
+    train_mode=None,
+    clip_denoised=True,
+    image_mask_cat_fn=None,
+    image_mask_split_fn=None
+):
+    if train_mode in ["autoencoder", "autoencoder_latent_net", "latent_net"]:
+        assert latent_feature is not None
+        return sampler.sample(model=model,
+                            image_mask_cat_fn=image_mask_cat_fn,
+                            image_mask_split_fn=image_mask_split_fn,
+                            noise=x_T,
+                            model_kwargs={'latent_feature': latent_feature},
+                            clip_denoised=clip_denoised)
+    else:
+        raise NotImplementedError()
