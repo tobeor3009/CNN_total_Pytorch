@@ -305,10 +305,8 @@ class AutoEncoder(nn.Module):
                                                clip_denoised=clip_denoised)
         return out['sample']
 
-    def encode_stochastic_segmentation(self, image, mask, image_encoded=None, T=None, clip_denoised=True):
+    def encode_stochastic_segmentation(self, image, mask, T=None, clip_denoised=True):
         x = self.image_mask_cat_fn(image, mask)
-        if image_encoded is None:
-            image_encoded = self.diffusion_model.encode(image)
         if T is None:
             sampler = self.eval_sampler
         else:
@@ -316,7 +314,7 @@ class AutoEncoder(nn.Module):
         out = sampler.ddim_reverse_sample_loop(self.diffusion_model, x,
                                                image_mask_cat_fn=self.image_mask_cat_fn,
                                                image_mask_split_fn=self.image_mask_split_fn,
-                                               model_kwargs={'cond': image_encoded},
+                                               model_kwargs={'cond': image},
                                                clip_denoised=clip_denoised)
         return out['sample']
 
@@ -382,7 +380,6 @@ class AutoEncoder(nn.Module):
         assert cond_start is not None, "get_loss_segmentation requires cond_start with image shape like (B, C, H, W)"
 
         x_start_device = getattr(x_start, "device", None)
-        cond_start_device = getattr(cond_start, "device", None)
         torch_device = x_start_device
         # with autocast(device_type=torch_device, enabled=False):
         if self.train_mode in ["autoencoder", "ddpm"]:
