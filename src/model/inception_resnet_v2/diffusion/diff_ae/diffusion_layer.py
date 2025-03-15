@@ -83,6 +83,7 @@ class EmbedSequential(nn.Sequential):
 @dataclass
 class Return:
     pred: Optional[torch.Tensor] = None
+    pred_ancher: Optional[torch.Tensor] = None
     seg_pred: Optional[torch.Tensor] = None
     class_pred: Optional[torch.Tensor] = None
     recon_pred: Optional[torch.Tensor] = None

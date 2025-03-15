@@ -503,6 +503,7 @@ class GaussianSampler():
                                         x_start=x_start.detach(),
                                         **model_kwargs)
         model_output = model_forward.pred
+        model_anch_output = model_forward.pred_anch
         _model_output = model_output
         if self.train_pred_xstart_detach:
             _model_output = _model_output.detach()
@@ -515,7 +516,6 @@ class GaussianSampler():
             t=t,
             clip_denoised=False)
         terms['pred_xstart'] = p_mean_var['pred_xstart']
-
         assert model_output.shape == noise.shape == mask.shape
         if self.model_mean_type == "eps":
             target = noise
@@ -523,7 +523,7 @@ class GaussianSampler():
             terms["loss"] = terms["eps"]
         elif self.model_mean_type == "eps + x_start":
             terms["loss_noise"] = self.loss_fn(noise, model_output)
-            terms["loss_mask"] = self.loss_fn(mask, terms['pred_xstart'])
+            terms["loss_mask"] = self.loss_fn(mask, model_anch_output)
             terms["loss"] = terms["loss_noise"] * 0.1 + terms["loss_mask"] * 0.9
 
         if "vb" in terms:
