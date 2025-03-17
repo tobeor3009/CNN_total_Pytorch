@@ -16,7 +16,6 @@ def identity_cat_fn(x, cond):
 
 def identity_split_fn(x_cated):
     return x_cated, x_cated
-
 class TargetStepDataset(Dataset):
     def __init__(self, dataset, batch_size, target_stepsize):
         self.dataset = dataset
@@ -25,14 +24,18 @@ class TargetStepDataset(Dataset):
         self.dataset_len = target_stepsize * batch_size
         self.dataset_quotient = self.dataset_len // self.dataset_real_len
         assert self.dataset_real_len >= len(dataset), "target_stepsize * batch_size is smaller than dataset_real_len"
+        dataset_mod = self.dataset_len % self.dataset_real_len
+        if dataset_mod == 0:
+            self.dataset_quotient += 1
+            
     def __len__(self):
         return self.dataset_len
 
     def __getitem__(self, idx):
-        if idx // self.dataset_real_len == self.dataset_quotient:
-            idx = random.choice(self.dataset_real_range)
-        else:    
+        if (idx // self.dataset_real_len < self.dataset_quotient):
             idx = idx % self.dataset_real_len
+        else:    
+            idx = random.choice(self.dataset_real_range)
         return self.dataset[idx]
 
 class LatentDataset(Dataset):
