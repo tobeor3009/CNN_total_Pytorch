@@ -144,7 +144,6 @@ class AutoEncoder(nn.Module):
 
         # initial variables for consistent sampling
         # 표준 정규분포 정의 (평균=0, 표준편차=1)
-        # 99% 신뢰구간에 해당하는 누적 확률값 (0.5%와 99.5%)
         self.register_buffer('x_T', self.get_noise(sample_size))
         
     def compute_cond_mean_std(self, train_dataloader, encode_process_fn=None, device=None, cond_save_path=None):

@@ -350,7 +350,7 @@ class GaussianSampler():
         else:
             normal_dist = torch.distributions.Normal(0, 1)
             noise_clip_ratio = (1 - noise_clip_ratio) / 2
-            self.z_upper_limit= normal_dist.icdf(torch.tensor(1 - noise_clip_ratio)).item()
+            self.z_upper_limit = normal_dist.icdf(torch.tensor(1 - noise_clip_ratio)).item()
             self.z_lower_limit = normal_dist.icdf(torch.tensor(noise_clip_ratio)).item()
 
     def _wrap_model(self, model):
@@ -480,13 +480,13 @@ class GaussianSampler():
         return terms
 
     def training_losses_segmentation(self, model,
-                                    image: torch.Tensor, mask: torch.Tensor,
+                                    image: torch.Tensor, mask: torch.Tensor, image_encoded: torch.Tensor,
                                     t: torch.Tensor, image_mask_cat_fn: Callable,
                                     model_kwargs=None, noise: torch.Tensor = None):
         model = self._wrap_model(model)
         if model_kwargs is None:
             model_kwargs = {}
-        model_kwargs = {'cond': image}
+        model_kwargs = {'cond': image_encoded}
         
         if noise is None:
             noise = self.get_noise_like(mask)
@@ -516,6 +516,7 @@ class GaussianSampler():
             t=t,
             clip_denoised=False)
         terms['pred_xstart'] = p_mean_var['pred_xstart']
+
         assert model_output.shape == noise.shape == mask.shape
         if self.model_mean_type == "eps":
             target = noise
