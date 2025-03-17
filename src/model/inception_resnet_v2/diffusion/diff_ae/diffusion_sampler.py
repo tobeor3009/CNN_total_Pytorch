@@ -689,11 +689,10 @@ class GaussianSampler():
             # x means mask
             image, mask = image_mask_split_fn(x)
             if image_mask_cat_fn is not None:
-                assert image.shape == mask.shape
+                assert image.shape == mask.shape == model_output.shape
                 model_output = image_mask_cat_fn(model_output, model_output)
-        else:
-            target = x
-
+            else:
+                target = mask
         model_variance = _extract_into_tensor(model_variance, t, target.shape)
         model_log_variance = _extract_into_tensor(model_log_variance, t, target.shape)
 
@@ -714,7 +713,7 @@ class GaussianSampler():
         }
 
     def _predict_xstart_from_eps(self, x_t, t, eps):
-        assert x_t.shape == eps.shape
+        assert x_t.shape == eps.shape, f"x_t.shape: {x_t.shape}, eps.shape: {eps.shape}"
         return (_extract_into_tensor(self.sqrt_recip_alphas_cumprod, t,
                                      x_t.shape) * x_t -
                 _extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t,
