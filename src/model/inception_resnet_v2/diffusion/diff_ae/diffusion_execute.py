@@ -50,10 +50,10 @@ class LatentDataset(Dataset):
 
 
 class AutoEncoder(nn.Module):
-    def __init__(self, diffusion_model, train_mode, is_segmentation=False, image_mask_cat_fn=None, image_mask_split_fn=None,
+    def __init__(self, diffusion_model, train_mode, is_segmentation=False, seg_loss_fn=None, image_mask_cat_fn=None, image_mask_split_fn=None,
                  sample_size=1, img_size=512, img_dim=2, T=1000, T_eval=20, T_sampler="uniform",
                  beta_scheduler="linear", latent_beta_scheduler="const0.008", spaced=True, rescale_timesteps=False,
-                 gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large", model_loss_type="mse",
+                 gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large", model_loss_type="l1",
                  latent_gen_type="ddim", latent_model_mean_type="eps", latent_model_var_type="fixed_large", latent_model_loss_type="l1",
                  latent_clip_sample=False, latent_znormalize=True,
                  fp16=False, train_pred_xstart_detach=True):
@@ -82,7 +82,7 @@ class AutoEncoder(nn.Module):
         self.diffusion_model = diffusion_model
         self.train_mode = train_mode
         self.is_segmentation = is_segmentation
-        
+        self.seg_loss_fn = seg_loss_fn
         if is_segmentation:
             image_mask_cat_fn = image_mask_cat_fn or identity_cat_fn
             image_mask_split_fn = image_mask_split_fn or identity_split_fn
@@ -410,7 +410,7 @@ class AutoEncoder(nn.Module):
         if self.train_mode in ["autoencoder", "ddpm"]:
             t, weight = self.T_sampler.sample(len(x_start), torch_device)
             result_dict = self.sampler.training_losses_segmentation(model=self.diffusion_model,
-                                                                    image=image, mask=mask, t=t,
+                                                                    image=image, mask=mask, t=t, seg_loss_fn=self.seg_loss_fn,
                                                                     image_mask_cat_fn=self.image_mask_cat_fn, model_kwargs=None)
         elif self.train_mode == "latent_net":
             raise NotImplementedError()

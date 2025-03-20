@@ -481,7 +481,7 @@ class GaussianSampler():
 
     def training_losses_segmentation(self, model,
                                     image: torch.Tensor, mask: torch.Tensor,
-                                    t: torch.Tensor, image_mask_cat_fn: Callable,
+                                    t: torch.Tensor, image_mask_cat_fn: Callable, seg_loss_fn: Callable = None,
                                     model_kwargs=None, noise: torch.Tensor = None):
         model = self._wrap_model(model)
         if model_kwargs is None:
@@ -524,7 +524,11 @@ class GaussianSampler():
             terms["loss"] = terms["eps"]
         elif self.model_mean_type == "eps + x_start":
             terms["loss_noise"] = self.loss_fn(noise, model_output)
-            terms["loss_mask"] = self.loss_fn(mask, model_anch_output)
+            if seg_loss_fn is None:
+                seg_loss = seg_loss_fn(mask, model_anch_output)
+            else:
+                seg_loss = self.loss_fn(mask, model_anch_output)
+            terms["loss_mask"] = seg_loss
             terms["loss"] = terms["loss_noise"] * 0.5 + terms["loss_mask"] * 0.5
 
         if "vb" in terms:
