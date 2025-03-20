@@ -525,7 +525,7 @@ class GaussianSampler():
         elif self.model_mean_type == "eps + x_start":
             terms["loss_noise"] = self.loss_fn(noise, model_output)
             terms["loss_mask"] = self.loss_fn(mask, model_anch_output)
-            terms["loss"] = terms["loss_noise"] * 0.1 + terms["loss_mask"] * 0.9
+            terms["loss"] = terms["loss_noise"] * 0.5 + terms["loss_mask"] * 0.5
 
         if "vb" in terms:
             # if learning the variance also use the vlb loss
