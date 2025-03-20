@@ -1011,13 +1011,11 @@ class GaussianSampler():
             model_kwargs=model_kwargs,
         )
         pred_xstart = out["pred_xstart"]
+        target = x
         if image_mask_split_fn is not None:
             # x means mask
             image, mask = image_mask_split_fn(x)
-            pred_xstart = image_mask_cat_fn(image, pred_xstart)
             target = mask
-        else:
-            target = x
         # Usually our model outputs epsilon, but we re-derive it
         # in case we used x_start or x_prev prediction.
         eps = (_extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, target.shape)
@@ -1055,7 +1053,7 @@ class GaussianSampler():
             with torch.no_grad():
                 out = self.ddim_reverse_sample(model, sample, t=t,
                                                image_mask_split_fn=image_mask_split_fn,
-                                               image_mask_cat_fn=None,
+                                               image_mask_cat_fn=image_mask_cat_fn,
                                                clip_denoised=clip_denoised,
                                                denoised_fn=denoised_fn,
                                                model_kwargs=model_kwargs,
