@@ -191,7 +191,7 @@ def process_patch_array(patch_tensor, target_model, process_at_once, part_proces
     else:
         return _process_patch_array_normal(patch_tensor, target_model, process_at_once, part_process_fn=part_process_fn)
 
-def _process_patch_array_dynamic(patch_tensor, target_model, process_at_once, part_process_fn=None):
+def _process_patch_array_dynamic(patch_tensor, target_model, process_at_once, part_process_fn=None, model_kwargs_dict={}):
     data_num = patch_tensor.shape[0]
     device = next(target_model.parameters()).device
     batch_num = math.ceil(data_num / process_at_once)
@@ -201,7 +201,7 @@ def _process_patch_array_dynamic(patch_tensor, target_model, process_at_once, pa
         end_idx = min(start_idx + process_at_once, data_num)
         target_data = patch_tensor[start_idx:end_idx]
         target_data = target_data.to(device)
-        pred_patch_array_part = target_model(target_data)
+        pred_patch_array_part = target_model(target_data, **model_kwargs_dict)
         if part_process_fn is not None:
             pred_patch_array_part = part_process_fn(pred_patch_array_part)
         pred_patch_array_part = pred_patch_array_part.cpu()
