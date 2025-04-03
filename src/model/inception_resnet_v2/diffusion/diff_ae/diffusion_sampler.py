@@ -529,7 +529,7 @@ class GaussianSampler():
             else:
                 seg_loss = seg_loss_fn(mask, model_anch_output)
             terms["loss_mask"] = seg_loss
-            terms["loss"] = terms["loss_noise"] * 0.5 + terms["loss_mask"] * 0.5
+            terms["loss"] = terms["loss_noise"] * 0.95 + terms["loss_mask"] * 0.05
 
         if "vb" in terms:
             # if learning the variance also use the vlb loss
