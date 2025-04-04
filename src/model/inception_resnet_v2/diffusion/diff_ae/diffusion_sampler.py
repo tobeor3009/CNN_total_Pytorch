@@ -563,7 +563,6 @@ class GaussianSampler():
         noise_mask = self.q_sample(mask, t, noise=noise)
         x_start = image_mask_cat_fn(image, mask)
         x_t = image_mask_cat_fn(image, noise_mask)
-        terms = {'x_t': x_t}
 
         # with autocast(device_type=x_start.device, enabled=self.fp16):
         # x_t is static wrt. to the diffusion process
