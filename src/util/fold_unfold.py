@@ -185,9 +185,10 @@ def compute_stride_weights(image_size, patch_size, stride, pad_size, img_dim, ma
         patch_weight[-stride:, :, :, -patch_per_dim:] = 1
     return patch_weight
 
-def process_patch_array(patch_tensor, target_model, process_at_once, part_process_fn=None, dynamic=False):
+def process_patch_array(patch_tensor, target_model, process_at_once, part_process_fn=None, dynamic=False, model_kwargs_dict={}):
     if dynamic:
-        return _process_patch_array_dynamic(patch_tensor, target_model, process_at_once, part_process_fn=part_process_fn)
+        return _process_patch_array_dynamic(patch_tensor, target_model, process_at_once,
+                                            part_process_fn=part_process_fn, model_kwargs_dict=model_kwargs_dict)
     else:
         return _process_patch_array_normal(patch_tensor, target_model, process_at_once, part_process_fn=part_process_fn)
 
