@@ -482,18 +482,23 @@ class GaussianSampler():
     def training_losses_segmentation(self, model,
                                     image: torch.Tensor, mask: torch.Tensor,
                                     t: torch.Tensor, image_mask_cat_fn: Callable, seg_loss_fn: Callable = None,
-                                    model_kwargs=None, noise: torch.Tensor = None):
+                                    model_kwargs=None, noise: torch.Tensor = None, noise_disc: torch.Module = None):
         model = self._wrap_model(model)
         if model_kwargs is None:
             model_kwargs = {}
         model_kwargs = {'cond': image}
         
-        if noise is None:
-            noise = self.get_noise_like(mask)
-        
-        noise_mask = self.q_sample(mask, t, noise=noise)
-        x_start = image_mask_cat_fn(image, mask)
-        x_t = image_mask_cat_fn(image, noise_mask)
+        if image_mask_cat_fn is None and mask is None:
+            if noise is None:
+                noise = self.get_noise_like(mask)
+                x_t = self.q_sample(mask, t, noise=noise)
+            x_start = image_mask_cat_fn(image, mask)
+            x_t = image_mask_cat_fn(image, x_t)
+
+        else:
+            x_start = image
+            x_t = self.q_sample(x_start, t, noise=noise)
+
         terms = {'x_t': x_t}
 
         # with autocast(device_type=x_start.device, enabled=self.fp16):
@@ -531,10 +536,49 @@ class GaussianSampler():
             terms["loss_mask"] = seg_loss
             terms["loss"] = terms["loss_noise"] * 0.95 + terms["loss_mask"] * 0.05
 
+        if noise_disc is not None:
+            validity_fake = noise_disc(model_output)
+            validity_loss = (validity_fake - torch.ones_like(validity_fake)) ** 2
+            terms["loss"] = terms["loss"] + validity_loss * 0.1
         if "vb" in terms:
             # if learning the variance also use the vlb loss
             terms["loss"] = terms["loss"] + terms["vb"]
         return terms
+
+    def training_lossses_gan_disc(self, model,
+                                image: torch.Tensor, mask: torch.Tensor=None,
+                                t: torch.Tensor=None, image_mask_cat_fn: Callable=None,
+                                model_kwargs=None, noise: torch.Tensor = None, noise_disc: torch.Module = None):
+        
+        assert t is not None
+        assert noise_disc is not None
+        model = self._wrap_model(model)
+        if model_kwargs is None:
+            model_kwargs = {}
+        model_kwargs = {'cond': image}
+        
+        if noise is None:
+            noise = self.get_noise_like(mask)
+        
+        noise_mask = self.q_sample(mask, t, noise=noise)
+        x_start = image_mask_cat_fn(image, mask)
+        x_t = image_mask_cat_fn(image, noise_mask)
+        terms = {'x_t': x_t}
+
+        # with autocast(device_type=x_start.device, enabled=self.fp16):
+        # x_t is static wrt. to the diffusion process
+        model_forward = model.forward(x=x_t.detach(),
+                                        t=self._scale_timesteps(t),
+                                        x_start=x_start.detach(),
+                                        **model_kwargs)
+        model_output = model_forward.pred
+   
+        validity_fake = noise_disc(model_output)
+        validity_real = noise_disc(noise)
+        fake_loss = (validity_fake - torch.zeros_like(validity_fake)) ** 2
+        real_loss = (validity_real - torch.ones_like(validity_fake)) ** 2
+        validity_loss = (fake_loss + real_loss) / 2
+        return validity_loss
 
     def sample(self, model,
                shape=None,
