@@ -532,7 +532,7 @@ class GaussianSampler():
             terms["loss"] = terms["loss_noise"] * 0.95 + terms["loss_mask"] * 0.05
 
         if noise_disc is not None:
-            validity_fake = noise_disc(model_output)
+            validity_fake = noise_disc(model_output).validity_pred
             validity_loss = (validity_fake - torch.ones_like(validity_fake)) ** 2
             terms["loss"] = terms["loss"] + validity_loss * 0.1
         if "vb" in terms:
@@ -574,8 +574,8 @@ class GaussianSampler():
                                         **model_kwargs)
         model_output = model_forward.pred
    
-        validity_fake = noise_disc(model_output)
-        validity_real = noise_disc(noise)
+        validity_fake = noise_disc(model_output).validity_pred
+        validity_real = noise_disc(noise).validity_pred
         fake_loss = (validity_fake - torch.zeros_like(validity_fake)) ** 2
         real_loss = (validity_real - torch.ones_like(validity_fake)) ** 2
         validity_loss = (fake_loss + real_loss) / 2
