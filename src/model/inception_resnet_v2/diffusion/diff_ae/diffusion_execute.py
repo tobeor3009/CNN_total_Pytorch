@@ -345,12 +345,14 @@ class AutoEncoder(nn.Module):
         return out['sample']
 
 
-    def forward(self, x_start=None, encoded_feature=None, cond_start=None):
-        if self.is_segmentation and (self.train_mode != "latent_net"):
-            return self._get_loss_segmentation(x_start=x_start, cond_start=cond_start)
+    def forward(self, x_start=None, encoded_feature=None, cond_start=None, return_disc_loss=False):
+        if return_disc_loss:
+            return self._get_loss_noise_disc(x_start=x_start, cond_start=cond_start)
         else:
-            return self._get_loss(x_start=x_start, encoded_feature=encoded_feature, cond_start=cond_start)
-    
+            if self.is_segmentation and (self.train_mode != "latent_net"):
+                return self._get_loss_segmentation(x_start=x_start, cond_start=cond_start)
+            else:
+                return self._get_loss(x_start=x_start, encoded_feature=encoded_feature, cond_start=cond_start)
     # Check: remove kwarg ema_model
     def _get_loss(self, x_start=None, encoded_feature=None, cond_start=None):
         exists_encoded_feature = encoded_feature is not None
