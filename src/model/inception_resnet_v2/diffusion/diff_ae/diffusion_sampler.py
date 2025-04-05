@@ -408,7 +408,7 @@ class GaussianSampler():
     def training_losses(self, model,
                         x_start: torch.Tensor, t: torch.Tensor,
                         model_kwargs=None,
-                        noise: torch.Tensor = None):
+                        noise: torch.Tensor = None, noise_disc: torch.nn.Module = None):
         """
         Compute training losses for a single timestep.
 
