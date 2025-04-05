@@ -482,7 +482,7 @@ class GaussianSampler():
     def training_losses_segmentation(self, model,
                                     image: torch.Tensor, mask: torch.Tensor,
                                     t: torch.Tensor, image_mask_cat_fn: Callable, seg_loss_fn: Callable = None,
-                                    model_kwargs=None, noise: torch.Tensor = None, noise_disc: torch.Module = None):
+                                    model_kwargs=None, noise: torch.Tensor = None, noise_disc: torch.nn.Module = None):
         model = self._wrap_model(model)
         if model_kwargs is None:
             model_kwargs = {}
@@ -548,7 +548,7 @@ class GaussianSampler():
     def training_lossses_gan_disc(self, model,
                                 image: torch.Tensor, mask: torch.Tensor=None,
                                 t: torch.Tensor=None, image_mask_cat_fn: Callable=None,
-                                model_kwargs=None, noise: torch.Tensor = None, noise_disc: torch.Module = None):
+                                model_kwargs=None, noise: torch.Tensor = None, noise_disc: torch.nn.Module = None):
         
         assert t is not None
         assert noise_disc is not None
