@@ -50,7 +50,7 @@ class LatentDataset(Dataset):
 
 
 class AutoEncoder(nn.Module):
-    def __init__(self, diffusion_model, train_mode, is_segmentation=False, seg_loss_fn=None, image_mask_cat_fn=None, image_mask_split_fn=None,
+    def __init__(self, diffusion_model, train_mode, noise_disc=None, is_segmentation=False, seg_loss_fn=None, image_mask_cat_fn=None, image_mask_split_fn=None,
                  sample_size=1, img_size=512, img_dim=2, T=1000, T_eval=20, T_sampler="uniform",
                  beta_scheduler="linear", latent_beta_scheduler="const0.008", spaced=True, rescale_timesteps=False,
                  gen_type="ddim", model_type="autoencoder", model_mean_type="eps", model_var_type="fixed_large", model_loss_type="l1",
@@ -80,6 +80,7 @@ class AutoEncoder(nn.Module):
         latent_model_type = "ddpm"
         ##########################
         self.diffusion_model = diffusion_model
+        self.noise_disc = noise_disc
         self.train_mode = train_mode
         self.is_segmentation = is_segmentation
         self.seg_loss_fn = seg_loss_fn
@@ -344,14 +345,14 @@ class AutoEncoder(nn.Module):
         return out['sample']
 
 
-    def forward(self, x_start=None, encoded_feature=None, cond_start=None, noise_disc=None):
+    def forward(self, x_start=None, encoded_feature=None, cond_start=None):
         if self.is_segmentation and (self.train_mode != "latent_net"):
-            return self._get_loss_segmentation(x_start=x_start, cond_start=cond_start, noise_disc=noise_disc)
+            return self._get_loss_segmentation(x_start=x_start, cond_start=cond_start)
         else:
-            return self._get_loss(x_start=x_start, encoded_feature=encoded_feature, cond_start=cond_start, noise_disc=noise_disc)
+            return self._get_loss(x_start=x_start, encoded_feature=encoded_feature, cond_start=cond_start)
     
     # Check: remove kwarg ema_model
-    def _get_loss(self, x_start=None, encoded_feature=None, cond_start=None, noise_disc=None):
+    def _get_loss(self, x_start=None, encoded_feature=None, cond_start=None):
         exists_encoded_feature = encoded_feature is not None
         exists_cond_start = cond_start is not None
         
@@ -371,37 +372,37 @@ class AutoEncoder(nn.Module):
             t, weight = self.T_sampler.sample(len(x_start), torch_device)
             if encoded_feature is None:
                 result_dict = self.sampler.training_losses(model=self.diffusion_model,
-                                                            x_start=x_start, t=t, noise_disc=noise_disc)
+                                                            x_start=x_start, t=t, noise_disc=self.noise_disc)
             else:
                 result_dict = self.sampler.training_losses(model=self.diffusion_model,
-                                                            x_start=x_start, t=t, noise_disc=noise_disc,
+                                                            x_start=x_start, t=t, noise_disc=self.noise_disc,
                                                             model_kwargs={'cond': encoded_feature})
 
         elif self.train_mode == "latent_net":
             t, weight = self.T_sampler.sample(len(x_start), torch_device)
             result_dict = self.latent_sampler.training_losses(model=self.diffusion_model.latent_net,
-                                                                x_start=x_start, t=t, noise_disc=noise_disc)
+                                                                x_start=x_start, t=t, noise_disc=self.noise_disc)
             
         elif self.train_mode == "autoencoder_latent_net":
     
             t, weight = self.T_sampler.sample(len(x_start), torch_device)
             if encoded_feature is None:
                 result_dict = self.sampler.training_losses(model=self.diffusion_model,
-                                                            x_start=x_start, t=t, noise_disc=noise_disc)
+                                                            x_start=x_start, t=t, noise_disc=self.noise_disc)
             else:
                 result_dict = self.sampler.training_losses(model=self.diffusion_model,
-                                                            x_start=x_start, t=t, noise_disc=noise_disc,
+                                                            x_start=x_start, t=t, noise_disc=self.noise_disc,
                                                             model_kwargs={'cond': encoded_feature})
                 t, weight = self.T_sampler.sample(len(encoded_feature), torch_device)
                 result_dict_latent = self.latent_sampler.training_losses(model=self.diffusion_model.latent_net,
                                                                         x_start=encoded_feature.detach(), t=t,
-                                                                        noise_disc=noise_disc)
+                                                                        noise_disc=self.noise_disc)
             return result_dict['loss'], result_dict_latent['loss']
         else:
             raise NotImplementedError()
         return result_dict['loss']
 
-    def _get_loss_segmentation(self, x_start=None, cond_start=None, noise_disc=None):
+    def _get_loss_segmentation(self, x_start=None, cond_start=None):
         assert x_start is not None, "get_loss_segmentation requires image with shape like (B, C, H, W)"
         assert cond_start is not None, "get_loss_segmentation requires mask with shape like (B, C, H, W)"
         image, mask = cond_start, x_start
@@ -413,16 +414,17 @@ class AutoEncoder(nn.Module):
             result_dict = self.sampler.training_losses_segmentation(model=self.diffusion_model,
                                                                     image=image, mask=mask, t=t, seg_loss_fn=self.seg_loss_fn,
                                                                     image_mask_cat_fn=self.image_mask_cat_fn, model_kwargs=None,
-                                                                    noise_disc=noise_disc)
+                                                                    noise_disc=self.noise_disc)
         elif self.train_mode == "latent_net":
             raise NotImplementedError()
         else:
             raise NotImplementedError()
         return result_dict['loss']
     
-    def _get_loss_noise_disc(self, x_start=None, cond_start=None, noise_disc=None):
+    def _get_loss_noise_disc(self, x_start=None, cond_start=None):
         assert x_start is not None, "get_loss_noise_gan requires image with shape like (B, C, H, W)"
         assert cond_start is not None, "get_loss_noise_gan requires mask with shape like (B, C, H, W)"
+        assert self.noise_disc is not None, "get_loss_noise_gan requires noise_disc model"
         image, mask = cond_start, x_start
         image_device = getattr(image, "device", None)
         torch_device = image_device
@@ -440,7 +442,7 @@ class AutoEncoder(nn.Module):
                                                                 image=image, mask=mask, t=t,
                                                                 image_mask_cat_fn=self.image_mask_cat_fn,
                                                                 model_kwargs=model_kwargs,
-                                                                noise_disc=noise_disc)
+                                                                noise_disc=self.noise_disc)
         return noise_disc_loss
     
     def manipulate(self, x, class_idx, cls_model, manipulate_weight):
