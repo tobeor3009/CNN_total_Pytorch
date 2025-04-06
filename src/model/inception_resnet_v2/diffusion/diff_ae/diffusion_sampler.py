@@ -529,12 +529,19 @@ class GaussianSampler():
             else:
                 seg_loss = seg_loss_fn(mask, model_anch_output)
             terms["loss_mask"] = seg_loss
-            terms["loss"] = terms["loss_noise"] * 0.95 + terms["loss_mask"] * 0.05
+            if terms["loss"].shape != terms["loss_mask"].shape:
+                terms["loss"] = terms["loss_noise"] * 0.95 + terms["loss_mask"] * 0.05    
+            else:
+                terms["loss"] = terms["loss_noise"].mean() * 0.95 + terms["loss_mask"].mean() * 0.05
 
         if noise_disc is not None:
             validity_fake = noise_disc(model_output).validity_pred
             validity_loss = (validity_fake - torch.ones_like(validity_fake)) ** 2
-            terms["loss"] = terms["loss"] + validity_loss * 0.1
+            terms["validity_loss"] = validity_loss
+            if terms["loss"].shape != terms["loss_mask"].shape:
+                terms["loss"] = terms["loss"] + terms["validity_loss"] * 0.1    
+            else:
+                terms["loss"] = terms["loss"].mean() + terms["validity_loss"].mean() * 0.1                
         if "vb" in terms:
             # if learning the variance also use the vlb loss
             terms["loss"] = terms["loss"] + terms["vb"]
