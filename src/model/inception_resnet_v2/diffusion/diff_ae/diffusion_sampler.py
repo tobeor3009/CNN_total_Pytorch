@@ -559,19 +559,17 @@ class GaussianSampler():
             model_kwargs = {}
         model_kwargs = {'cond': image}
         
-        if noise is None:
-            noise = self.get_noise_like(mask)
-
         if image_mask_cat_fn is None and mask is None:
+            x_start = image
+            if noise is None:
+                noise = self.get_noise_like(x_start)
+            x_t = self.q_sample(x_start, t, noise=noise)
+        else:
             if noise is None:
                 noise = self.get_noise_like(mask)
                 x_t = self.q_sample(mask, t, noise=noise)
             x_start = image_mask_cat_fn(image, mask)
             x_t = image_mask_cat_fn(image, x_t)
-
-        else:
-            x_start = image
-            x_t = self.q_sample(x_start, t, noise=noise)
 
         # with autocast(device_type=x_start.device, enabled=self.fp16):
         # x_t is static wrt. to the diffusion process
