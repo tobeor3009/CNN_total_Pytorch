@@ -538,7 +538,7 @@ class GaussianSampler():
             validity_fake = noise_disc(model_output).validity_pred
             validity_loss = (validity_fake - torch.ones_like(validity_fake)) ** 2
             terms["validity_loss"] = validity_loss
-            if terms["loss"].shape != terms["loss_mask"].shape:
+            if terms["loss"].shape != terms["validity_loss"].shape:
                 terms["loss"] = terms["loss"] + terms["validity_loss"] * 0.1    
             else:
                 terms["loss"] = terms["loss"].mean() + terms["validity_loss"].mean() * 0.1                
