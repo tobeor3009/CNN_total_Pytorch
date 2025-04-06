@@ -529,7 +529,7 @@ class GaussianSampler():
             else:
                 seg_loss = seg_loss_fn(mask, model_anch_output)
             terms["loss_mask"] = seg_loss
-            if terms["loss"].shape != terms["loss_mask"].shape:
+            if terms["loss_noise"].shape != terms["loss_mask"].shape:
                 terms["loss"] = terms["loss_noise"] * 0.95 + terms["loss_mask"] * 0.05    
             else:
                 terms["loss"] = terms["loss_noise"].mean() * 0.95 + terms["loss_mask"].mean() * 0.05
