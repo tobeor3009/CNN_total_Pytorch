@@ -269,6 +269,10 @@ def get_mse_loss(y_pred, y_true):
     loss = mean_flat((y_pred - y_true)**2)
     return loss
 
+def toggle_grad(target_model, require_grads=False):
+    for param in target_model.parameters():
+        param.requires_grad = require_grads
+
 class GaussianSampler():
     def __init__(self,
                  T=1000, T_eval=20, beta_scheduler="linear", spaced=True, rescale_timesteps=False,
@@ -483,6 +487,7 @@ class GaussianSampler():
                                     image: torch.Tensor, mask: torch.Tensor,
                                     t: torch.Tensor, image_mask_cat_fn: Callable, seg_loss_fn: Callable = None,
                                     model_kwargs=None, noise: torch.Tensor = None, noise_disc: torch.nn.Module = None):
+        
         model = self._wrap_model(model)
         if model_kwargs is None:
             model_kwargs = {}
@@ -532,16 +537,16 @@ class GaussianSampler():
             if terms["loss_noise"].shape != terms["loss_mask"].shape:
                 terms["loss"] = terms["loss_noise"].mean() * 0.95 + terms["loss_mask"].mean() * 0.05
             else:
-                terms["loss"] = terms["loss_noise"] * 0.95 + terms["loss_mask"] * 0.05    
+                terms["loss"] = terms["loss_noise"] * 0.95 + terms["loss_mask"] * 0.05
 
         if noise_disc is not None:
             validity_fake = noise_disc(model_output).validity_pred
             validity_loss = (validity_fake - torch.ones_like(validity_fake)) ** 2
             terms["validity_loss"] = validity_loss
             if terms["loss"].shape != terms["validity_loss"].shape:
-                terms["loss"] = terms["loss"].mean() + terms["validity_loss"].mean() * 0.1  
+                terms["loss"] = terms["loss"].mean() + terms["validity_loss"].mean() * 0.1
             else:
-                terms["loss"] = terms["loss"] + terms["validity_loss"] * 0.1    
+                terms["loss"] = terms["loss"] + terms["validity_loss"] * 0.1
         if "vb" in terms:
             # if learning the variance also use the vlb loss
             terms["loss"] = terms["loss"] + terms["vb"]
