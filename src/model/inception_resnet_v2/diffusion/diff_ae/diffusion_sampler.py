@@ -544,9 +544,9 @@ class GaussianSampler():
             validity_loss = (validity_fake - torch.ones_like(validity_fake)) ** 2
             terms["validity_loss"] = validity_loss
             if terms["loss"].shape != terms["validity_loss"].shape:
-                terms["loss"] = terms["loss"].mean() + terms["validity_loss"].mean() * 0.1
+                terms["loss"] = terms["loss"].mean() + terms["validity_loss"].mean() * 0.01
             else:
-                terms["loss"] = terms["loss"] + terms["validity_loss"] * 0.1
+                terms["loss"] = terms["loss"] + terms["validity_loss"] * 0.01
         if "vb" in terms:
             # if learning the variance also use the vlb loss
             terms["loss"] = terms["loss"] + terms["vb"]
@@ -587,7 +587,7 @@ class GaussianSampler():
         validity_fake = noise_disc(model_output).validity_pred
         validity_real = noise_disc(noise).validity_pred
         fake_loss = (validity_fake - torch.zeros_like(validity_fake)) ** 2
-        real_loss = (validity_real - torch.ones_like(validity_fake)) ** 2
+        real_loss = (validity_real - torch.ones_like(validity_real)) ** 2
         validity_loss = (fake_loss + real_loss) / 2
         return validity_loss
 
