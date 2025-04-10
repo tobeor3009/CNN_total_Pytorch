@@ -394,7 +394,7 @@ class SwinMultitask(nn.Module):
         skip_connect_list.append(x)
         
         for encode_idx, encode_layer in enumerate(self.encode_layers):
-            anch = anch_list[encode_idx -1]
+            anch = anch_list[-1 - encode_idx]
             x = encode_layer(x, anch, *emb_list)
             if encode_idx < self.num_layers - 1:
                 skip_connect_list.append(x)
@@ -515,9 +515,11 @@ class SwinMultitask(nn.Module):
                                                     )
         
         decode_out_conv_1 = ConvBlockND(self.embed_dim // 2, self.embed_dim // 2,
-                                      norm="group", act="silu", img_dim=self.img_dim)
+                                        kernel_size=3, padding=1, stride=1,
+                                      norm=GroupNorm32, act="silu", img_dim=self.img_dim)
         decode_out_conv_2 = ConvBlockND(self.embed_dim // 2, self.embed_dim // 2,
-                                      norm="group", act="silu", img_dim=self.img_dim)
+                                        kernel_size=3, padding=1, stride=1,
+                                      norm=GroupNorm32, act="silu", img_dim=self.img_dim)
         decode_out_conv_3 = OutputND(self.embed_dim // 2, decode_out_channel, act=decode_out_act, img_dim=self.img_dim)
         decode_out_conv = nn.Sequential(decode_out_conv_1, decode_out_conv_2, decode_out_conv_3)
         
@@ -599,7 +601,9 @@ class SwinEncoder(SwinMultitask):
         self.drop_rate = drop_rate
         self.attn_drop_rate = attn_drop_rate
         self.use_decoder = use_decoder
+        self.encoder_unet = False
         ##################################
+        self.num_class_embeds = None
         self.num_layers = len(depths)
         self.ape = ape
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
@@ -641,16 +645,16 @@ class SwinEncoder(SwinMultitask):
             nn.Linear(self.feature_dim, emb_channel)
         )
         if self.use_decoder:
-            seg_layer_list = self.get_decode_final_layers(decode_out_channel, decoder_out_act)
-            self.seg_layer_list = nn.ModuleList(seg_layer_list)
-
+            self.decode_layers = self.get_decode_layers(decode_fn_str="pixel_shuffle", is_diffusion=True)
+            decode_layer_list = self.get_decode_final_layers(decode_out_channel, decoder_out_act)
+            self.decode_layer_list = nn.ModuleList(decode_layer_list)
     def forward(self, x):
         if self.use_decoder:
             encoded_feature, skip_connect_list = self.process_encode_layers(x)
-            encoded_feature = self.process_mid_layers(x)
-            decode_feature_list, decode_feature = self.process_decode_layers(encoded_feature, self.recon_decode_layers,
+            encoded_feature = self.process_mid_layers(encoded_feature)
+            decode_feature_list, decode_feature = self.process_decode_layers(encoded_feature, self.decode_layers,
                                                                             self.decode_layer_list, skip_connect_list)
-            latent_feature = self.pool_layer(x)
+            latent_feature = self.pool_layer(encoded_feature)
             return latent_feature, decode_feature_list, decode_feature
         else:
             x, _ = self.process_encode_layers(x)

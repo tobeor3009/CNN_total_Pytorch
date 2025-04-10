@@ -171,8 +171,6 @@ class LambdaLayer(nn.Module):
         super(LambdaLayer, self).__init__()
         self.lambd = lambd
     def forward(self, x):
-        print(x.shape)
-        print(self.lambd(x).shape)
         return self.lambd(x)
     
 class Interpolate(nn.Module):
@@ -1148,7 +1146,9 @@ class SkipEncodeLayer(nn.Module):
                                  norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(before_depth)])
-        
+        self.mlp_after_skip = Mlp(in_features=dim + skip_dim,
+                                  out_features=dim,
+                                  act_layer=act_layer, drop=drop)        
         if downsample is not None:
             self.downsample = downsample(input_resolution,
                                          dim=dim, norm_layer=norm_layer, img_dim=img_dim)
@@ -1162,9 +1162,7 @@ class SkipEncodeLayer(nn.Module):
         self.emb_block_list = get_emb_block_list(act_layer, emb_dim_list, emb_type_list, dim)
         self.emb_type_list = emb_type_list
         # build blocks
-        self.mlp_after_skip = Mlp(in_features=dim + skip_dim,
-                                  out_features=dim,
-                                  act_layer=act_layer, drop=drop)
+
         self.blocks_after_skip = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
@@ -1184,10 +1182,10 @@ class SkipEncodeLayer(nn.Module):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
         for blk in self.blocks_before_skip:
             x = process_checkpoint_block(self.use_checkpoint, blk, x, scale_shift_list)
-        if self.downsample is not None:
-            x = process_checkpoint_block(self.use_checkpoint, self.downsample, x)
         x = torch.cat([x, skip], dim=-1)
         x = self.mlp_after_skip(x)
+        if self.downsample is not None:
+            x = process_checkpoint_block(self.use_checkpoint, self.downsample, x)
         for blk in self.blocks_after_skip:
             x = process_checkpoint_block(self.use_checkpoint, blk, x, scale_shift_list)
         return x

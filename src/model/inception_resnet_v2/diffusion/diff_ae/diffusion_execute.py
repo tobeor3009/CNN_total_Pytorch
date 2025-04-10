@@ -376,9 +376,13 @@ class AutoEncoder(nn.Module):
                 result_dict = self.sampler.training_losses(model=self.diffusion_model,
                                                             x_start=x_start, t=t, noise_disc=self.noise_disc)
             else:
+                if isinstance(encoded_feature, tuple):
+                    model_kwargs = {'latent_feature': encoded_feature}
+                else:
+                    model_kwargs = {'cond': encoded_feature}
                 result_dict = self.sampler.training_losses(model=self.diffusion_model,
                                                             x_start=x_start, t=t, noise_disc=self.noise_disc,
-                                                            model_kwargs={'cond': encoded_feature})
+                                                            model_kwargs=model_kwargs)
 
         elif self.train_mode == "latent_net":
             t, weight = self.T_sampler.sample(len(x_start), torch_device)
