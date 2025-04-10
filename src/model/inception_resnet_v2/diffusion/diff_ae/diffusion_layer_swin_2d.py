@@ -1121,11 +1121,102 @@ class BasicLayerV2(nn.Module):
             check_hasattr_and_init(blk.norm2, "weight", 1)
             check_hasattr_and_init(blk.norm2, "bias", 0)
 
+class SkipEncodeLayer(nn.Module):
+    def __init__(self, dim, skip_dim, input_resolution, depth, num_heads, window_size,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, 
+                 downsample=None, use_checkpoint=False, pretrained_window_size=0,
+                 emb_dim_list=[], emb_type_list=[], img_dim=2):
+
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.depth = depth
+        self.use_checkpoint = use_checkpoint
+        before_depth = depth // 2
+        after_depth = depth - before_depth
+
+        self.blocks_before_skip = nn.ModuleList([
+            SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                                 num_heads=num_heads, window_size=window_size,
+                                 shift_size=window_size // 2,
+                                 mlp_ratio=mlp_ratio,
+                                 qkv_bias=qkv_bias,
+                                 drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
+                                 drop_path=drop_path[i] if isinstance(
+                                     drop_path, list) else drop_path,
+                                 norm_layer=norm_layer, act_layer=act_layer,
+                                 pretrained_window_size=pretrained_window_size)
+            for i in range(before_depth)])
+        
+        if downsample is not None:
+            self.downsample = downsample(input_resolution,
+                                         dim=dim, norm_layer=norm_layer, img_dim=img_dim)
+            dim *= 2
+            num_heads *= 2
+            window_size = max(window_size // 2, 2)
+            input_resolution = input_resolution // 2
+        else:
+            self.downsample = None
+
+        self.emb_block_list = get_emb_block_list(act_layer, emb_dim_list, emb_type_list, dim)
+        self.emb_type_list = emb_type_list
+        # build blocks
+        self.mlp_after_skip = Mlp(in_features=dim + skip_dim,
+                                  out_features=dim,
+                                  act_layer=act_layer, drop=drop)
+        self.blocks_after_skip = nn.ModuleList([
+            SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                                 num_heads=num_heads, window_size=window_size,
+                                 shift_size=window_size // 2,
+                                 mlp_ratio=mlp_ratio,
+                                 qkv_bias=qkv_bias,
+                                 drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
+                                 drop_path=drop_path[i] if isinstance(
+                                     drop_path, list) else drop_path,
+                                 norm_layer=norm_layer, act_layer=act_layer,
+                                 pretrained_window_size=pretrained_window_size,
+                                 img_dim=img_dim)
+            for i in range(after_depth)])
+        self._init_respostnorm()
+
+    def forward(self, x, skip, *emb_args):
+        scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
+        for blk in self.blocks_before_skip:
+            x = process_checkpoint_block(self.use_checkpoint, blk, x, scale_shift_list)
+        if self.downsample is not None:
+            x = process_checkpoint_block(self.use_checkpoint, self.downsample, x)
+        x = torch.cat([x, skip], dim=-1)
+        x = self.mlp_after_skip(x)
+        for blk in self.blocks_after_skip:
+            x = process_checkpoint_block(self.use_checkpoint, blk, x, scale_shift_list)
+        return x
+    
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
+
+    def flops(self):
+        flops = 0
+        for blk in self.blocks:
+            flops += blk.flops()
+        if self.downsample is not None:
+            flops += self.downsample.flops()
+        return flops
+
+    def _init_respostnorm(self):
+        for blk in self.blocks_before_skip + self.blocks_after_skip:
+            check_hasattr_and_init(blk.norm1, "weight", 1)
+            check_hasattr_and_init(blk.norm1, "bias", 0)
+            check_hasattr_and_init(blk.norm2, "weight", 1)
+            check_hasattr_and_init(blk.norm2, "bias", 0)
+
 class BasicDecodeLayer(nn.Module):
     def __init__(self, dim, skip_dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, upsample=None, decode_fn_str="pixel_shuffle",
-                 use_checkpoint=False, pretrained_window_size=0, emb_dim_list=[], emb_type_list=[], img_dim=2):
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, 
+                 upsample=None, decode_fn_str="pixel_shuffle",
+                 use_checkpoint=False, pretrained_window_size=0,
+                 emb_dim_list=[], emb_type_list=[], img_dim=2):
 
         super().__init__()
         self.dim = dim
@@ -1178,6 +1269,7 @@ class BasicDecodeLayer(nn.Module):
                                  img_dim=img_dim)
             for i in range(after_depth)])
         self._init_respostnorm()
+
     def forward(self, x, skip, *emb_args):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
         for blk in self.blocks_before_skip:

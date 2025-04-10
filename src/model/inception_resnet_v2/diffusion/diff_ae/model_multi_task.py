@@ -247,7 +247,7 @@ class InceptionResNetV2_UNet(nn.Module):
         time_emb = timestep_embedding(t, self.time_emb_dim_init)
         time_emb = self.time_mlp(time_emb)
         emb_list.append(time_emb)
-        if (cond is None) and (latent_feature is None)  and self.include_encoder:
+        if (cond is None) and (latent_feature is None) and self.include_encoder:
             assert x.shape == x_start.shape, f"x.shape: {x.shape}, x_start.shape: {x_start.shape}"
             latent_feature = self.encoder(x_start)
         else:
