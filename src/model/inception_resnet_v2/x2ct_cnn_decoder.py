@@ -18,7 +18,6 @@ from torch.utils.checkpoint import checkpoint
 USE_INPLACE = True
 USE_REENTRANT = False
 
-
 class InceptionResNetV2_X2CT(nn.Module):
     def __init__(self, input_shape, seg_channels=1,
                  conv_norm="instance", conv_act="leakyrelu",
