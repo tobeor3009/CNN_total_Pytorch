@@ -87,7 +87,7 @@ class Mlp(nn.Module):
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer
         self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = ChannelDropout(drop, inplace=DROPOUT_INPLACE)
+        self.drop = nn.Dropout(drop, inplace=DROPOUT_INPLACE)
 
     def forward(self, x):
         x = self.fc1(x)
