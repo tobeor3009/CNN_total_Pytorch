@@ -240,6 +240,7 @@ class BasicUNet(nn.Module):
             non_diffusion_emb_list.append(class_emb)
 
         encode_feature, skip_connect_list = self.encode_forward(x, *non_diffusion_emb_list)
+        output["encode_feature"] = encode_feature
         if self.get_seg:
             seg_decode_feature = self.decode_forward(self.seg_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
             output["seg_pred"] = seg_decode_feature
