@@ -804,6 +804,7 @@ class PatchEmbedding(nn.Module):
             self.pos_embed(pos).unsqueeze(0).repeat(B, 1, 1)
 
         return embed
+    
 class PatchMerging(nn.Module):
     r""" Patch Merging Layer.
 
@@ -1083,6 +1084,7 @@ class BasicLayerV2(nn.Module):
                                  pretrained_window_size=pretrained_window_size)
             for i in range(depth)])
         self._init_respostnorm()
+
     def forward(self, x, *emb_args):
         scale_shift_list = get_scale_shift_list(self.emb_block_list, self.emb_type_list, emb_args)
         if self.downsample is not None:

@@ -306,6 +306,8 @@ class SwinMultitask(nn.Module):
 
         encoded_feature, skip_connect_list = self.process_encode_layers(x, non_diffusion_emb_list)
         encoded_feature = self.process_mid_layers(encoded_feature, non_diffusion_emb_list)
+        
+        output["encoded_feature"] = encoded_feature
         if self.get_seg:
             seg_output = self.process_decode_layers(encoded_feature, self.seg_decode_layers,
                                                     self.seg_layer_list, skip_connect_list, non_diffusion_emb_list)
@@ -334,6 +336,7 @@ class SwinMultitask(nn.Module):
 
         encoded_feature, skip_connect_list = self.process_encode_anch_layers(x, anch_list, non_diffusion_emb_list)
         encoded_feature = self.process_mid_layers(encoded_feature, non_diffusion_emb_list)
+        output["encoded_feature"] = encoded_feature
         if self.get_seg:
             seg_output = self.process_decode_layers(encoded_feature, self.seg_decode_layers,
                                                     self.seg_layer_list, skip_connect_list, non_diffusion_emb_list)
@@ -469,7 +472,7 @@ class SwinMultitask(nn.Module):
                 common_kwarg_dict["skip_dim"] = layer_dim
                 encode_layer = SkipEncodeLayer(**common_kwarg_dict)
             else:
-                encode_layer = BasicLayerV2(**common_kwarg_dict)
+                encode_layer = BasicLayerV1(**common_kwarg_dict)
             encode_layers.append(encode_layer)
         return encode_layers
     
@@ -477,12 +480,12 @@ class SwinMultitask(nn.Module):
         i_layer = self.num_layers - 1
         feature_dim = self.feature_dim
         common_kwarg_dict = self.get_layer_config_dict(feature_dim, self.feature_hw, i_layer, is_diffusion=True)
-        mid_layer_1 = BasicLayerV2(**common_kwarg_dict)
+        mid_layer_1 = BasicLayerV1(**common_kwarg_dict)
         mid_attn_norm_layer = "group" if self.norm_layer == "group" else "rms"
         # TBD: self.attn_drop_rate 추가할지 고민
         mid_attn = AttentionBlock(channels=feature_dim, num_heads=common_kwarg_dict["num_heads"],
                                   use_checkpoint=common_kwarg_dict["use_checkpoint"], norm_layer=mid_attn_norm_layer)
-        mid_layer_2 = BasicLayerV2(**common_kwarg_dict)
+        mid_layer_2 = BasicLayerV1(**common_kwarg_dict)
         return mid_layer_1, mid_attn, mid_layer_2
     
     def get_decode_layers(self, decode_fn_str="pixel_shuffle", is_diffusion=False):

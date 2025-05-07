@@ -56,7 +56,18 @@ class RMSNorm(nn.Module):
             torch.Tensor: Normalized tensor with the same shape as input.
         """
         return F.rms_norm(x, (self.dim,), self.weight, self.eps)
-    
+
+def numerical_stable_softmax(x, dim=1):
+    """
+    Overflow 방지를 위한 numerically stable softmax.
+    x: 입력 tensor
+    dim: softmax 연산을 적용할 차원
+    """
+    x_max, _ = torch.max(x, dim=dim, keepdim=True)  # max subtraction
+    x_exp = torch.exp(x - x_max)
+    x_sum = torch.sum(x_exp, dim=dim, keepdim=True)
+    return x_exp / x_sum
+
 def get_act(act):
     if isinstance(act, nn.Module) or callable(act):
         act = act
@@ -79,7 +90,7 @@ def get_act(act):
     elif act == "tanh":
         act = torch.tanh
     elif act == "softmax":
-        act = nn.Softmax(dim=1)
+        act = partial(numerical_stable_softmax, dim=1)
     elif act is None:
         act = nn.Identity()
     else:
