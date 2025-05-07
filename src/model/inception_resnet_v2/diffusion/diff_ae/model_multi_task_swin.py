@@ -306,6 +306,8 @@ class SwinMultitask(nn.Module):
 
         encoded_feature, skip_connect_list = self.process_encode_layers(x, non_diffusion_emb_list)
         encoded_feature = self.process_mid_layers(encoded_feature, non_diffusion_emb_list)
+        
+        output["encoded_feature"] = encoded_feature
         if self.get_seg:
             seg_output = self.process_decode_layers(encoded_feature, self.seg_decode_layers,
                                                     self.seg_layer_list, skip_connect_list, non_diffusion_emb_list)
@@ -334,6 +336,7 @@ class SwinMultitask(nn.Module):
 
         encoded_feature, skip_connect_list = self.process_encode_anch_layers(x, anch_list, non_diffusion_emb_list)
         encoded_feature = self.process_mid_layers(encoded_feature, non_diffusion_emb_list)
+        output["encoded_feature"] = encoded_feature
         if self.get_seg:
             seg_output = self.process_decode_layers(encoded_feature, self.seg_decode_layers,
                                                     self.seg_layer_list, skip_connect_list, non_diffusion_emb_list)
