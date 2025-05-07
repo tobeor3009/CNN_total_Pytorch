@@ -597,12 +597,14 @@ class InceptionResNetV2_UNet(nn.Module):
             return {"num_heads": num_heads, "dim_head": dim_head, "full_attn": True}
     
     def get_attn_layer(self, dim, num_heads, dim_head, use_full_attn, use_checkpoint):
-        if use_full_attn is True:
+        if use_full_attn == True:
             return AttentionBlock(channels=dim, num_heads=num_heads,
                                   use_checkpoint=use_checkpoint)
-        elif use_full_attn is False:
+        elif use_full_attn == False:
             return LinearAttention(dim=dim, num_heads=num_heads, dim_head=dim_head,
                                    use_checkpoint=use_checkpoint)
+        elif use_full_attn is None:
+            return nn.Identity()
         else:
             return nn.Identity()
 

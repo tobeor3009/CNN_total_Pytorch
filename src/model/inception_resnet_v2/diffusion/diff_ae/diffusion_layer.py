@@ -15,7 +15,7 @@ from src.model.inception_resnet_v2.common_module.cbam import CBAM
 from src.model.inception_resnet_v2.common_module.layers import get_act, DEFAULT_ACT, INPLACE
 from src.model.inception_resnet_v2.common_module.layers import ConcatBlock
 from .nn import zero_module, conv_nd
-
+from src.model.inception_resnet_v2.diffusion.diff_ae.flash_attn import FlashMultiheadAttention
 conv_transpose_kwarg_dict = {
     "kernel_size":3,
     "padding":1,
@@ -380,6 +380,7 @@ class AttentionBlock(nn.Module):
         num_head_channels=-1,
         use_checkpoint=False,
         use_new_attention_order=False,
+        use_flash_attention=False,
         norm_layer="rms"
     ): 
         super().__init__()
@@ -398,13 +399,18 @@ class AttentionBlock(nn.Module):
         elif norm_layer== "group":
             self.norm = GroupNorm32(channels)
         
-        self.qkv = conv_nd(1, channels, channels * 3, 1)
-        if use_new_attention_order:
-            # split qkv before split heads
-            self.attention = QKVAttention(self.num_heads)
+        self.use_flash_attention = use_flash_attention
+        if use_flash_attention:
+            self.qkv = None
+            self.attention = FlashMultiheadAttention(dim=channels, num_heads=self.num_heads, causal=False)
         else:
-            # split heads before split qkv
-            self.attention = QKVAttentionLegacy(self.num_heads)
+            self.qkv = conv_nd(1, channels, channels * 3, 1)
+            if use_new_attention_order:
+                # split qkv before split heads
+                self.attention = QKVAttention(self.num_heads)
+            else:
+                # split heads before split qkv
+                self.attention = QKVAttentionLegacy(self.num_heads)
 
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
 
@@ -419,8 +425,13 @@ class AttentionBlock(nn.Module):
         b, c, *spatial = x.shape
         x = x.reshape(b, c, -1)
         x = self.norm(x)
-        qkv = self.qkv(x)
-        h = self.attention(qkv)
+        if self.use_flash_attention:
+            x = rearrange(x, 'b c n -> b n c')
+            x = self.attention(x)
+            x = rearrange(x, 'b n c -> b c n')
+        else:
+            qkv = self.qkv(x)
+            h = self.attention(qkv)
         h = self.proj_out(h)
         return (x + h).reshape(b, c, *spatial)
     
@@ -572,8 +583,10 @@ class ResNetBlockND(nn.Module):
             attn_layer = nn.Identity()
         elif attn_info["full_attn"] is None:
             attn_layer = nn.Identity()
-        elif attn_info["full_attn"] is True:
+        elif attn_info["full_attn"] == True:
             attn_layer = AttentionBlock(out_channels, attn_info["num_heads"], use_checkpoint=use_checkpoint)
+        elif attn_info["full_attn"] == "flash-attn":
+            attn_layer = AttentionBlock(out_channels, attn_info["num_heads"], use_checkpoint=use_checkpoint, use_flash_attention=True)
         else:
             attn_layer = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"], use_checkpoint=use_checkpoint)
 
@@ -909,7 +922,7 @@ class MultiDecoderND(nn.Module):
 class MultiDecoderND_V2(nn.Module):
     def __init__(self, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2, dropout_proba=0.0,
-                 emb_dim_list=None, emb_type_list=None, attn_info=None, use_checkpoint=False,
+                 emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False,
                  image_shape=None, decode_fn_str_list=["pixel_shuffle"], img_dim=2, use_residual_conv=True):
         super().__init__()
 

@@ -24,6 +24,8 @@ from functools import wraps
 from packaging import version
 import itertools
 from src.util.common import _ntuple
+from src.model.inception_resnet_v2.diffusion.diff_ae.flash_attn import FlashMultiheadAttention
+
 DEFAULT_ACT = get_act("silu")
 
 def exists(x):
@@ -239,7 +241,6 @@ class AttentionBlock(nn.Module):
         num_heads=1,
         num_head_channels=-1,
         use_checkpoint=False,
-        use_new_attention_order=False,
         norm_layer="group"
     ):  
         super().__init__()
@@ -258,15 +259,8 @@ class AttentionBlock(nn.Module):
         elif norm_layer == "rms":
             norm_layer = RMSNorm
         self.norm = norm_layer(channels)
-        self.qkv = conv_nd(1, channels, channels * 3, 1)
-        if use_new_attention_order:
-            # split qkv before split heads
-            self.attention = QKVAttention(self.num_heads)
-        else:
-            # split heads before split qkv
-            self.attention = QKVAttentionLegacy(self.num_heads)
-
-        self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
+        self.attention = FlashMultiheadAttention(dim=channels, num_heads=self.num_heads, causal=False)
+        self.proj_out = nn.Linear(channels, channels)
 
     def forward(self, x, *args):
         if self.use_checkpoint:
@@ -278,11 +272,9 @@ class AttentionBlock(nn.Module):
     def _forward_impl(self, x, *args):
         b, n, c = x.shape
         x = self.norm(x)
-        x = x.permute(0, 2, 1)
-        qkv = self.qkv(x)
-        h = self.attention(qkv)
+        h = self.attention(x)
         h = self.proj_out(h)
-        return (x + h).permute(0, 2, 1)
+        return (x + h)
     
 def get_emb_block_list(act_layer, emb_dim_list, emb_type_list, dim):
     assert len(emb_dim_list) == len(emb_type_list)
