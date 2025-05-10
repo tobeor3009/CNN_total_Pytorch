@@ -36,6 +36,7 @@ class RMSNorm(nn.Module):
             param_shape = (1, dim, 1, 1, 1)
             self.normalize_dim = 1
         self.weight = nn.Parameter(torch.ones(*param_shape))
+        self.eps = eps
         self.scale = dim ** 0.5
 
     def forward(self, x):
