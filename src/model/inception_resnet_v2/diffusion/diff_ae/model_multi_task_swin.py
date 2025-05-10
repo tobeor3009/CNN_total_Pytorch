@@ -16,9 +16,11 @@ from .model import MLPSkipNet
 from einops import rearrange, repeat
 from torch.nn import functional as F
 from einops.layers.torch import Rearrange
+from src.model.inception_resnet_v2.diffusion.diff_ae.flash_attn import FlashMultiheadAttention
+from torch.utils.checkpoint import checkpoint
 
 class RMSNorm(nn.Module):
-    def __init__(self, dim, img_dim=0):
+    def __init__(self, dim, img_dim=0, eps=1e-8):
         super().__init__()
         # img_dim = 0: sequence [B, N, D], img_dim = 1: 1d, img_dim = 2: 2d, img_dim = 3: 3d
         if img_dim == 0:
@@ -35,9 +37,47 @@ class RMSNorm(nn.Module):
             self.normalize_dim = 1
         self.weight = nn.Parameter(torch.ones(*param_shape))
         self.scale = dim ** 0.5
-    def forward(self, x):
-        return F.normalize(x, dim=self.normalize_dim) * self.weight * self.scale
 
+    def forward(self, x):
+        rms = x.pow(2).mean(dim=self.normalize_dim, keepdim=True).add(self.eps).sqrt()
+        x_normed = x / rms
+        return x_normed * self.weight * self.scale
+
+class EncoderLayer(nn.Module):
+    def __init__(self, embed_dim, num_heads, hidden_dim=None, dropout=0.0, use_checkpoint=False):
+        super().__init__()
+        hidden_dim = hidden_dim or embed_dim * 4
+        self.self_attn = FlashMultiheadAttention(embed_dim, num_heads, causal=False)
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, embed_dim),
+        )
+        self.rms_norm1 = RMSNorm(embed_dim, img_dim=0)
+        self.rms_norm2 = RMSNorm(embed_dim, img_dim=0)
+        self.use_checkpoint = use_checkpoint
+
+    def forward(self, x):
+        if self.use_checkpoint:
+            x = checkpoint(self._forward_impl, x)
+        else:
+            x = self._forward_impl(x)
+        return x
+    
+    def _forward_impl(self, x):
+        
+        residual = x
+        hidden_states = self.rms_norm1(x)
+        hidden_states = self.self_attn(hidden_states)
+        hidden_states = hidden_states + residual
+        
+        residual = hidden_states
+        hidden_states = self.rms_norm2(x)
+        hidden_states = self.mlp(hidden_states)
+        hidden_states = hidden_states + residual
+
+        return hidden_states
+    
 def get_rms_norm_nd(img_dim):
     norm_layer = partial(RMSNorm, img_dim=img_dim)
     return norm_layer
@@ -59,7 +99,7 @@ class SwinMultitask(nn.Module):
                  num_classes=1000, class_act="softmax", recon_act="sigmoid", recon_decode_fn_str="pixel_shuffle",
                  validity_shape=(1, 8, 8), validity_act=None,
                 num_class_embeds=None, cond_drop_prob=0.5,
-                embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
+                embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24], mid_attn_depths=12,
                 window_sizes=[16, 16, 16, 16], mlp_ratio=4., qkv_bias=True, ape=True, patch_norm=True,
                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.0,
                 use_checkpoint=False, pretrained_window_sizes=0,
@@ -86,6 +126,7 @@ class SwinMultitask(nn.Module):
         self.embed_dim = embed_dim
         self.depths = depths
         self.num_heads = num_heads
+        self.mid_attn_depths = mid_attn_depths
         self.window_sizes = window_sizes
         self.mlp_ratio = mlp_ratio
         self.qkv_bias = qkv_bias
@@ -508,10 +549,11 @@ class SwinMultitask(nn.Module):
         feature_dim = self.feature_dim
         common_kwarg_dict = self.get_layer_config_dict(feature_dim, self.feature_hw, i_layer, is_diffusion=True)
         mid_layer_1 = BasicLayerV1(**common_kwarg_dict)
-        mid_attn_norm_layer = self.seq_norm_layer
         # TBD: self.attn_drop_rate 추가할지 고민
-        mid_attn = AttentionBlock(channels=feature_dim, num_heads=common_kwarg_dict["num_heads"],
-                                  use_checkpoint=common_kwarg_dict["use_checkpoint"], norm_layer=mid_attn_norm_layer)
+        mid_attn_list = [EncoderLayer(embed_dim=feature_dim, num_heads=self.num_heads[i_layer], hidden_dim=None,
+                        dropout=0.0, use_checkpoint=self.use_checkpoint[i_layer]) for _ in range(self.mid_attn_depths)] 
+        
+        mid_attn = nn.Sequential(*mid_attn_list)
         mid_layer_2 = BasicLayerV1(**common_kwarg_dict)
         return mid_layer_1, mid_attn, mid_layer_2
     
