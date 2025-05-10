@@ -43,12 +43,34 @@ class RMSNorm(nn.Module):
         rms = x.pow(2).mean(dim=self.normalize_dim, keepdim=True).add(self.eps).sqrt()
         x_normed = x / rms
         return x_normed * self.weight * self.scale
+    
+class MultiHeadSelfAttention(nn.Module):
+    def __init__(self, dim, num_heads, causal=False):
+        super().__init__()
+        assert dim % num_heads == 0
+        self.num_heads = num_heads
+        self.causal = causal
+        self.head_dim = dim // num_heads
+        self.qkv_proj = nn.Linear(dim, dim * 3)
+        self.out_proj = nn.Linear(dim, dim)
 
+    def forward(self, x):
+        B, L, D = x.shape
+        softmax_scale = 1 / (D ** 0.5)
+        qkv = self.qkv_proj(x)  # (B, L, 3 * D)
+        qkv = qkv.view(B, L, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv.unbind(dim=2)  # Each: (B, L, H, D_head)
+        q, k, v = map(lambda t: t.transpose(1, 2), (q, k, v))  # (B, H, L, D_head)
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0,
+                                             is_causal=self.causal, scale=softmax_scale, enable_gqa=True)
+        out = out.transpose(1, 2).reshape(B, L, D)
+        return self.out_proj(out)
+    
 class EncoderLayer(nn.Module):
     def __init__(self, embed_dim, num_heads, hidden_dim=None, dropout=0.0, use_checkpoint=False):
         super().__init__()
         hidden_dim = hidden_dim or embed_dim * 4
-        self.self_attn = FlashMultiheadAttention(embed_dim, num_heads, causal=False)
+        self.self_attn = MultiHeadSelfAttention(embed_dim, num_heads, causal=False)
         self.mlp = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim),
             nn.Dropout(dropout),
@@ -73,11 +95,12 @@ class EncoderLayer(nn.Module):
         hidden_states = hidden_states + residual
         
         residual = hidden_states
-        hidden_states = self.rms_norm2(x)
+        hidden_states = self.rms_norm2(hidden_states)
         hidden_states = self.mlp(hidden_states)
         hidden_states = hidden_states + residual
 
         return hidden_states
+
 class ToContiguous(nn.Module):
     def forward(self, x):
         return x.contiguous()
