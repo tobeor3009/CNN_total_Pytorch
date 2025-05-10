@@ -78,7 +78,10 @@ class EncoderLayer(nn.Module):
         hidden_states = hidden_states + residual
 
         return hidden_states
-    
+class ToContiguous(nn.Module):
+    def forward(self, x):
+        return x.contiguous()
+        
 def get_rms_norm_nd(img_dim):
     norm_layer = partial(RMSNorm, img_dim=img_dim)
     return norm_layer
@@ -579,8 +582,8 @@ class SwinMultitask(nn.Module):
         decode_final_layer_1 = BasicDecodeLayer(skip_dim=self.embed_dim, upsample=None, **common_kwarg_dict)
         decode_final_layer_2 = BasicLayerV1(**common_kwarg_dict)
         
-        view_layer = Rearrange(' b (h w) c -> b c h w', h=self.patches_resolution[0], w=self.patches_resolution[1])
-        decode_final_layer_list = [view_layer]
+        view_layer = Rearrange('b (h w) c -> b c h w', h=self.patches_resolution[0], w=self.patches_resolution[1])
+        decode_final_layer_list = [view_layer, ToContiguous()]
         for _ in range(self.patch_expand_conv_dim):
             decode_final_layer = nn.Sequential(
                 ResNetBlockND(self.embed_dim, self.embed_dim, kernel_size=3, padding=1, stride=1, norm=self.nd_norm_layer, act="silu"),
