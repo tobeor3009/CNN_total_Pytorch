@@ -100,7 +100,7 @@ class SwinMultitask(nn.Module):
                  num_classes=1000, class_act="softmax", recon_act="sigmoid", recon_decode_fn_str="pixel_shuffle",
                  validity_shape=(1, 8, 8), validity_act=None,
                 num_class_embeds=None, cond_drop_prob=0.5,
-                embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24], mid_attn_depths=12,
+                embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24], mid_attn_depths=6,
                 window_sizes=[16, 16, 16, 16], mlp_ratio=4., qkv_bias=True, ape=True, patch_norm=True,
                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.0,
                 use_checkpoint=False, pretrained_window_sizes=0,
