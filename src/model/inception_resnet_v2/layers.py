@@ -4,6 +4,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
+from .cbam import CBAM as CBAM2D
+from .cbam_3d import CBAM3D
 
 INPLACE = False
 DEFAULT_ACT = "relu6"
@@ -182,13 +184,18 @@ class ConcatBlock(nn.Module):
 
 
 class SkipUpSample3D(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, cbam=False):
         super().__init__()
+        self.cbam = cbam
         self.conv_2d = ConvBlock2D(in_channels=in_channels,
                                    out_channels=out_channels,
                                    kernel_size=1)
-        # self.cbam = CBAM(gate_channels=out_channels,
-        #                  reduction_ratio=16)
+        if cbam:
+            self.cbam_2d = CBAM2D(gate_channels=out_channels,
+                                  reduction_ratio=16)
+            self.cbam_3d = CBAM3D(gate_channels=out_channels,
+                                  reduction_ratio=16)
+
         self.conv_3d = ConvBlock3D(in_channels=out_channels,
                                    out_channels=out_channels,
                                    kernel_size=3)
@@ -198,10 +205,13 @@ class SkipUpSample3D(nn.Module):
         # input_2d.shape: [H C 1 H W]
         _, _, H, _ = input_tensor.size()
         input_2d = self.conv_2d(input_tensor)
-        # input_2d = self.cbam(input_2d)
+        if self.cbam:
+            input_2d = self.cbam_2d(input_2d)
         input_3d = input_2d.unsqueeze(2)
         input_3d = input_3d.expand(-1, -1, H, -1, -1)
         input_3d = self.conv_3d(input_3d)
+        if self.cbam:
+            input_3d = self.cbam_3d(input_3d)
         return input_3d
 
 
