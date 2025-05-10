@@ -1,8 +1,9 @@
 import torch
 import torch.nn.functional as F
+import random
 
 
-def compute_gradient_penalty(D, real_samples, fake_samples, blend_labels):
+def compute_gradient_penalty_blend(D, real_samples, fake_samples, blend_labels):
     """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2 using blended images."""
     inter_mode = "nearest"
     device = real_samples.device
@@ -48,18 +49,17 @@ def compute_gradient_penalty(D, real_samples, fake_samples, blend_labels):
 def get_blend_images_2d(target_images, fake_images, patch_size=64, disc_channel=1):
     # 이미지의 크기 및 패치에 따른 격자 수를 확인
     B, C, H, W = target_images.shape
-    grid_size = H // patch_size
-
+    grid_H = H // patch_size
+    grid_W = W // patch_size
     # 레이블 배열 초기화
-    label_array = torch.zeros((B, grid_size, grid_size), dtype=bool)
+    label_array = torch.zeros((B, grid_H, grid_W), dtype=bool)
     blended_image = torch.zeros_like(target_images)
-
-    for i in range(grid_size):
-        for j in range(grid_size):
-            # 0 또는 1을 무작위로 선택하여 타겟 이미지 또는 가짜 이미지 패치를 선택
-            choice = torch.randint(0, 2, (B,))
-            for b in range(B):
-                if choice[b].item() == 0:
+    for b in range(B):
+        rand = random.random()
+        choice = torch.rand([grid_H, grid_W])
+        for i in range(grid_H):
+            for j in range(grid_W):
+                if choice[i, j].item() > rand:
                     blended_image[b, :, i * patch_size:(i + 1) * patch_size,
                                   j * patch_size:(j + 1) * patch_size] = target_images[b, :,
                                                                                        i * patch_size:(i + 1) * patch_size,
@@ -87,14 +87,13 @@ def get_blend_images_3d(target_images, fake_images, patch_size=64, disc_channel=
                                grid_size_h,
                                grid_size_w), dtype=bool)
     blended_image = torch.zeros_like(target_images)
-
-    for i in range(grid_size_d):
-        for j in range(grid_size_h):
-            for k in range(grid_size_w):
-                # 0 또는 1을 무작위로 선택하여 타겟 이미지 또는 가짜 이미지 패치를 선택
-                choice = torch.randint(0, 2, (B,))
-                for b in range(B):
-                    if choice[b].item() == 0:
+    for b in range(B):
+        rand = random.random()
+        choice = torch.rand([grid_size_d, grid_size_h, grid_size_w])
+        for i in range(grid_size_d):
+            for j in range(grid_size_h):
+                for k in range(grid_size_w):
+                    if choice[i, j, k].item() >= rand:
                         blended_image[b, :,
                                       i * patch_size:(i + 1) * patch_size,
                                       j * patch_size:(j + 1) * patch_size,

@@ -1,15 +1,84 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from torch.utils.checkpoint import checkpoint
+from timm.models.layers import trunc_normal_
+from timm.models.layers import DropPath, to_2tuple
 import numpy as np
-from einops import rearrange
 from ..layers import get_act
+
 DEFAULT_ACT = get_act("leakyrelu")
-DROPOUT_INPLACE = True
+DROPOUT_INPLACE = False
 
+def check_hasattr_and_init(obj, param_name, init_value):
+    if hasattr(obj, param_name):
+        target_param = getattr(obj, param_name)
+        if isinstance(target_param, torch.nn.Parameter):
+            nn.init.constant_(target_param, init_value)
+class InstanceNormChannelLast(nn.Module):
+    def __init__(self, num_features, eps=1e-5, affine=False, momentum=0.1):
+        """
+        Parameters:
+        - num_features: Number of features in the input tensor.
+        - eps: Small value added to the denominator for numerical stability.
+        - affine: If True, adds learnable affine parameters.
+        - momentum: Momentum for the running mean and variance.
+        """
+        super(InstanceNormChannelLast, self).__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.affine = affine
+        self.momentum = momentum
 
+        if self.affine:
+            # Learnable affine parameters
+            self.weight = nn.Parameter(torch.ones(num_features))
+            self.bias = nn.Parameter(torch.zeros(num_features))
+        else:
+            self.register_parameter('weight', None)
+            self.register_parameter('bias', None)
+
+    def forward(self, x):
+        """
+        Apply instance normalization to the input tensor.
+        
+        Parameters:
+        - x: Input tensor with shape (batch_size, height, width, num_features).
+        
+        Returns:
+        - Normalized tensor with the same shape as the input.
+        """
+        
+        
+        target_dim_tuple = tuple(range(1, x.ndim - 1))
+        
+        # Compute mean and variance across the spatial dimensions (height and width)
+        x_mean = x.mean(dim=target_dim_tuple, keepdim=True)
+        x_var = x.var(dim=target_dim_tuple, correction=0, keepdim=True)
+        x_std = torch.sqrt(x_var + self.eps)
+        # Normalize the input tensor
+        x_normalized = (x - x_mean) / x_std
+
+        # Apply affine transformation if enabled
+        if self.affine:
+            unsqeeze_tuple = tuple(1 for _ in range(1, x.ndim))
+            weight = self.weight.view(*unsqeeze_tuple, self.num_features)
+            bias = self.bias.view(*unsqeeze_tuple, self.num_features)
+            x_normalized = x_normalized * weight + bias
+
+        return x_normalized
+class ChannelDropout(nn.Module):
+    def __init__(self, p=0.5, inplace=DROPOUT_INPLACE):
+        super(ChannelDropout, self).__init__()
+        self.p = p
+        self.dropout1d = nn.Dropout1d(p=self.p, inplace=inplace)
+
+    def forward(self, x):
+        x = x.permute(0, 2, 1)
+        x = self.dropout1d(x)
+        x = x.permute(0, 2, 1)
+        return x
+    
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=DEFAULT_ACT, drop=0.):
         super().__init__()
@@ -78,8 +147,8 @@ class WindowAttention(nn.Module):
         pretrained_window_size (tuple[int]): The height and width of the window in pre-training.
     """
 
-    def __init__(self, dim, window_size, num_heads, qkv_bias=True, attn_drop=0., proj_drop=0.,
-                 pretrained_window_size=[0, 0]):
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qkv_drop=0., attn_drop=0., proj_drop=0.,
+                 pretrained_window_size=[0, 0], cbp_dim=512):
 
         super().__init__()
         self.dim = dim
@@ -91,9 +160,9 @@ class WindowAttention(nn.Module):
                                         requires_grad=True)
 
         # mlp to generate continuous relative position bias
-        self.cpb_mlp = nn.Sequential(nn.Linear(2, 512, bias=True),
+        self.cpb_mlp = nn.Sequential(nn.Linear(2, cbp_dim, bias=True),
                                      nn.ReLU(inplace=True),
-                                     nn.Linear(512, num_heads, bias=False))
+                                     nn.Linear(cbp_dim, num_heads, bias=False))
         # get relative_coords_table
         relative_coords_h = torch.arange(-(self.window_size[0] - 1),
                                          self.window_size[0], dtype=torch.float32)
@@ -121,15 +190,11 @@ class WindowAttention(nn.Module):
         # get pair-wise relative position index for each token inside the window
         coords_h = torch.arange(self.window_size[0])
         coords_w = torch.arange(self.window_size[1])
-        coords = torch.stack(torch.meshgrid([coords_h,
-                                             coords_w], indexing='ij'))  # 2, Wh, Ww
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w], indexing='ij'))  # 2, Wh, Ww
         coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
-        relative_coords = coords_flatten[:, :, None] - \
-            coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
-        relative_coords = relative_coords.permute(
-            1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
-        relative_coords[:, :, 0] += self.window_size[0] - \
-            1  # shift to start from 0
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
@@ -143,6 +208,7 @@ class WindowAttention(nn.Module):
         else:
             self.q_bias = None
             self.v_bias = None
+        self.qkv_drop = nn.Dropout(qkv_drop, inplace=DROPOUT_INPLACE)
         self.attn_drop = nn.Dropout(attn_drop, inplace=DROPOUT_INPLACE)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop, inplace=DROPOUT_INPLACE)
@@ -160,7 +226,9 @@ class WindowAttention(nn.Module):
             qkv_bias = torch.cat((self.q_bias, torch.zeros_like(
                 self.v_bias, requires_grad=False), self.v_bias))
         qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
-        qkv = qkv.reshape(B_, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv_drop(qkv)
+        qkv = qkv.reshape(B_, N, 3,
+                          self.num_heads, -1).permute(2, 0, 3, 1, 4).contiguous()
         # make torchscript happy (cannot use tensor as tuple)
         q, k, v = qkv[0], qkv[1], qkv[2]
 
@@ -188,10 +256,10 @@ class WindowAttention(nn.Module):
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
-
         attn = self.attn_drop(attn)
-
+        
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -213,7 +281,6 @@ class WindowAttention(nn.Module):
         flops += N * self.dim * self.dim
         return flops
 
-
 class SwinTransformerBlock(nn.Module):
     r""" Swin Transformer Block.
 
@@ -234,7 +301,7 @@ class SwinTransformerBlock(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
-                 mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0., drop_path=0.,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0., drop_path=0.,
                  act_layer=DEFAULT_ACT, norm_layer=nn.LayerNorm, pretrained_window_size=0):
         super().__init__()
         self.dim = dim
@@ -252,7 +319,7 @@ class SwinTransformerBlock(nn.Module):
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(dim, window_size=to_2tuple(self.window_size),
                                     num_heads=num_heads, qkv_bias=qkv_bias,
-                                    attn_drop=attn_drop, proj_drop=drop,
+                                    qkv_drop=qkv_drop, attn_drop=attn_drop, proj_drop=drop,
                                     pretrained_window_size=to_2tuple(pretrained_window_size))
 
         self.drop_path = DropPath(
@@ -437,6 +504,47 @@ class PatchExpanding(nn.Module):
         return x
 
 
+class PatchExpandingConcat(nn.Module):
+    def __init__(self, input_resolution, dim,
+                 return_vector=True, dim_scale=2,
+                 norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        self.return_vector = return_vector
+        self.dim_scale = dim_scale
+        self.pixel_shuffle_conv = nn.Conv2d(dim, dim * (dim_scale ** 2) // 2,
+                                            kernel_size=1, padding=0, bias=False)
+        self.pixel_shuffle = nn.PixelShuffle(dim_scale)
+        self.upsample = nn.Upsample(scale_factor=(dim_scale, dim_scale),
+                                    mode='bilinear')
+        self.upsample_conv = nn.Conv2d(dim, dim // 2,
+                                       kernel_size=3, padding=1, bias=False)
+        self.cat_conv = nn.Conv2d(dim, dim // 2,
+                                  kernel_size=1, padding=0, bias=False)
+        self.norm_layer = norm_layer(dim // 2)
+
+    def forward(self, x):
+        H, W = self.input_resolution
+        B, L, C = x.shape
+        assert L == H * W, f"input feature has wrong size {L} != {H}, {W}"
+        assert H % 2 == 0 and W % 2 == 0, f"x size (*{H}*{W}) are not even."
+        x = x.permute(0, 2, 1).view(B, C, H, W)
+        pixel_shuffle = self.pixel_shuffle_conv(x)
+        pixel_shuffle = self.pixel_shuffle(pixel_shuffle)
+        upsample = self.upsample(x)
+        upsample = self.upsample_conv(upsample)
+        x = torch.cat([pixel_shuffle, upsample], dim=1)
+        x = self.cat_conv(x)
+        x = x.permute(0, 2, 3, 1).view(B, -1, self.dim // 2)
+        x = self.norm_layer(x)
+        if not self.return_vector:
+            x = x.permute(0, 2, 1).view(B, self.dim // 2,
+                                        H * self.dim_scale,
+                                        W * self.dim_scale)
+        return x
+
+
 class BasicLayerV1(nn.Module):
     """ A basic Swin Transformer layer for one stage.
 
@@ -458,8 +566,8 @@ class BasicLayerV1(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0):
 
         super().__init__()
@@ -476,10 +584,10 @@ class BasicLayerV1(nn.Module):
                                      i % 2 == 0) else window_size // 2,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
-                                 drop=drop, attn_drop=attn_drop,
+                                 drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
-                                 norm_layer=norm_layer,
+                                 norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(depth)])
 
@@ -498,13 +606,22 @@ class BasicLayerV1(nn.Module):
     def forward(self, x):
         for blk in self.blocks:
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint(blk, x,
+                               use_reentrant=False)
             else:
                 x = blk(x)
         if self.downsample is not None:
-            x = self.downsample(x)
+            if self.use_checkpoint:
+                x = checkpoint(self.downsample, x,
+                               use_reentrant=False)
+            else:
+                x = self.downsample(x)
         if self.upsample is not None:
-            x = self.upsample(x)
+            if self.use_checkpoint:
+                x = checkpoint(self.upsample, x,
+                               use_reentrant=False)
+            else:
+                x = self.upsample(x)
         return x
 
     def extra_repr(self) -> str:
@@ -520,11 +637,10 @@ class BasicLayerV1(nn.Module):
 
     def _init_respostnorm(self):
         for blk in self.blocks:
-            nn.init.constant_(blk.norm1.bias, 0)
-            nn.init.constant_(blk.norm1.weight, 0)
-            nn.init.constant_(blk.norm2.bias, 0)
-            nn.init.constant_(blk.norm2.weight, 0)
-
+            check_hasattr_and_init(blk.norm1, "weight", 1)
+            check_hasattr_and_init(blk.norm1, "bias", 0)
+            check_hasattr_and_init(blk.norm2, "weight", 1)
+            check_hasattr_and_init(blk.norm2, "bias", 0)
 
 class BasicLayerV2(nn.Module):
     """ A basic Swin Transformer layer for one stage.
@@ -547,8 +663,8 @@ class BasicLayerV2(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., qkv_bias=True, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, upsample=None,
+                 mlp_ratio=4., qkv_bias=True, drop=0., qkv_drop=0., attn_drop=0.,
+                 drop_path=0., norm_layer=nn.LayerNorm, act_layer=DEFAULT_ACT, downsample=None, upsample=None,
                  use_checkpoint=False, pretrained_window_size=0):
 
         super().__init__()
@@ -572,7 +688,7 @@ class BasicLayerV2(nn.Module):
             self.upsample = upsample(input_resolution,
                                      dim=dim, norm_layer=norm_layer)
             dim //= 2
-            num_heads //= 2
+            num_heads = max(num_heads // 2, 1)
             window_size *= 2
             input_resolution = [input_resolution[0] * 2,
                                 input_resolution[1] * 2]
@@ -587,21 +703,30 @@ class BasicLayerV2(nn.Module):
                                      i % 2 == 0) else window_size // 2,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
-                                 drop=drop, attn_drop=attn_drop,
+                                 drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(
                                      drop_path, list) else drop_path,
-                                 norm_layer=norm_layer,
+                                 norm_layer=norm_layer, act_layer=act_layer,
                                  pretrained_window_size=pretrained_window_size)
             for i in range(depth)])
 
     def forward(self, x):
         if self.downsample is not None:
-            x = self.downsample(x)
+            if self.use_checkpoint:
+                x = checkpoint(self.downsample, x,
+                               use_reentrant=False)
+            else:
+                x = self.downsample(x)
         if self.upsample is not None:
-            x = self.upsample(x)
+            if self.use_checkpoint:
+                x = checkpoint(self.upsample, x,
+                               use_reentrant=False)
+            else:
+                x = self.upsample(x)
         for blk in self.blocks:
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint(blk, x,
+                               use_reentrant=False)
             else:
                 x = blk(x)
         return x
@@ -619,11 +744,10 @@ class BasicLayerV2(nn.Module):
 
     def _init_respostnorm(self):
         for blk in self.blocks:
-            nn.init.constant_(blk.norm1.bias, 0)
-            nn.init.constant_(blk.norm1.weight, 0)
-            nn.init.constant_(blk.norm2.bias, 0)
-            nn.init.constant_(blk.norm2.weight, 0)
-
+            check_hasattr_and_init(blk.norm1, "weight", 1)
+            check_hasattr_and_init(blk.norm1, "bias", 0)
+            check_hasattr_and_init(blk.norm2, "weight", 1)
+            check_hasattr_and_init(blk.norm2, "bias", 0)
 
 class PatchEmbed(nn.Module):
     r""" Image to Patch Embedding
@@ -721,3 +845,26 @@ class PatchEmbedding(nn.Module):
             self.pos_embed(pos).unsqueeze(0).repeat(B, 1, 1)
 
         return embed
+
+class Output2D(nn.Module):
+    def __init__(self, in_channels, out_channels, act=None):
+        super().__init__()
+        conv_out_channels = in_channels
+        self.conv_5x5 = nn.Conv2d(in_channels=in_channels,
+                                  out_channels=conv_out_channels,
+                                  kernel_size=5, padding=2)
+        self.conv_3x3 = nn.Conv2d(in_channels=in_channels,
+                                  out_channels=conv_out_channels,
+                                  kernel_size=3, padding=1)
+        self.concat_conv = nn.Conv2d(in_channels=conv_out_channels * 2,
+                                        out_channels=out_channels,
+                                        kernel_size=3, padding=1)
+        self.act = get_act(act)
+
+    def forward(self, x):
+        conv_5x5 = self.conv_5x5(x)
+        conv_3x3 = self.conv_3x3(x)
+        output = torch.cat([conv_5x5, conv_3x3], dim=1)
+        output = self.concat_conv(output)
+        output = self.act(output)
+        return output

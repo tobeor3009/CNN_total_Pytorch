@@ -16,6 +16,7 @@ class SegDataset(BaseDataset):
                  image_path_list=None,
                  mask_path_list=None,
                  label_path_list=None,
+                 imread_policy={"image": None, "mask": None},
                  on_memory=False,
                  augmentation_proba=False,
                  augmentation_policy_dict=base_augmentation_policy_dict,
@@ -30,6 +31,7 @@ class SegDataset(BaseDataset):
         self.mask_path_list = [mask_path for mask_path in mask_path_list]
         self.label_path_list = [label_path for label_path in label_path_list]
 
+        self.imread_policy = imread_policy
         self.on_memory = on_memory
         self.is_data_ready = False if on_memory else True
         self.augmentation_proba = augmentation_proba
@@ -63,8 +65,12 @@ class SegDataset(BaseDataset):
             mask_path = self.mask_path_list[current_index]
             label_path = self.label_path_list[current_index]
 
-            image_array = imread(image_path, channel=self.image_channel)
-            mask_array = imread(mask_path, channel=self.mask_channel)
+            image_array = imread(image_path, 
+                                 policy=self.imread_policy["image"],
+                                 channel=self.image_channel)
+            mask_array = imread(mask_path,
+                                policy=self.imread_policy["mask"], 
+                                channel=self.mask_channel)
             label_array = imread(label_path, channel=self.mask_channel)
             label_array = label_array[6:]
             label_array = torch.as_tensor([np.max(label_array)],

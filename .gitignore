@@ -13,4 +13,11 @@ ckpts/
 *.cu
 *.db
 .vscode
-temp.py
+temp*.py
+temp*.sh
+__pycache__
+.ipynb_checkpoints
+Dockerfile*
+.DS_Store
+!scripts/*
+!scripts/logs/*

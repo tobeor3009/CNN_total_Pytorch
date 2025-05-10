@@ -1,13 +1,6 @@
-from abc import abstractmethod
-
-import torch
 import torch.utils.data as data
 
-import cv2
-import progressbar
 import numpy as np
-from sklearn.utils import shuffle as syncron_shuffle
-import albumentations as A
 
 
 class BaseDataset(data.Dataset):
@@ -24,28 +17,38 @@ class BaseDataset(data.Dataset):
             self.data_len = len(self.image_path_list)
 
         return self.data_len
-
-    def get_data_on_ram(self):
-        widgets = [
-            ' [',
-            progressbar.Counter(format=f'%(value)02d/%(max_value)d'),
-            '] ',
-            progressbar.Bar(),
-            ' (',
-            progressbar.ETA(),
-            ') ',
-        ]
-        progressbar_displayed = progressbar.ProgressBar(widgets=widgets,
-                                                        maxval=len(self)).start()
-        for index, data_tuple in enumerate(self):
-            self.data_on_memory_list[index] = data_tuple
-            progressbar_displayed.update(value=index + 1)
-        self.is_data_ready = True
-        progressbar_displayed.finish()
-
+    
     def check_class_list_cached(self):
         for value in self.class_list:
             if value is None:
                 return False
         return True
 
+class DatasetCache(data.Dataset):
+    def __init__(self, dataset, preloading=True):
+        self.dataset = dataset
+        self.preloading = preloading
+        if self.preloading:
+            self.data_list = []
+            self.preloading_data()
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        if self.preloading:
+            return self.lazy_load(idx)
+        else:
+            return self.memory_load(idx)
+
+    def preloading_data(self):
+        for idx in range(len(self)):
+            data = self.lazy_load(idx)
+            self.data_list.append(data)
+
+    def memory_load(self, idx):
+        return self.data_list[idx]
+
+    def lazy_load(self, idx):
+        data = self.dataset[idx]
+        return data

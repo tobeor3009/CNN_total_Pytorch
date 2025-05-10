@@ -15,7 +15,8 @@ base_augmentation_policy_dict = {
 ################### Resize Constant ###################
 INTER_DICT = {
     "bilinear": cv2.INTER_LINEAR,
-    "cubic": cv2.INTER_CUBIC
+    "cubic": cv2.INTER_CUBIC,
+    "nearest": cv2.INTER_NEAREST
 }
 ################### Augment Constant ###################
 positional_transform = A.OneOf([
@@ -26,16 +27,20 @@ positional_transform = A.OneOf([
 ], p=1)
 
 noise_transform = A.OneOf([
-    A.Blur(blur_limit=(2, 2), p=1),
-    A.GaussNoise(var_limit=(0.01, 5), p=1),
+    # A.Blur(blur_limit=(2, 2), p=1),
+    A.GaussNoise(var_limit=(0.01, 0.1), p=1),
 ], p=1)
 
-elastic_tranform = A.ElasticTransform(p=1)
+elastic_tranform = A.ElasticTransform(always_apply=False, p=0.5,
+                                      alpha=0.20000000298023224, sigma=3.359999895095825,
+                                      alpha_affine=2.009999990463257, interpolation=1, border_mode=1,
+                                      value=(0, 0, 0), mask_value=None, approximate=False)
 
-brightness_value = 0.05
+brightness_value = 0.02
 brightness_contrast_transform = A.OneOf([
     A.RandomBrightnessContrast(
-        brightness_limit=(-brightness_value, brightness_value), contrast_limit=(-brightness_value, brightness_value), p=1),
+        brightness_limit=(-brightness_value, brightness_value),
+        contrast_limit=(-brightness_value, brightness_value), p=1),
 ], p=1)
 
 color_transform = A.OneOf([
@@ -55,9 +60,8 @@ to_jpeg_transform = A.ImageCompression(quality_lower=99,
                                        p=1)
 
 to_tensor_transform = albumentations.pytorch.transforms.ToTensorV2()
+
 ################### Preprocess Constant ###################
-
-
 def get_resized_array(image_array, target_size, interpolation):
     image_resized_array = image_array
     if target_size is not None:
@@ -65,13 +69,12 @@ def get_resized_array(image_array, target_size, interpolation):
                                          dsize=target_size,
                                          interpolation=INTER_DICT[interpolation]
                                          )
-    if len(image_resized_array.shape) == 2:
-        image_resized_array = np.expand_dims(image_resized_array, axis=-1)
     return image_resized_array
-
 
 def get_augumented_array(image_array, augmentation_proba, augmentation_policy_dict):
     final_transform_list = []
+    if augmentation_policy_dict["positional"] is True:
+        final_transform_list.append(positional_transform)
     if augmentation_policy_dict["noise"] is True:
         final_transform_list.append(noise_transform)
     if augmentation_policy_dict["elastic"] is True:
@@ -83,10 +86,7 @@ def get_augumented_array(image_array, augmentation_proba, augmentation_policy_di
     if augmentation_policy_dict["to_jpeg"] is True:
         final_transform_list.append(to_jpeg_transform)
 
-    transform_1 = positional_transform
-    transform_2 = A.OneOf(final_transform_list, p=1)
-    final_transform = A.Compose([transform_1, transform_2],
-                                p=augmentation_proba)
+    final_transform = A.Compose(final_transform_list, p=augmentation_proba)
 
     if augmentation_proba == 0:
         return image_array
@@ -97,6 +97,8 @@ def get_augumented_array(image_array, augmentation_proba, augmentation_policy_di
 def get_seg_augumented_array(image_array, mask_array,
                              augmentation_proba, augmentation_policy_dict):
     final_transform_list = []
+    if augmentation_policy_dict["positional"] is True:
+        final_transform_list.append(positional_transform)
     if augmentation_policy_dict["noise"] is True:
         final_transform_list.append(noise_transform)
     if augmentation_policy_dict["elastic"] is True:
@@ -108,10 +110,7 @@ def get_seg_augumented_array(image_array, mask_array,
     if augmentation_policy_dict["to_jpeg"] is True:
         final_transform_list.append(to_jpeg_transform)
 
-    transform_1 = positional_transform
-    transform_2 = A.OneOf(final_transform_list, p=1)
-    final_transform = A.Compose([transform_1, transform_2],
-                                p=augmentation_proba)
+    final_transform = A.Compose(final_transform_list, p=augmentation_proba)
 
     if augmentation_proba == 0:
         return image_array, mask_array

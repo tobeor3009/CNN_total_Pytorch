@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from torch import nn
 from .swin_layers import PatchEmbed, PatchMerging, PatchExpanding
-from .swin_layers import BasicLayerV1, BasicLayerV2
+from .swin_layers import BasicLayerV1, BasicLayerV2, Output2D
 from .swin_layers import trunc_normal_, to_2tuple
 from ..layers import ConvBlock2D, AttentionPool1d
 from ..layers import get_act
@@ -142,9 +142,8 @@ class SwinTransformerMultiTask(nn.Module):
                                                       dim_scale=patch_size,
                                                       norm_layer=norm_layer
                                                       )
-            self.seg_final_conv = nn.Conv2d(target_dim // 2, seg_num_classes,
-                                            kernel_size=1, padding=0)
-            self.seg_final_act = get_act(seg_act)
+            self.seg_final_conv = Output2D(target_dim // 2, seg_num_classes,
+                                            act=seg_act)
         if get_validity:
             self.validity_dim = int(embed_dim * (2 ** depth_level))
             self.validity_hw = feature_hw
@@ -211,7 +210,6 @@ class SwinTransformerMultiTask(nn.Module):
             x = layer(x)
         x = self.seg_final_expanding(x)
         x = self.seg_final_conv(x)
-        x = self.seg_final_act(x)
         return x
 
     def validity_forward(self, x):

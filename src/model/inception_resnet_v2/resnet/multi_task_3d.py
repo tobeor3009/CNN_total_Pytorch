@@ -2,12 +2,12 @@ import torch
 import math
 from torch import nn
 import numpy as np
-from ..layers import get_act, get_norm
 from timm.models.layers import trunc_normal_
 from .resnet_3d import resnet
-from ..transformer_layers import PositionalEncoding
-from ..layers import ConvBlock3D, AttentionPool, Output3D
-from ..layers_highway import MultiDecoder3D, HighwayOutput3D
+from ..common_module.layers import get_act, get_norm
+from ..common_module.transformer_layers import PositionalEncoding
+from ..common_module.layers import ConvBlock3D, AttentionPool, Output3D
+from ..common_module.layers_highway import MultiDecoder3D, HighwayOutput3D
 USE_INPLACE = True
 
 
@@ -57,9 +57,9 @@ class ResNetMultiTask3D(nn.Module):
                 decode_in_channels = int(decode_init_channel //
                                          (2 ** decode_i))
                 if decode_i > 0:
-                    skip_conv = nn.Conv3d(in_channels=(decode_in_channels +
-                                                       skip_connect_channel_list[-decode_i]),
-                                          out_channels=decode_in_channels, kernel_size=1)
+                    skip_conv = ConvBlock3D(in_channels=(decode_in_channels +
+                                                         skip_connect_channel_list[-decode_i]),
+                                            out_channels=decode_in_channels, kernel_size=1)
                     setattr(self, f"decode_skip_conv_{decode_i}", skip_conv)
 
                 decode_out_channels = decode_in_channels // 2
