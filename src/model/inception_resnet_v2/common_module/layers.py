@@ -68,6 +68,19 @@ def numerical_stable_softmax(x, dim=1):
     x_sum = torch.sum(x_exp, dim=dim, keepdim=True)
     return x_exp / x_sum
 
+class NumericalStableSoftmax(nn.Module):
+    """
+    Overflow 방지를 위한 numerically stable softmax.
+    x: 입력 tensor
+    dim: softmax 연산을 적용할 차원
+    """
+    def __init__(self, dim=1):
+        super(NumericalStableSoftmax, self).__init__()
+        self.dim = dim
+
+    def forward(self, x):
+        return numerical_stable_softmax(x, self.dim)
+
 def get_act(act):
     if isinstance(act, nn.Module) or callable(act):
         act = act
@@ -90,7 +103,7 @@ def get_act(act):
     elif act == "tanh":
         act = torch.tanh
     elif act == "softmax":
-        act = partial(numerical_stable_softmax, dim=1)
+        act = NumericalStableSoftmax(dim=1)
     elif act is None:
         act = nn.Identity()
     else:

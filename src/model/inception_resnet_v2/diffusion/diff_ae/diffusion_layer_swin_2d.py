@@ -216,17 +216,21 @@ class GroupNorm32(nn.GroupNorm):
         num_groups = min(32, num_channels)
         super().__init__(num_groups, num_channels, *args, **kwargs)
 
-def get_norm_layer(dim, norm_layer_str):
+def get_norm_layer(dim, norm_layer):
 
-    if norm_layer_str == "rms":
-        norm_layer = RMSNorm(dim)
-    elif norm_layer_str == "group":
-        norm_layer = GroupNorm32(dim)
-    elif norm_layer_str is None:
-        norm_layer = nn.Identity()
+    if callable(norm_layer):
+        norm_layer_instance = norm_layer(dim)
     else:
-        raise NotImplementedError()
-    return norm_layer
+        norm_layer_str = norm_layer
+        if norm_layer_str == "rms":
+            norm_layer_instance = RMSNorm(dim)
+        elif norm_layer_str == "group":
+            norm_layer_instance = GroupNorm32(dim)
+        elif norm_layer_str is None:
+            norm_layer_instance = nn.Identity()
+        else:
+            raise NotImplementedError()
+    return norm_layer_instance
 
 class AttentionBlock(nn.Module):
     """
@@ -244,7 +248,6 @@ class AttentionBlock(nn.Module):
         norm_layer="group"
     ):  
         super().__init__()
-        assert norm_layer in ["rms", "group"]
         self.channels = channels
         if num_head_channels == -1:
             self.num_heads = num_heads
@@ -254,11 +257,7 @@ class AttentionBlock(nn.Module):
             ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
             self.num_heads = channels // num_head_channels
         self.use_checkpoint = use_checkpoint
-        if norm_layer == "group":
-            norm_layer = GroupNorm32
-        elif norm_layer == "rms":
-            norm_layer = RMSNorm
-        self.norm = norm_layer(channels)
+        self.norm = get_norm_layer(channels, norm_layer)
         self.attention = FlashMultiheadAttention(dim=channels, num_heads=self.num_heads, causal=False)
         self.proj_out = nn.Linear(channels, channels)
 
@@ -983,7 +982,7 @@ class BasicLayerV1(nn.Module):
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
-                                 shift_size=window_size // 2,
+                                 shift_size=0 if (i % 2 == 0) else window_size // 2,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
                                  drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
@@ -1075,7 +1074,7 @@ class BasicLayerV2(nn.Module):
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
-                                 shift_size=window_size // 2,
+                                 shift_size=0 if (i % 2 == 0) else window_size // 2,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias,
                                  drop=drop, qkv_drop=qkv_drop, attn_drop=attn_drop,
