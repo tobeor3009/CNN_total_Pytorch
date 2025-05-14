@@ -20,7 +20,7 @@ from src.model.inception_resnet_v2.diffusion.diff_ae.flash_attn import FlashMult
 from einops.layers.torch import Rearrange
 from itertools import chain
 from src.util.common import _ntuple
-
+from torch.nn import functional as F
 def get_encode_feature_channel(block_size, model_depth):
     feature_channel = block_size * (2 ** model_depth)
     return int(round(feature_channel))
@@ -39,12 +39,14 @@ class FusedRMSNorm(nn.Module):
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim))
+        self.scale = dim ** 0.5
 
     def forward(self, x):
         # x: [batch_size, dim]
         norm = x.pow(2).mean(-1, keepdim=True).add(self.eps).sqrt()
         x = x / norm
-        return x * self.weight
+        return x * self.weight * self.scale
+
 class FusedConvRMSNormND(nn.Module):
     def __init__(self, num_channels, eps=1e-8):
         super().__init__()
@@ -103,7 +105,7 @@ class ClassificationHeadSimple(nn.Module):
 class VisionEmbedding(nn.Module):
     def __init__(self, image_size, patch_size, embed_dim, init_channel=3, img_dim=2):
         super().__init__()
-        if isinstance(patch_size):
+        if isinstance(patch_size, int):
             patch_size = _ntuple(img_dim)(patch_size)
         self.image_size = image_size
         self.patch_size = patch_size
@@ -140,12 +142,34 @@ class VisionEmbedding(nn.Module):
         embeddings = embeddings + self.position_embedding(self.position_ids)
         # [Batch_Size, Num_Patches, Embed_Dim]
         return embeddings
+
+class MultiHeadSelfAttention(nn.Module):
+    def __init__(self, dim, num_heads, causal=False):
+        super().__init__()
+        assert dim % num_heads == 0
+        self.num_heads = num_heads
+        self.causal = causal
+        self.head_dim = dim // num_heads
+        self.qkv_proj = nn.Linear(dim, dim * 3)
+        self.out_proj = nn.Linear(dim, dim)
+
+    def forward(self, x):
+        B, L, D = x.shape
+        softmax_scale = 1 / (D ** 0.5)
+        qkv = self.qkv_proj(x)  # (B, L, 3 * D)
+        qkv = qkv.view(B, L, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv.unbind(dim=2)  # Each: (B, L, H, D_head)
+        q, k, v = map(lambda t: t.transpose(1, 2), (q, k, v))  # (B, H, L, D_head)
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0,
+                                             is_causal=self.causal, scale=softmax_scale)
+        out = out.transpose(1, 2).reshape(B, L, D)
+        return self.out_proj(out)
     
 class EncoderLayer(nn.Module):
     def __init__(self, embed_dim, num_heads, hidden_dim=None, dropout=0.0, use_checkpoint=False):
         super().__init__()
         hidden_dim = hidden_dim or embed_dim * 4
-        self.self_attn = FlashMultiheadAttention(embed_dim, num_heads, causal=False)
+        self.self_attn = MultiHeadSelfAttention(embed_dim, num_heads, causal=False)
         self.mlp = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim),
             nn.Dropout(dropout),

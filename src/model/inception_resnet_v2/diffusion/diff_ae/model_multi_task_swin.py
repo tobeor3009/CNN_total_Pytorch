@@ -19,6 +19,7 @@ from einops.layers.torch import Rearrange
 from src.model.inception_resnet_v2.diffusion.diff_ae.flash_attn import FlashMultiheadAttention
 from torch.utils.checkpoint import checkpoint
 
+
 class RMSNorm(nn.Module):
     def __init__(self, dim, img_dim=0, eps=1e-8):
         super().__init__()
@@ -43,7 +44,7 @@ class RMSNorm(nn.Module):
         rms = x.pow(2).mean(dim=self.normalize_dim, keepdim=True).add(self.eps).sqrt()
         x_normed = x / rms
         return x_normed * self.weight * self.scale
-    
+
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, dim, num_heads, causal=False):
         super().__init__()
@@ -62,7 +63,7 @@ class MultiHeadSelfAttention(nn.Module):
         q, k, v = qkv.unbind(dim=2)  # Each: (B, L, H, D_head)
         q, k, v = map(lambda t: t.transpose(1, 2), (q, k, v))  # (B, H, L, D_head)
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0,
-                                             is_causal=self.causal, scale=softmax_scale, enable_gqa=True)
+                                             is_causal=self.causal, scale=softmax_scale)
         out = out.transpose(1, 2).reshape(B, L, D)
         return self.out_proj(out)
     
