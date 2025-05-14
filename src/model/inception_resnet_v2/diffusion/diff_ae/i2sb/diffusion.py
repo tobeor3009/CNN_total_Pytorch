@@ -58,7 +58,7 @@ def compute_label(diffusion, step, x0, xt):
     label = (xt - x0) / std_fwd
     return label.detach()
 
-def compute_pred_x0(diffusion, step, xt, net_out, clip_denoise=False):
+def compute_pred_x0(diffusion, step, xt, net_out, clip_denoise=True):
     """ Given network output, recover x0. This should be the inverse of Eq 12 """
     std_fwd = diffusion.get_std_fwd(step, xdim=xt.shape[1:])
     pred_x0 = xt - std_fwd * net_out
@@ -66,7 +66,7 @@ def compute_pred_x0(diffusion, step, xt, net_out, clip_denoise=False):
         pred_x0.clamp_(-1., 1.)
     return pred_x0
 
-def ddim_sampling(diffusion, ema, x0, x1, mask, cond, net, nfe=50, ot_ode=False, interval=1000):
+def ddim_sampling(diffusion, ema, x0, x1, mask, cond, net, nfe=50, ot_ode=False, interval=1000, clip_denoise=True):
     device = next(net.parameters()).device
     with torch.no_grad():
         # create discrete time steps that split [0, INTERVAL] into NFE sub-intervals.
@@ -90,7 +90,7 @@ def ddim_sampling(diffusion, ema, x0, x1, mask, cond, net, nfe=50, ot_ode=False,
             def pred_x0_fn(xt, step):
                 step = torch.full((xt.shape[0],), step, device=device, dtype=torch.long)
                 out = net(xt, step, cond=cond).pred
-                return compute_pred_x0(diffusion, step, xt, out, clip_denoise=True)
+                return compute_pred_x0(diffusion, step, xt, out, clip_denoise=clip_denoise)
 
             xs, pred_x0 = diffusion.ddpm_sampling(
                 steps, pred_x0_fn, x1, mask=mask, ot_ode=ot_ode, log_steps=None, verbose=False,
