@@ -151,14 +151,14 @@ def get_propotional_bce_focal_loss(y_pred, y_true, log=False, per_image=False):
     focal_loss = get_focal_loss(y_pred, y_true)
     return (propotional_loss + bce_loss + focal_loss) / 3
 
-def final_loss_fn(y_pred, y_true, region_loss, log=False, per_image=False):
+def final_loss_fn(y_pred, y_true, region_loss, log=False, per_image=False, exclude_background=True):
     C = y_true.shape[1]
-    if C > 1:
+    if C > 1 and exclude_background:
         y_pred = y_pred[:, 1:]
         y_true = y_true[:, 1:]
     return region_loss(y_pred, y_true, log=log, per_image=per_image)
 
-def get_loss_fn(loss_select, per_image=False):
+def get_loss_fn(loss_select, per_image=False, exclude_background=True):
     if loss_select == "dice":
         region_loss = get_dice_loss
     elif loss_select == "tversky":
@@ -187,7 +187,7 @@ def get_loss_fn(loss_select, per_image=False):
         region_loss = get_dice_loss
         print("region loss selected as dice loss")
            
-    return partial(final_loss_fn, region_loss=region_loss, per_image=per_image)
+    return partial(final_loss_fn, region_loss=region_loss, per_image=per_image, exclude_background=exclude_background)
 
 def get_recon_loss_follow_seg(y_recon_pred, y_recon_gt, y_seg_pred, per_image=False):
     recon_image_channel = y_recon_pred.size(1)

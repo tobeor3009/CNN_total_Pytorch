@@ -11,7 +11,7 @@ from .diffusion_layer_swin_2d import AttentionPool1d, AttentionBlock
 from .diffusion_layer_swin_2d import BasicLayerV1, BasicLayerV2, MeanBN2BC
 from .diffusion_layer_swin_2d import default, prob_mask_like, get_act
 from .diffusion_layer_swin_2d import PatchEmbed, PatchMerging, PatchExpanding
-from .diffusion_layer_swin_2d import SkipEncodeLayer, BasicDecodeLayer
+from .diffusion_layer_swin_2d import SkipEncodeLayer, BasicDecodeLayer, RMSNorm, get_rms_norm_nd
 from .model import MLPSkipNet
 from einops import rearrange, repeat
 from torch.nn import functional as F
@@ -19,31 +19,6 @@ from einops.layers.torch import Rearrange
 from src.model.inception_resnet_v2.diffusion.diff_ae.flash_attn import FlashMultiheadAttention
 from torch.utils.checkpoint import checkpoint
 
-
-class RMSNorm(nn.Module):
-    def __init__(self, dim, img_dim=0, eps=1e-8):
-        super().__init__()
-        # img_dim = 0: sequence [B, N, D], img_dim = 1: 1d, img_dim = 2: 2d, img_dim = 3: 3d
-        if img_dim == 0:
-            param_shape = (1, 1, dim)
-            self.normalize_dim = 2
-        elif img_dim == 1:
-            param_shape = (1, dim, 1)
-            self.normalize_dim = 1
-        elif img_dim == 2:
-            param_shape = (1, dim, 1, 1)
-            self.normalize_dim = 1
-        elif img_dim == 3:
-            param_shape = (1, dim, 1, 1, 1)
-            self.normalize_dim = 1
-        self.weight = nn.Parameter(torch.ones(*param_shape))
-        self.eps = eps
-        self.scale = dim ** 0.5
-
-    def forward(self, x):
-        rms = x.pow(2).mean(dim=self.normalize_dim, keepdim=True).add(self.eps).sqrt()
-        x_normed = x / rms
-        return x_normed * self.weight * self.scale
 
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, dim, num_heads, causal=False):
@@ -106,11 +81,6 @@ class ToContiguous(nn.Module):
     def forward(self, x):
         return x.contiguous()
         
-def get_rms_norm_nd(img_dim):
-    norm_layer = partial(RMSNorm, img_dim=img_dim)
-    return norm_layer
-
-
 def get_time_emb_dim(emb_dim):
     # time_emb_dim = max(512, emb_dim * 8)
     # I found 512 is best size. 256 is not enough, 1024 is too big so cosumes too much memory

@@ -341,31 +341,29 @@ class QKVAttention(nn.Module):
         return a.reshape(bs, -1, length)
 
 class RMSNorm(nn.Module):
-    """
-    Root Mean Square Layer Normalization (RMSNorm).
-
-    Args:
-        dim (int): Dimension of the input tensor.
-        eps (float): Epsilon value for numerical stability. Defaults to 1e-6.
-    """
-    def __init__(self, dim: int, eps: float = 1e-6):
+    def __init__(self, dim, img_dim=0, eps=1e-8):
         super().__init__()
-        self.dim = dim
+        # img_dim = 0: sequence [B, N, D], img_dim = 1: 1d, img_dim = 2: 2d, img_dim = 3: 3d
+        if img_dim == 0:
+            param_shape = (1, 1, dim)
+            self.normalize_dim = 2
+        elif img_dim == 1:
+            param_shape = (1, dim, 1)
+            self.normalize_dim = 1
+        elif img_dim == 2:
+            param_shape = (1, dim, 1, 1)
+            self.normalize_dim = 1
+        elif img_dim == 3:
+            param_shape = (1, dim, 1, 1, 1)
+            self.normalize_dim = 1
+        self.weight = nn.Parameter(torch.ones(*param_shape))
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
-    def forward(self, x: torch.Tensor):
+        self.scale = dim ** 0.5
 
-        """
-        Forward pass for RMSNorm.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: Normalized tensor with the same shape as input.
-        """
-        x = x.permute(0, 2, 1)
-        return F.rms_norm(x, (self.dim,), self.weight, self.eps).permute(0, 2, 1)
+    def forward(self, x):
+        rms = x.pow(2).mean(dim=self.normalize_dim, keepdim=True).add(self.eps).sqrt()
+        x_normed = x / rms
+        return x_normed * self.weight * self.scale
     
 class AttentionBlock(nn.Module):
     """
@@ -396,7 +394,7 @@ class AttentionBlock(nn.Module):
             self.num_heads = channels // num_head_channels
         self.use_checkpoint = use_checkpoint
         if norm_layer == "rms":
-            self.norm = RMSNorm(channels)
+            self.norm = RMSNorm(channels, img_dim=1)
         elif norm_layer== "group":
             self.norm = GroupNorm32(channels)
         
