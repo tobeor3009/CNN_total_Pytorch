@@ -38,37 +38,6 @@ def sample_batch(data, corrupt_method, corrupt_str, device):
     assert x0.shape == x1.shape
     
     return x0, x1, mask, cond
-
-def ddim_sampling(diffusion, ema, x0, x1, mask, cond, nfe=50):
-
-    with torch.no_grad():
-        # create discrete time steps that split [0, INTERVAL] into NFE sub-intervals.
-        # e.g., if NFE=2 & INTERVAL=1000, then STEPS=[0, 500, 999] and 2 network
-        # evaluations will be invoked, first from 999 to 500, then from 500 to 0.
-
-        nfe = nfe or interval - 1
-        assert 0 < nfe < interval == len(diffusion.betas)
-        steps = util.space_indices(interval, nfe+1)
-
-        x1 = x1.to(device)
-        if cond is not None:
-            cond = cond.to(device)
-        if mask is not None:
-            mask = mask.to(device)
-            x1 = (1. - mask) * x1 + mask * torch.randn_like(x1)
-
-        with ema.average_parameters():
-            net.eval()
-
-            def pred_x0_fn(xt, step):
-                step = torch.full((xt.shape[0],), step, device=device, dtype=torch.long)
-                out = net(xt, step, cond=cond).pred
-                return compute_pred_x0(diffusion, step, xt, out, clip_denoise=True)
-
-            xs, pred_x0 = diffusion.ddpm_sampling(
-                steps, pred_x0_fn, x1, mask=mask, ot_ode=ot_ode, log_steps=None, verbose=False,
-            )
-        return xs, pred_x0
     
 def make_beta_schedule(n_timestep=1000, linear_start=1e-4, linear_end=2e-2):
     # return np.linspace(linear_start, linear_end, n_timestep)
@@ -91,8 +60,8 @@ def compute_pred_x0(diffusion, step, xt, net_out, clip_denoise=False):
         pred_x0.clamp_(-1., 1.)
     return pred_x0
 
-def ddim_sampling(diffusion, ema, x0, x1, mask, cond, nfe=50, ot_ode=False):
-
+def ddim_sampling(diffusion, ema, x0, x1, mask, cond, net, nfe=50, ot_ode=False, interval=1000, clip_denoise=True):
+    device = next(net.parameters()).device
     with torch.no_grad():
         # create discrete time steps that split [0, INTERVAL] into NFE sub-intervals.
         # e.g., if NFE=2 & INTERVAL=1000, then STEPS=[0, 500, 999] and 2 network
@@ -101,7 +70,6 @@ def ddim_sampling(diffusion, ema, x0, x1, mask, cond, nfe=50, ot_ode=False):
         nfe = nfe or interval - 1
         assert 0 < nfe < interval == len(diffusion.betas)
         steps = util.space_indices(interval, nfe+1)
-
         x1 = x1.to(device)
         if cond is not None:
             cond = cond.to(device)
@@ -109,17 +77,16 @@ def ddim_sampling(diffusion, ema, x0, x1, mask, cond, nfe=50, ot_ode=False):
             mask = mask.to(device)
             x1 = (1. - mask) * x1 + mask * torch.randn_like(x1)
 
-        with ema.average_parameters():
-            net.eval()
+        net.eval()
 
-            def pred_x0_fn(xt, step):
-                step = torch.full((xt.shape[0],), step, device=device, dtype=torch.long)
-                out = net(xt, step, cond=cond).pred
-                return compute_pred_x0(diffusion, step, xt, out, clip_denoise=True)
+        def pred_x0_fn(xt, step):
+            step = torch.full((xt.shape[0],), step, device=device, dtype=torch.long)
+            out = net(xt, step, cond=cond).pred
+            return compute_pred_x0(diffusion, step, xt, out, clip_denoise=clip_denoise)
 
-            xs, pred_x0 = diffusion.ddpm_sampling(
-                steps, pred_x0_fn, x1, mask=mask, ot_ode=ot_ode, log_steps=None, verbose=False,
-            )
+        xs, pred_x0 = diffusion.ddpm_sampling(
+            steps, pred_x0_fn, x1, mask=mask, ot_ode=ot_ode, log_steps=None, verbose=False,
+        )
         return xs, pred_x0
     
 class DiffusionI2SB(torch.nn.Module):
