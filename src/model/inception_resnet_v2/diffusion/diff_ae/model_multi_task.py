@@ -612,7 +612,7 @@ class InceptionResNetV2_UNet(nn.Module):
 
     def get_image_init_shape(self):
         image_shape = None
-        if (self.norm == nn.RMSNorm) or (self.norm == nn.LayerNorm):
+        if self.norm == nn.LayerNorm:
             image_shape = np.array(tuple(self.img_size for _ in range(self.img_dim)))
         return image_shape
     

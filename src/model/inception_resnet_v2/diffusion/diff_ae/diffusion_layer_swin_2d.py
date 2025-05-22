@@ -123,6 +123,35 @@ def process_checkpoint_block(use_checkpoint, block, x, *emb_args):
         output = block(x, *emb_args)
     return output
 
+class RMSNorm(nn.Module):
+    def __init__(self, dim, img_dim=0, eps=1e-8):
+        super().__init__()
+        # img_dim = 0: sequence [B, N, D], img_dim = 1: 1d, img_dim = 2: 2d, img_dim = 3: 3d
+        if img_dim == 0:
+            param_shape = (1, 1, dim)
+            self.normalize_dim = 2
+        elif img_dim == 1:
+            param_shape = (1, dim, 1)
+            self.normalize_dim = 1
+        elif img_dim == 2:
+            param_shape = (1, dim, 1, 1)
+            self.normalize_dim = 1
+        elif img_dim == 3:
+            param_shape = (1, dim, 1, 1, 1)
+            self.normalize_dim = 1
+        self.weight = nn.Parameter(torch.ones(*param_shape))
+        self.eps = eps
+        self.scale = dim ** 0.5
+
+    def forward(self, x):
+        rms = x.pow(2).mean(dim=self.normalize_dim, keepdim=True).add(self.eps).sqrt()
+        x_normed = x / rms
+        return x_normed * self.weight * self.scale
+
+def get_rms_norm_nd(img_dim):
+    norm_layer = partial(RMSNorm, img_dim=img_dim)
+    return norm_layer
+
 class MeanBN2BC(nn.Module):
     def __init__(self, target_dim=1):
         super(MeanBN2BC, self).__init__()
@@ -185,31 +214,6 @@ class Interpolate(nn.Module):
     def forward(self, x):
         x = self.interp(x, scale_factor=self.scale_factor, mode=self.mode, align_corners=False)
         return x
-class RMSNorm(nn.Module):
-    """
-    Root Mean Square Layer Normalization (RMSNorm).
-
-    Args:
-        dim (int): Dimension of the input tensor.
-        eps (float): Epsilon value for numerical stability. Defaults to 1e-6.
-    """
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.dim = dim
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
-
-    def forward(self, x: torch.Tensor):
-        """
-        Forward pass for RMSNorm.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: Normalized tensor with the same shape as input.
-        """
-        return F.rms_norm(x, (self.dim,), self.weight, self.eps)
 
 class GroupNorm32(nn.GroupNorm):
     def __init__(self, num_channels: int, *args, **kwargs) -> None:
@@ -922,8 +926,8 @@ class PatchExpanding(nn.Module):
                                              **conv_transpose_kwarg_dict)
             decode_layer_list.append(conv_transpose_layer)
             middle_dim += dim // 2
-        self.concat_conv = ConvBlockND(middle_dim, dim // 2, kernel_size=3, stride=1, padding=1, norm=nn.RMSNorm, act="silu",
-                                       bias=False, dropout_proba=0.0, image_shape=input_resolution, img_dim=img_dim)
+        self.concat_conv = ConvBlockND(middle_dim, dim // 2, kernel_size=3, stride=1, padding=1, norm=get_rms_norm_nd(img_dim), act="silu",
+                                       bias=False, dropout_proba=0.0, image_shape=None, img_dim=img_dim)
         self.decode_layer = nn.ModuleList(decode_layer_list)
         self.norm_layer = get_norm_layer(dim // 2, norm_layer)
 
