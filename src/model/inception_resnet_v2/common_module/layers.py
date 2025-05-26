@@ -99,7 +99,7 @@ def get_act(act):
     elif act == "silu-beta":
         act = SwishBeta()
     elif act == "sigmoid":
-        act = torch.sigmoid
+        act = nn.Sigmoid()
     elif act == "tanh":
         act = torch.tanh
     elif act == "softmax":
