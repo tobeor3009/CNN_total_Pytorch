@@ -13,13 +13,20 @@ from .diffusion_layer_swin_2d import default, prob_mask_like, get_act
 from .diffusion_layer_swin_2d import PatchEmbed, PatchMerging, PatchExpanding
 from .diffusion_layer_swin_2d import SkipEncodeLayer, BasicDecodeLayer, RMSNorm, get_rms_norm_nd
 from .model import MLPSkipNet
-from einops import rearrange, repeat
+from einops import rearrange, repeat, reduce
 from torch.nn import functional as F
 from einops.layers.torch import Rearrange
 from src.model.inception_resnet_v2.diffusion.diff_ae.flash_attn import FlashMultiheadAttention
 from torch.utils.checkpoint import checkpoint
 
+class EinopsReduceMean(nn.Module):
+    def __init__(self, pattern: str):
+        super().__init__()
+        self.pattern = pattern
 
+    def forward(self, x):
+        return reduce(x, self.pattern, 'mean')
+    
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, dim, num_heads, causal=False):
         super().__init__()
@@ -602,8 +609,7 @@ class SwinMultitask(nn.Module):
         feature_dim = self.feature_dim
         class_head = nn.Sequential(
                 get_act(self.model_act_layer),
-                AttentionPool1d(sequence_length=np.prod(self.feature_hw), embed_dim=feature_dim,
-                                num_heads=self.num_heads[-1], output_dim=feature_dim * 2, channel_first=False),
+                EinopsReduceMean('b n c -> b c'),
                 nn.Linear(feature_dim * 2, feature_dim),
                 nn.Dropout(p=0.1),
                 get_act(self.model_act_layer),
