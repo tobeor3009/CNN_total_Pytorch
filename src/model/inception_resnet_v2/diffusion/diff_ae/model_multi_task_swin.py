@@ -610,10 +610,10 @@ class SwinMultitask(nn.Module):
         class_head = nn.Sequential(
                 get_act(self.model_act_layer),
                 EinopsReduceMean('b n c -> b c'),
-                nn.Linear(feature_dim * 2, feature_dim),
+                nn.Linear(feature_dim, feature_dim * 2),
                 nn.Dropout(p=0.1),
                 get_act(self.model_act_layer),
-                nn.Linear(feature_dim, num_classes),
+                nn.Linear(feature_dim * 2, num_classes),
                 get_act(class_act)
         )
         return class_head
