@@ -1,15 +1,11 @@
 import argparse
-
-from i2sb.diffusion import Diffusion
-from torch_ema import ExponentialMovingAverage
 import torch.nn.functional as F
 from tqdm import tqdm
-from i2sb import util
 import torch
 import numpy as np
 from tqdm import tqdm
 from functools import partial
-from .util import unsqueeze_xdim
+from .util import unsqueeze_xdim, space_indices
 from pathlib import Path
 
 # in seg, corrupt_img means source image and clean_img is mask
@@ -75,7 +71,7 @@ def ddim_sampling(diffusion, ema, x0, x1, mask, cond, net, nfe=50, ot_ode=False,
 
         nfe = nfe or interval - 1
         assert 0 < nfe < interval == len(diffusion.betas)
-        steps = util.space_indices(interval, nfe+1)
+        steps = space_indices(interval, nfe+1)
 
         x1 = x1.to(device)
         if cond is not None:
