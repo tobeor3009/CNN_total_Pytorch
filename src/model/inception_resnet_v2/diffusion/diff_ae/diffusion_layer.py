@@ -510,13 +510,25 @@ def get_conv_nd_fn(img_dim):
 
 class BaseBlockND(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
-                 stride=1, padding='same', norm=nn.LayerNorm, groups=1, act=DEFAULT_ACT, bias=False,
-                 dropout_proba=0.0, attn_layer=nn.Identity(), image_shape=None, img_dim=2):
+                 stride=1, padding='same', dilation=1, norm=nn.LayerNorm, groups=1, act=DEFAULT_ACT, bias=False,
+                 dropout_proba=0.0, attn_layer=nn.Identity(), image_shape=None, img_dim=2, separable=False):
         super().__init__()
         conv_fn = get_conv_nd_fn(img_dim)
-        self.conv = conv_fn(in_channels=in_channels, out_channels=out_channels,
-                              kernel_size=kernel_size, stride=stride, padding=padding,
-                              groups=groups, bias=bias)
+        if separable:
+            self.conv = conv_fn(in_channels=in_channels, out_channels=out_channels,
+                                kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation,
+                                groups=groups, bias=bias)
+        else:
+            assert kernel_size != 1, "separable expected kernel size != 1"
+            self.conv = nn.Sequential(
+                    conv_fn(in_channels=in_channels, out_channels=in_channels,
+                                kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation,
+                                groups=groups, bias=bias),
+                    conv_fn(in_channels=in_channels, out_channels=out_channels,
+                                kernel_size=1, stride=1, padding=0,
+                                groups=groups, bias=bias)
+            )
+        
         self.attn_layer = attn_layer
         if (not bias) and (norm is not None):
             if image_shape is None:
@@ -541,9 +553,10 @@ class BaseBlockND(nn.Module):
 #attn_info.keys = ["emb_type_list", "num_heads", "full_attn"]
 class ResNetBlockND(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
-                 stride=1, padding='same',
+                 stride=1, padding='same', dilation=1,
                  norm="batch", groups=1, act=DEFAULT_ACT, bias=False, dropout_proba=0.0,
-                 emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False, image_shape=None, img_dim=2):
+                 emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False, image_shape=None, 
+                 img_dim=2, separable=False):
         super().__init__()
         conv_fn = get_conv_nd_fn(img_dim)
         self.img_dim = img_dim
@@ -563,8 +576,10 @@ class ResNetBlockND(nn.Module):
                                             nn.Linear(emb_dim, out_channels)
                                         )
             elif emb_type == "nd":
-                emb_block = BaseBlockND(emb_dim, out_channels * 2, kernel_size,
-                                        1, padding, norm, groups, act, bias, dropout_proba=0.0, img_dim=img_dim)
+                emb_block = BaseBlockND(emb_dim, out_channels * 2, kernel_size=kernel_size,
+                                        stride=1, padding=padding, dilation=1, norm=norm,
+                                        groups=groups, act=act, bias=bias, dropout_proba=0.0, img_dim=img_dim,
+                                        separable=separable)
             elif emb_type == "none" or (emb_type is None):
                 emb_block = None
             else:
@@ -590,11 +605,11 @@ class ResNetBlockND(nn.Module):
             attn_layer = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"], use_checkpoint=use_checkpoint)
 
         self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
-                                    1, padding, norm, groups, act, bias, dropout_proba=dropout_proba,
-                                    image_shape=image_shape, attn_layer=nn.Identity(), img_dim=img_dim)
+                                    stride=1, padding=padding, dilation=dilation, norm=norm, groups=groups, act=act, bias=bias, dropout_proba=dropout_proba,
+                                    image_shape=image_shape, attn_layer=nn.Identity(), img_dim=img_dim, separable=separable)
         self.block_2 = BaseBlockND(out_channels, out_channels, kernel_size,
-                                    stride, padding, norm, groups, act, bias, dropout_proba=dropout_proba,
-                                    image_shape=image_shape, attn_layer=attn_layer, img_dim=img_dim)
+                                    stride=stride, padding=padding, dilation=dilation, norm=norm, groups=groups, act=act, bias=bias, dropout_proba=dropout_proba,
+                                    image_shape=image_shape, attn_layer=attn_layer, img_dim=img_dim, separable=separable)
         
     def forward(self, x, *args):
         if self.use_checkpoint:
@@ -615,10 +630,10 @@ class ResNetBlockND(nn.Module):
     
 class ConvBlockND(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size,
-                 stride=1, padding='same',
+                 stride=1, padding='same', dilation=1,
                  norm="batch", groups=1, act=DEFAULT_ACT, bias=False, dropout_proba=0.0,
                  emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False,
-                 image_shape=None, img_dim=2):
+                 image_shape=None, img_dim=2, separable=False):
         super().__init__()
         self.img_dim = img_dim
         self.attn_info = attn_info
@@ -642,7 +657,8 @@ class ConvBlockND(nn.Module):
                                         )
             elif emb_type == "nd":
                 emb_block = BaseBlockND(emb_dim, out_channels * 2, kernel_size,
-                                        1, padding, norm, groups, act, bias, dropout_proba=0.0, img_dim=img_dim)
+                                        stride=1, padding=padding, dilation=dilation, norm=norm, groups=groups,
+                                        act=act, bias=bias, dropout_proba=0.0, img_dim=img_dim)
             elif emb_type == "none" or (emb_type is None):
                 emb_block = None
             else:
@@ -661,9 +677,9 @@ class ConvBlockND(nn.Module):
             attn_layer = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"])
         
         self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
-                                    stride, padding, norm, groups, act, bias,
-                                    dropout_proba=dropout_proba, attn_layer=attn_layer,
-                                    image_shape=image_shape, img_dim=img_dim)
+                                    stride=stride, padding=padding, dilation=dilation, norm=norm, groups=groups,
+                                    act=act, bias=bias, dropout_proba=dropout_proba, attn_layer=attn_layer,
+                                    image_shape=image_shape, img_dim=img_dim, separable=separable)
 
     def forward(self, x, *args):
         if self.use_checkpoint:
@@ -852,7 +868,7 @@ class PixelShuffle3D(nn.Module):
         output = output.contiguous()
 
         return output.view(batch_size, nOut, out_depth, out_height, out_width)
-    
+
 class MultiDecoderND(nn.Module):
     def __init__(self, in_channels, out_channels,
                  norm="layer", act=DEFAULT_ACT, kernel_size=2,
@@ -1113,6 +1129,76 @@ class MultiDecoderND_V3(nn.Module):
         decode_output = torch.cat([decode_output, skip], dim=1)
         decode_output = self.skip_conv(decode_output)
         return decode_output
+
+class ASPPPooling(nn.Sequential):
+    def __init__(self, in_channels: int, out_channels: int, img_dim: int = 2):
+        conv_fn = get_conv_nd_fn(img_dim)
+        super().__init__(
+            nn.AdaptiveAvgPool2d(1),
+            conv_fn(in_channels, out_channels, kernel_size=1, bias=False),
+            nn.LayerNorm(),
+            nn.SiLU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        size = x.shape[-2:]
+        for mod in self:
+            x = mod(x)
+        return F.interpolate(x, size=size, mode="bilinear", align_corners=False)
+
+class ASPPSeparableConv(nn.Sequential):
+    def __init__(self, in_channels: int, out_channels: int, dilation: int):
+        super().__init__(
+            ConvBlockND(in_channels=in_channels, out_channels=out_channels, kernel_size=3, )
+        )
+class ASPP(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        atrous_rates: Iterable[int],
+        separable: bool,
+        dropout: float,
+    ):
+        super(ASPP, self).__init__()
+        modules = [
+            nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(),
+            )
+        ]
+
+        rate1, rate2, rate3 = tuple(atrous_rates)
+        ASPPConvModule = ASPPConv if not separable else ASPPSeparableConv
+
+        modules.append(ASPPConvModule(in_channels, out_channels, rate1))
+        modules.append(ASPPConvModule(in_channels, out_channels, rate2))
+        modules.append(ASPPConvModule(in_channels, out_channels, rate3))
+        modules.append(ASPPPooling(in_channels, out_channels))
+
+        self.convs = nn.ModuleList(modules)
+
+        self.project = nn.Sequential(
+            nn.Conv2d(5 * out_channels, out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        res = []
+        for conv in self.convs:
+            res.append(conv(x))
+        res = torch.cat(res, dim=1)
+        return self.project(res)
+    
+class MultiDeepLabV3PlusDecoder(nn.Module):
+    def __init__(self, in_channels, skip_channels, out_channels,
+                 norm="layer", act=DEFAULT_ACT, kernel_size=2, dropout_proba=0.0,
+                 emb_dim_list=None, emb_type_list=None, attn_info=None, use_checkpoint=False,
+                 image_shape=None, decode_fn_str_list=["pixel_shuffle"], img_dim=2, use_residual_conv=True):
+        
 
 class OutputND(nn.Module):
     def __init__(self, in_channels, out_channels, act=None, img_dim=2):
