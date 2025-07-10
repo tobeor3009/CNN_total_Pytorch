@@ -4,7 +4,7 @@ from functools import wraps
 from functools import partial
 import math
 import numpy as np
-from typing import NamedTuple, Optional, Any
+from typing import NamedTuple, Optional, Any, Iterable
 from dataclasses import dataclass, field
 import torch
 from torch import nn, einsum
@@ -1147,7 +1147,12 @@ class ASPPPooling(nn.Sequential):
         return F.interpolate(x, size=size, mode="bilinear", align_corners=False)
 
 class ASPPSeparableConv(nn.Sequential):
-    def __init__(self, in_channels: int, out_channels: int, dilation: int):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, 
+                 padding: int = 0, dilation: int = 1, bias=True, use_resnet_block=False):
+
+        if use_resnet_block:
+            conv_block = ResNetBlockND(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
+                                       stride=stride)
         super().__init__(
             ConvBlockND(in_channels=in_channels, out_channels=out_channels, kernel_size=3, )
         )
