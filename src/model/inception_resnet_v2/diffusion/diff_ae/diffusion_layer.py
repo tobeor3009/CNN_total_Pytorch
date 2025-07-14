@@ -423,6 +423,7 @@ class AttentionBlock(nn.Module):
     def _forward_impl(self, x, *args):
         b, c, *spatial = x.shape
         x = x.reshape(b, c, -1)
+        h = x
         x = self.norm(x)
         if self.use_flash_attention:
             x = rearrange(x, 'b c n -> b n c')
@@ -430,8 +431,8 @@ class AttentionBlock(nn.Module):
             x = rearrange(x, 'b n c -> b c n')
         else:
             qkv = self.qkv(x)
-            h = self.attention(qkv)
-        h = self.proj_out(h)
+            x = self.attention(qkv)
+        x = self.proj_out(x)
         return (x + h).reshape(b, c, *spatial)
     
 class SinusoidalPosEmb(nn.Module):
@@ -514,12 +515,13 @@ class BaseBlockND(nn.Module):
                  dropout_proba=0.0, attn_layer=nn.Identity(), image_shape=None, img_dim=2, separable=False):
         super().__init__()
         conv_fn = get_conv_nd_fn(img_dim)
+        if kernel_size == 1:
+            separable = False
         if separable:
             self.conv = conv_fn(in_channels=in_channels, out_channels=out_channels,
                                 kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation,
                                 groups=groups, bias=bias)
         else:
-            assert kernel_size != 1, "separable expected kernel size != 1"
             self.conv = nn.Sequential(
                     conv_fn(in_channels=in_channels, out_channels=in_channels,
                                 kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation,
@@ -549,6 +551,22 @@ class BaseBlockND(nn.Module):
         x = self.act_layer(x)
         x = self.dropout_layer(x)
         return x
+
+def get_attn_layer(out_channels, attn_info, use_checkpoint):
+    attn_layer = None
+    if attn_info is None:
+        attn_layer = nn.Identity()
+    elif attn_info["full_attn"] is None:
+        attn_layer = nn.Identity()
+    elif attn_info["full_attn"] == []:
+        attn_layer = nn.Identity()
+    elif attn_info["full_attn"] == True:
+        attn_layer = AttentionBlock(out_channels, attn_info["num_heads"], use_checkpoint=use_checkpoint)
+    elif attn_info["full_attn"] == "flash-attn":
+        attn_layer = AttentionBlock(out_channels, attn_info["num_heads"], use_checkpoint=use_checkpoint, use_flash_attention=True)
+    else:
+        attn_layer = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"], use_checkpoint=use_checkpoint)
+    return attn_layer
 
 #attn_info.keys = ["emb_type_list", "num_heads", "full_attn"]
 class ResNetBlockND(nn.Module):
@@ -593,17 +611,7 @@ class ResNetBlockND(nn.Module):
         else:
             self.residiual_conv = nn.Identity()
 
-        if attn_info is None:
-            attn_layer = nn.Identity()
-        elif attn_info["full_attn"] is None:
-            attn_layer = nn.Identity()
-        elif attn_info["full_attn"] == True:
-            attn_layer = AttentionBlock(out_channels, attn_info["num_heads"], use_checkpoint=use_checkpoint)
-        elif attn_info["full_attn"] == "flash-attn":
-            attn_layer = AttentionBlock(out_channels, attn_info["num_heads"], use_checkpoint=use_checkpoint, use_flash_attention=True)
-        else:
-            attn_layer = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"], use_checkpoint=use_checkpoint)
-
+        attn_layer = get_attn_layer(out_channels, attn_info, use_checkpoint)
         self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
                                     stride=1, padding=padding, dilation=dilation, norm=norm, groups=groups, act=act, bias=bias, dropout_proba=dropout_proba,
                                     image_shape=image_shape, attn_layer=nn.Identity(), img_dim=img_dim, separable=separable)
@@ -667,15 +675,7 @@ class ConvBlockND(nn.Module):
         self.emb_block_list = nn.ModuleList(emb_block_list)
         self.emb_type_list = emb_type_list
 
-        if attn_info is None:
-            attn_layer = nn.Identity()
-        elif attn_info["full_attn"] is None:
-            attn_layer = nn.Identity()
-        elif attn_info["full_attn"] is True:
-            attn_layer = AttentionBlock(out_channels, attn_info["num_heads"])
-        else:
-            attn_layer = LinearAttention(out_channels, attn_info["num_heads"], attn_info["dim_head"])
-        
+        attn_layer = get_attn_layer(out_channels, attn_info, use_checkpoint)
         self.block_1 = BaseBlockND(in_channels, out_channels, kernel_size,
                                     stride=stride, padding=padding, dilation=dilation, norm=norm, groups=groups,
                                     act=act, bias=bias, dropout_proba=dropout_proba, attn_layer=attn_layer,
@@ -1129,82 +1129,140 @@ class MultiDecoderND_V3(nn.Module):
         decode_output = torch.cat([decode_output, skip], dim=1)
         decode_output = self.skip_conv(decode_output)
         return decode_output
-
+    
+def get_upsample_mode_str(img_dim):
+    mode_str_list = ["linear", "bilinear", "trilinear"]
+    mode_str = mode_str_list[img_dim - 1]
+    return mode_str
 class ASPPPooling(nn.Sequential):
     def __init__(self, in_channels: int, out_channels: int, img_dim: int = 2):
         conv_fn = get_conv_nd_fn(img_dim)
         super().__init__(
             nn.AdaptiveAvgPool2d(1),
             conv_fn(in_channels, out_channels, kernel_size=1, bias=False),
-            nn.LayerNorm(),
+            GroupNorm32(out_channels),
             nn.SiLU(),
         )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        self.mode_str = get_upsample_mode_str(img_dim)
+        
+    def forward(self, x, *args) -> torch.Tensor:
         size = x.shape[-2:]
         for mod in self:
             x = mod(x)
-        return F.interpolate(x, size=size, mode="bilinear", align_corners=False)
+        return F.interpolate(x, size=size, mode=self.mode_str, align_corners=False)
 
-class ASPPSeparableConv(nn.Sequential):
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, 
-                 padding: int = 0, dilation: int = 1, bias=True, use_resnet_block=False):
-
+class ASPPConv(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, 
+                dilation: int = 1, norm="batch", groups=1, act=DEFAULT_ACT, dropout_proba=0.0,
+                emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False, image_shape=None,
+                img_dim=2, separable=False, use_resnet_block=False):
+        super().__init__()
         if use_resnet_block:
-            conv_block = ResNetBlockND(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
-                                       stride=stride)
-        super().__init__(
-            ConvBlockND(in_channels=in_channels, out_channels=out_channels, kernel_size=3, )
-        )
+            conv_block = ResNetBlockND(in_channels=in_channels, out_channels=out_channels, kernel_size=3, stride=1,
+                                       padding=dilation, dilation=dilation, norm=norm, groups=groups, act=act, bias=False,
+                                       dropout_proba=dropout_proba, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=attn_info,
+                                       use_checkpoint=use_checkpoint, image_shape=image_shape, img_dim=img_dim, separable=separable)
+        else:
+            conv_block = ConvBlockND(in_channels=in_channels, out_channels=out_channels, kernel_size=3, stride=1,
+                                       padding=dilation, dilation=dilation, norm=norm, groups=groups, act=act, bias=False,
+                                       dropout_proba=dropout_proba, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=attn_info,
+                                       use_checkpoint=use_checkpoint, image_shape=image_shape, img_dim=img_dim, separable=separable)
+        self.conv_block = conv_block
+    def forward(self, x, *args):
+        return self.conv_block(x, *args)
+    
 class ASPP(nn.Module):
     def __init__(
         self,
-        in_channels: int,
-        out_channels: int,
-        atrous_rates: Iterable[int],
-        separable: bool,
-        dropout: float,
+        in_channels: int, out_channels: int, atrous_rates: Iterable[int],
+        norm="batch", groups=1, act=DEFAULT_ACT, dropout_proba=0.0,
+        emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False, image_shape=None,
+        img_dim=2, separable=False, use_resnet_block=False,
     ):
         super(ASPP, self).__init__()
+        if use_resnet_block:
+            conv_class = ResNetBlockND
+        else:
+            conv_class = ConvBlockND
         modules = [
-            nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
-                nn.BatchNorm2d(out_channels),
-                nn.ReLU(),
-            )
+            conv_class(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1,
+                        padding=0, dilation=1, norm=norm, groups=groups, act=act, bias=False,
+                        dropout_proba=dropout_proba, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=attn_info,
+                        use_checkpoint=use_checkpoint, image_shape=image_shape, img_dim=img_dim, separable=separable)
         ]
 
         rate1, rate2, rate3 = tuple(atrous_rates)
-        ASPPConvModule = ASPPConv if not separable else ASPPSeparableConv
-
-        modules.append(ASPPConvModule(in_channels, out_channels, rate1))
-        modules.append(ASPPConvModule(in_channels, out_channels, rate2))
-        modules.append(ASPPConvModule(in_channels, out_channels, rate3))
+        def get_aspp_conv_module(in_channels, out_channels, dilation):
+            aspp_conv_kwargs = {
+                "in_channels": in_channels, "out_channels": out_channels,
+                "kernel_size":3, "padding": dilation, "dilation": dilation,
+                "norm": norm, "groups": groups, "act":act, "dropout_proba":dropout_proba,
+                "emb_dim_list": emb_dim_list, "emb_type_list":emb_type_list, "attn_info": attn_info,
+                "use_checkpoint": use_checkpoint, "image_shape":image_shape, "img_dim":img_dim,
+                "separable": separable
+            }
+            aspp_conv_module = conv_class(**aspp_conv_kwargs)
+            return aspp_conv_module
+        modules.append(get_aspp_conv_module(in_channels, out_channels, rate1))
+        modules.append(get_aspp_conv_module(in_channels, out_channels, rate2))
+        modules.append(get_aspp_conv_module(in_channels, out_channels, rate3))
         modules.append(ASPPPooling(in_channels, out_channels))
 
         self.convs = nn.ModuleList(modules)
 
-        self.project = nn.Sequential(
-            nn.Conv2d(5 * out_channels, out_channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-        )
+        self.project = ConvBlockND(5 * out_channels, out_channels, kernel_size=1, padding=0, bias=False,
+                                   norm=norm, act=act, dropout_proba=dropout_proba)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x, *args) -> torch.Tensor:
         res = []
         for conv in self.convs:
-            res.append(conv(x))
+            res.append(conv(x, *args))
         res = torch.cat(res, dim=1)
         return self.project(res)
-    
-class MultiDeepLabV3PlusDecoder(nn.Module):
-    def __init__(self, in_channels, skip_channels, out_channels,
-                 norm="layer", act=DEFAULT_ACT, kernel_size=2, dropout_proba=0.0,
-                 emb_dim_list=None, emb_type_list=None, attn_info=None, use_checkpoint=False,
-                 image_shape=None, decode_fn_str_list=["pixel_shuffle"], img_dim=2, use_residual_conv=True):
-        
 
+class MultiDeepLabV3PlusDecoder(nn.Module):
+    def __init__(self, encoder_channels, middle_channels=256, out_channels=2, atrous_rates=(12, 24, 36),
+                 norm="layer", act=DEFAULT_ACT, out_act="softmax", dropout_proba=0.0, separable=True,
+                 emb_dim_list=[], emb_type_list=[], attn_info=None, use_checkpoint=False,
+                 image_shape=None, img_dim=2, use_residual_conv=True):
+        super().__init__()
+        output_stride = 16
+        scale_factor = 4
+        self.mode_str = get_upsample_mode_str(img_dim)
+        if use_residual_conv:
+            conv_class = ResNetBlockND
+        else:
+            conv_class = ConvBlockND
+        self.aspp = ASPP(
+                encoder_channels[-2],
+                middle_channels,
+                atrous_rates,
+                norm=norm, groups=1, act=act, dropout_proba=dropout_proba,
+                emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=attn_info,
+                use_checkpoint=use_checkpoint, image_shape=image_shape, img_dim=img_dim,
+                separable=separable, use_resnet_block=use_residual_conv
+            )
+        self.aspp_conv = ConvBlockND(middle_channels, middle_channels, kernel_size=3, padding=1, bias=False, norm=norm, act=act)
+        self.up_1 = nn.Upsample(scale_factor=scale_factor, mode=self.mode_str)
+        highres_in_channels = encoder_channels[-4]
+        highres_out_channels = 48  # proposed by authors of paper
+        self.block1 = ConvBlockND(highres_in_channels, highres_out_channels, kernel_size=1, padding=0, bias=False, norm=norm, act=act)
+        self.block2 = conv_class(highres_out_channels + middle_channels, middle_channels,
+                                 kernel_size=3, padding=1, bias=False, norm=norm, act=act,
+                                 separable=True, use_checkpoint=use_checkpoint)
+        self.up_2 = nn.Upsample(scale_factor=scale_factor, mode=self.mode_str)
+        self.output_block = OutputND(middle_channels, out_channels, act=out_act, img_dim=img_dim)
+
+    def forward(self, features, *args):
+        aspp_features = self.aspp(features[-2], *args)
+        aspp_features = self.up_1(aspp_features)
+        high_res_features = self.block1(features[-4])
+        concat_features = torch.cat([aspp_features, high_res_features], dim=1)
+        fused_features = self.block2(concat_features)
+        fused_features = self.up_2(fused_features)
+        output = self.output_block(fused_features)
+        return output
+    
 class OutputND(nn.Module):
     def __init__(self, in_channels, out_channels, act=None, img_dim=2):
         super().__init__()

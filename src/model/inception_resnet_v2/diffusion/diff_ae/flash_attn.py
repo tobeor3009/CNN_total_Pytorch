@@ -730,17 +730,21 @@ class FlashMultiheadAttention(nn.Module):
         super().__init__()
         assert dim % num_heads == 0
         self.num_heads = num_heads
+        self.dim = dim
         self.head_dim = dim // num_heads
-        self.qkv_proj = nn.Linear(dim, dim * 3)
-        self.out_proj = nn.Linear(dim, dim)
-        self.flash_attn = FlashAttentionLayer(causal=causal)
+        self.qkv_proj = nn.Linear(dim, dim * 3, bias=False)
+        self.out_proj = nn.Linear(dim, dim, bias=False)
+        self.flash_attn = nn.MultiheadAttention(dim, num_heads, dropout=0.0,
+                                                bias=True, add_bias_kv=False, add_zero_attn=False,
+                                                kdim=None, vdim=None, batch_first=False)
+        # self.flash_attn = FlashAttentionLayer(causal=causal)
 
     def forward(self, x):
         B, L, D = x.shape
         qkv = self.qkv_proj(x)  # (B, L, 3 * D)
-        qkv = qkv.view(B, L, 3, self.num_heads, self.head_dim)
+        qkv = qkv.view(B, L, 3, self.dim)
         q, k, v = qkv.unbind(dim=2)  # Each: (B, L, H, D_head)
-        q, k, v = map(lambda t: t.transpose(1, 2), (q, k, v))  # (B, H, L, D_head)
-        out = self.flash_attn(q, k, v)  # (B, H, L, D_head)
+        # q, k, v = map(lambda t: t.transpose(1, 2), (q, k, v))  # (B, H, L, D_head)
+        out, _ = self.flash_attn(q, k, v)  # (B, H, L, D_head)
         out = out.transpose(1, 2).reshape(B, L, D)
         return self.out_proj(out)
