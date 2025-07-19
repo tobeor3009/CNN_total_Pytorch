@@ -10,9 +10,9 @@ from .diffusion_layer import ConvBlockND, ResNetBlockND, OutputND
 from .diffusion_layer import ResNetBlockNDSkip, ConvBlockNDSkip, MultiDecoderND_V3
 from .diffusion_layer import get_maxpool_nd, get_avgpool_nd
 from .diffusion_layer import LinearAttention, Attention, AttentionBlock, MaxPool2d, AvgPool2d, MultiInputSequential
-from .diffusion_layer import default, prob_mask_like, LearnedSinusoidalPosEmb, SinusoidalPosEmb, GroupNorm32
+from .diffusion_layer import default, prob_mask_like, LearnedSinusoidalPosEmb, SinusoidalPosEmb, GroupNorm32, MultiDeepLabV3PlusDecoder
 from .diffusion_layer import feature_z_normalize, z_normalize
-from .diffusion_layer import ClassificationHeadSimple
+from .diffusion_layer import ClassificationHeadDeep
 from .sub_models import MLPSkipNet, Classifier
 from src.model.inception_resnet_v2.common_module.layers import get_act, get_norm
 from einops import rearrange, repeat
@@ -195,11 +195,10 @@ class InceptionResNetV2_UNet(nn.Module):
             self.diffusion_decoder_list = self.get_decoder(diffusion_out_channel, diffusion_act,
                                                            decode_fn_str_list=diffusion_decode_fn_str_list, is_diffusion=True)
         if get_seg:
-            self.seg_decoder_list = self.get_decoder(seg_out_channel, seg_act,
-                                                     decode_fn_str_list=seg_decode_fn_str_list, is_diffusion=False)
+            self.seg_decoder = self.get_seg_deeplab_v3_plus_decoder(seg_out_channel, seg_act, is_diffusion=False)
         if get_class:
-            self.class_head = ClassificationHeadSimple(self.feature_channel,
-                                                      class_out_channel, drop_prob, class_act, img_dim)
+            self.class_head = ClassificationHeadDeep(self.feature_channel,
+                                                      class_out_channel, drop_prob / 4, class_act, img_dim)
         if get_recon:
             recon_out_channel = recon_out_channel or in_channel
             self.recon_decoder_list = self.get_decoder(recon_out_channel, recon_act,
@@ -306,9 +305,9 @@ class InceptionResNetV2_UNet(nn.Module):
             non_diffusion_emb_list.append(class_emb)
 
         encode_feature, skip_connect_list = self.encode_forward(x, *non_diffusion_emb_list)
-        output["encode_feature"] = skip_connect_list + [encode_feature]
+        output["encoded_feature"] = skip_connect_list + [encode_feature]
         if self.get_seg:
-            seg_decode_feature = self.decode_forward(self.seg_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
+            seg_decode_feature = self.decode_seg_forward(self.seg_decoder, encode_feature, skip_connect_list, *non_diffusion_emb_list)
             output["seg_pred"] = seg_decode_feature
         if self.get_class:
             class_output = self.class_head(encode_feature)
@@ -332,9 +331,9 @@ class InceptionResNetV2_UNet(nn.Module):
             non_diffusion_emb_list.append(class_emb)
 
         encode_feature, skip_connect_list = self.encode_anch_forward(x, anch_list, *non_diffusion_emb_list)
-        output["encode_feature"] = skip_connect_list + [encode_feature]
+        output["encoded_feature"] = skip_connect_list + [encode_feature]
         if self.get_seg:
-            seg_decode_feature = self.decode_forward(self.seg_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
+            seg_decode_feature = self.decode_seg_forward(self.seg_decoder, encode_feature, skip_connect_list, *non_diffusion_emb_list)
             output["seg_pred"] = seg_decode_feature
         if self.get_class:
             class_output = self.class_head(encode_feature)
@@ -456,7 +455,11 @@ class InceptionResNetV2_UNet(nn.Module):
             x = x + x_temp * scale
             x = self.act_layer(x)
         return x
-        
+    
+    def decode_seg_forward(self, seg_decoder, encode_feature, skip_connect_list, *args):
+        decode_feature = seg_decoder(skip_connect_list[::-1], *args)
+        return decode_feature
+            
     def decode_forward(self, decoder_list, encode_feature, skip_connect_list, *args):
         decode_layer_up_list, decode_block_list, decode_final_conv = decoder_list
         decode_feature = encode_feature
@@ -519,6 +522,24 @@ class InceptionResNetV2_UNet(nn.Module):
                                       norm=norm, act=act, emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=attn_info,
                                       use_checkpoint=use_checkpoint[layer_idx], image_shape=self.get_image_shape(5), img_dim=self.img_dim)
     
+    def get_seg_deeplab_v3_plus_decoder(self, seg_out_channel, seg_act, is_diffusion=False):
+        attn_info_list = self.attn_info_list
+        num_head_list = self.num_head_list
+        attn_info = self.get_attn_info(attn_info_list[-1], num_head_list[-1])
+        use_checkpoint = self.use_checkpoint
+        if is_diffusion:
+            emb_dim_list = self.emb_dim_list
+            emb_type_list = self.emb_type_list
+        else:
+            emb_dim_list = self.emb_dim_list[-1:]
+            emb_type_list = self.emb_type_list[-1:]
+        deeplabv3_plus_decoder = MultiDeepLabV3PlusDecoder(self.skip_channel_list, middle_channels=256, out_channels=seg_out_channel,
+                                                           target_indices=[-3, -5], scale_factor=4, last_scale_factor=2, atrous_rates=(6, 12, 18, 24),
+                                                           norm=self.norm, act=self.act, out_act=seg_act, dropout_proba=self.drop_prob, separable=True,
+                                                           emb_dim_list=emb_dim_list, emb_type_list=emb_type_list, attn_info=attn_info,
+                                                           use_checkpoint=use_checkpoint[-1], image_shape=self.image_shape, img_dim=self.img_dim,
+                                                           use_residual_conv=self.use_residual_conv)
+        return deeplabv3_plus_decoder
     
     def get_decoder(self, decode_out_channel, decode_out_act, decode_fn_str_list, is_diffusion=False):
         block_size = self.block_size
