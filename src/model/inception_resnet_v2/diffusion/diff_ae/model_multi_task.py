@@ -34,7 +34,6 @@ def get_time_emb_dim(block_size):
     time_emb_dim_init = emb_dim // 2
     time_emb_dim = emb_dim * 4
     return emb_dim, time_emb_dim_init, time_emb_dim
-
 class InceptionResNetV2_UNet(nn.Module):
     def __init__(self, in_channel=3, cond_channel=3, img_size=256, block_size=8,
                  emb_channel=1024, decode_init_channel=None, block_depth_info="middle",

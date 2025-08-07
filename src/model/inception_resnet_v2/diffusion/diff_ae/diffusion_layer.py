@@ -112,6 +112,20 @@ class LayerNorm(nn.Module):
         var = torch.var(x, dim = 1, unbiased = False, keepdim = True)
         mean = torch.mean(x, dim = 1, keepdim = True)
         return (x - mean) * (var + eps).rsqrt() * self.g + default(self.b, 0)
+    
+class FusedRMSNorm(nn.Module):
+    def __init__(self, dim, eps=1e-8):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.scale = dim ** 0.5
+
+    def forward(self, x):
+        # x: [batch_size, dim]
+        norm = x.pow(2).mean(-1, keepdim=True).add(self.eps).sqrt()
+        x = x / norm
+        return x * self.weight * self.scale
+        
 print_once = once(print)
 
 # main class
@@ -1264,7 +1278,6 @@ class MultiDeepLabV3PlusDecoder(nn.Module):
         fused_features = self.up_2(fused_features)
         output = self.output_block(fused_features)
         return output
-    
 class OutputND(nn.Module):
     def __init__(self, in_channels, out_channels, act=None, img_dim=2):
         super().__init__()
@@ -1399,13 +1412,12 @@ class ClassificationHeadSimple(nn.Module):
 
         return x
     
-
 class ClassificationHeadDeepLab(nn.Module):
-    def __init__(self, in_channels, encoder_channels, num_classes, 
+    def __init__(self, encoder_channels, in_channels, num_classes, 
                  norm, act, dropout_proba, class_act,
                  image_shape=None, use_checkpoint=False, img_dim=2):
-        super(ClassificationHeadSimple, self).__init__()
-        # Global Average Pooling Layer
+        super(ClassificationHeadDeepLab, self).__init__()
+        separable = True
         avg_pool_class = None
         self.gap_layer = None
         if img_dim == 1:
@@ -1418,17 +1430,15 @@ class ClassificationHeadDeepLab(nn.Module):
             avg_pool_class = nn.AvgPool3d
             self.gap_layer = nn.AdaptiveAvgPool3d((1, 1, 1))
         
-
         middle_channels = 256
-        target_indices = [-4, -3, -2]
-        pool_size_1, pool_size_2, pool_size_3 = (8, 4, 2)
-        # low feature size 64 expected, 
-        self.low_res_feature_idx, self.middle_res_feature_idx, self.high_res_feature_idx = target_indices
-        atrous_rates_1 = (6, 12, 18, 24)
-        atrous_rates_2 = (6, 12, 18, 24)
+        mlp_channels = 1024
+        
+        pool_size_1 = 8
+        self.high_res_feature_idx = -4
+        atrous_rates_1 = (6, 12, 18)
         
         self.aspp_1 = ASPP(
-                encoder_channels[self.low_res_feature_idx],
+                encoder_channels[self.high_res_feature_idx],
                 middle_channels,
                 atrous_rates_1,
                 norm=norm, groups=1, act=act, dropout_proba=dropout_proba,
@@ -1436,62 +1446,154 @@ class ClassificationHeadDeepLab(nn.Module):
                 use_checkpoint=use_checkpoint, image_shape=image_shape, img_dim=img_dim,
                 separable=True, use_resnet_block=False
         )
+        self.aspp_conv_1 = ConvBlockND(middle_channels, middle_channels, kernel_size=3, padding=1,
+                                     bias=False, norm=norm, act=act, separable=separable, use_checkpoint=use_checkpoint)
         self.avg_pool_1 = avg_pool_class(kernel_size=pool_size_1, stride=pool_size_1)
-        self.aspp_2 = ASPP(
-                encoder_channels[self.middle_res_feature_idx],
-                middle_channels,
-                atrous_rates_2,
-                norm=norm, groups=1, act=act, dropout_proba=dropout_proba,
-                emb_dim_list=[], emb_type_list=[], attn_info=None,
-                use_checkpoint=use_checkpoint, image_shape=image_shape, img_dim=img_dim,
-                separable=True, use_resnet_block=False
-        )
-        self.avg_pool_2 = avg_pool_class(kernel_size=pool_size_2, stride=pool_size_2)
-        self.aspp_conv = ConvBlockND(middle_channels, middle_channels, kernel_size=3, padding=1,
+        self.aspp_conv_2 = ConvBlockND(in_channels, middle_channels, kernel_size=3, padding=1,
                                      bias=False, norm=norm, act=act, separable=True, use_checkpoint=use_checkpoint)
+        
+        self.concat_conv = ConvBlockND(middle_channels * 2, mlp_channels, kernel_size=3, padding=1,
+                                     bias=False, norm=norm, act=act, separable=True, use_checkpoint=use_checkpoint)
+        
         # First fully connected layer
-        self.fc_1 = nn.Linear(in_channels, in_channels * 2)
+        self.fc_1 = nn.Linear(mlp_channels, mlp_channels // 2)
         self.drop_1 = nn.Dropout(p=dropout_proba, inplace=INPLACE)
         self.act_1 = nn.ReLU6(inplace=INPLACE)
-
-        # Second fully connected layer
-        self.fc_2 = nn.Linear(in_channels * 2, in_channels)
-        self.drop_2 = nn.Dropout(p=dropout_proba, inplace=INPLACE)
-        self.act_2 = nn.ReLU6(inplace=INPLACE)
-
-        # Third fully connected layer
-        self.fc_3 = nn.Linear(in_channels, in_channels * 2)
-        self.drop_3 = nn.Dropout(p=dropout_proba, inplace=INPLACE)
-        self.act_3 = nn.ReLU6(inplace=INPLACE)
-
-        # Third fully connected layer
-        self.fc_4 = nn.Linear(in_channels * 2, in_channels)
-        self.drop_4 = nn.Dropout(p=dropout_proba, inplace=INPLACE)
-        self.act_4 = nn.ReLU6(inplace=INPLACE)
-
         # Output layer
-        self.fc_out = nn.Linear(in_channels, num_classes)
-        self.last_act = get_act(act)
+        self.fc_out = nn.Linear(mlp_channels // 2, num_classes)
+        self.last_act = get_act(class_act)
 
-    def forward(self, x):
+    def forward(self, skip_connect_list, encoded_feature):
+        
+        aspp_feature_1 = skip_connect_list[self.high_res_feature_idx]
+        aspp_feature_1 = self.aspp_1(aspp_feature_1)
+        aspp_feature_1 = self.aspp_conv_1(aspp_feature_1)
+        aspp_feature_1 = self.avg_pool_1(aspp_feature_1)
+        encoded_feature = self.aspp_conv_2(encoded_feature)
+        
+        x = torch.cat([aspp_feature_1, encoded_feature], dim=1)
+        x = self.concat_conv(x)
         x = self.gap_layer(x)
         x = x.flatten(start_dim=1, end_dim=-1)
 
         x = self.fc_1(x)
         x = self.drop_1(x)
         x = self.act_1(x)
-        x = self.fc_2(x)
-        x = self.drop_2(x)
-        x = self.act_2(x)
-
-        x = self.fc_3(x)
-        x = self.drop_3(x)
-        x = self.act_3(x)
-        x = self.fc_4(x)
-        x = self.drop_4(x)
-        x = self.act_4(x)
 
         x = self.fc_out(x)
         x = self.last_act(x)
-
         return x    
+    
+
+    # class ClassificationHeadDeepLab(nn.Module):
+    # def __init__(self, encoder_channels, in_channels, num_classes, 
+    #              norm, act, dropout_proba, class_act,
+    #              image_shape=None, use_checkpoint=False, img_dim=2):
+    #     super(ClassificationHeadDeepLab, self).__init__()
+    #     separable = True
+    #     avg_pool_class = None
+    #     self.gap_layer = None
+    #     if img_dim == 1:
+    #         avg_pool_class = nn.AvgPool1d
+    #         self.gap_layer = nn.AdaptiveAvgPool1d((1))
+    #     elif img_dim == 2:
+    #         avg_pool_class = nn.AvgPool2d
+    #         self.gap_layer = nn.AdaptiveAvgPool2d((1, 1))
+    #     elif img_dim == 3:
+    #         avg_pool_class = nn.AvgPool3d
+    #         self.gap_layer = nn.AdaptiveAvgPool3d((1, 1, 1))
+        
+    #     middle_channels = 256
+    #     mlp_channels = 1024
+        
+    #     target_indices = [-4, -3, -2]
+    #     pool_size_1, pool_size_2, pool_size_3 = (8, 4, 2)
+    #     # low feature size 64 expected, 
+    #     self.high_res_feature_idx, self.middle_res_feature_idx, self.low_res_feature_idx = target_indices
+    #     atrous_rates_1 = (6, 12, 18)
+    #     atrous_rates_2 = (6, 12, 18)
+    #     atrous_rates_3 = (6, 12, 18)
+        
+    #     self.aspp_1 = ASPP(
+    #             encoder_channels[self.high_res_feature_idx],
+    #             middle_channels,
+    #             atrous_rates_1,
+    #             norm=norm, groups=1, act=act, dropout_proba=dropout_proba,
+    #             emb_dim_list=[], emb_type_list=[], attn_info=None,
+    #             use_checkpoint=use_checkpoint, image_shape=image_shape, img_dim=img_dim,
+    #             separable=True, use_resnet_block=False
+    #     )
+    #     self.aspp_conv_1 = ConvBlockND(middle_channels, middle_channels, kernel_size=3, padding=1,
+    #                                  bias=False, norm=norm, act=act, separable=separable, use_checkpoint=use_checkpoint)
+    #     self.avg_pool_1 = avg_pool_class(kernel_size=pool_size_1, stride=pool_size_1)
+    #     self.aspp_2 = ASPP(
+    #             encoder_channels[self.middle_res_feature_idx],
+    #             middle_channels,
+    #             atrous_rates_2,
+    #             norm=norm, groups=1, act=act, dropout_proba=dropout_proba,
+    #             emb_dim_list=[], emb_type_list=[], attn_info=None,
+    #             use_checkpoint=use_checkpoint, image_shape=image_shape, img_dim=img_dim,
+    #             separable=True, use_resnet_block=False
+    #     )
+    #     self.aspp_conv_2 = ConvBlockND(middle_channels, middle_channels, kernel_size=3, padding=1,
+    #                                  bias=False, norm=norm, act=act, separable=separable, use_checkpoint=use_checkpoint)
+    #     self.avg_pool_2 = avg_pool_class(kernel_size=pool_size_2, stride=pool_size_2)
+
+    #     self.aspp_3 = ASPP(
+    #             encoder_channels[self.low_res_feature_idx],
+    #             middle_channels,
+    #             atrous_rates_3,
+    #             norm=norm, groups=1, act=act, dropout_proba=dropout_proba,
+    #             emb_dim_list=[], emb_type_list=[], attn_info=None,
+    #             use_checkpoint=use_checkpoint, image_shape=image_shape, img_dim=img_dim,
+    #             separable=True, use_resnet_block=False
+    #     )        
+    #     self.aspp_conv_3 = ConvBlockND(middle_channels, middle_channels, kernel_size=3, padding=1,
+    #                                  bias=False, norm=norm, act=act, separable=separable, use_checkpoint=use_checkpoint)
+    #     self.avg_pool_3 = avg_pool_class(kernel_size=pool_size_3, stride=pool_size_3)
+        
+    #     self.aspp_conv_3 = ConvBlockND(middle_channels, middle_channels, kernel_size=3, padding=1,
+    #                                  bias=False, norm=norm, act=act, separable=True, use_checkpoint=use_checkpoint)
+        
+    #     self.aspp_conv_4 = ConvBlockND(in_channels, middle_channels, kernel_size=3, padding=1,
+    #                                  bias=False, norm=norm, act=act, separable=True, use_checkpoint=use_checkpoint)
+        
+    #     self.concat_conv = ConvBlockND(middle_channels * 4, mlp_channels, kernel_size=3, padding=1,
+    #                                  bias=False, norm=norm, act=act, separable=True, use_checkpoint=use_checkpoint)
+        
+    #     # First fully connected layer
+    #     self.fc_1 = nn.Linear(mlp_channels, mlp_channels // 2)
+    #     self.drop_1 = nn.Dropout(p=dropout_proba, inplace=INPLACE)
+    #     self.act_1 = nn.ReLU6(inplace=INPLACE)
+    #     # Output layer
+    #     self.fc_out = nn.Linear(mlp_channels // 2, num_classes)
+    #     self.last_act = get_act(class_act)
+
+    # def forward(self, skip_connect_list, encoded_feature):
+        
+    #     aspp_feature_1 = skip_connect_list[self.high_res_feature_idx]
+    #     aspp_feature_1 = self.aspp_1(aspp_feature_1)
+    #     aspp_feature_1 = self.aspp_conv_1(aspp_feature_1)
+    #     aspp_feature_1 = self.avg_pool_1(aspp_feature_1)
+    #     aspp_feature_2 = skip_connect_list[self.middle_res_feature_idx]
+    #     aspp_feature_2 = self.aspp_2(aspp_feature_2)
+    #     aspp_feature_2 = self.aspp_conv_2(aspp_feature_2)
+    #     aspp_feature_2 = self.avg_pool_2(aspp_feature_2)
+    #     aspp_feature_3 = skip_connect_list[self.low_res_feature_idx]
+    #     aspp_feature_3 = self.aspp_3(aspp_feature_3)
+    #     aspp_feature_3 = self.aspp_conv_3(aspp_feature_3)
+    #     aspp_feature_3 = self.avg_pool_3(aspp_feature_3)        
+    #     encoded_feature = self.aspp_conv_4(encoded_feature)
+        
+    #     x = torch.cat([aspp_feature_1, aspp_feature_2, aspp_feature_3, encoded_feature], dim=1)
+    #     x = self.concat_conv(x)
+    #     x = self.gap_layer(x)
+    #     x = x.flatten(start_dim=1, end_dim=-1)
+
+    #     x = self.fc_1(x)
+    #     x = self.drop_1(x)
+    #     x = self.act_1(x)
+
+    #     x = self.fc_out(x)
+    #     x = self.last_act(x)
+    #     return x    

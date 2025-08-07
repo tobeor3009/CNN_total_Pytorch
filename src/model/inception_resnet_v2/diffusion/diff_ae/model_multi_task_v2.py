@@ -12,7 +12,7 @@ from .diffusion_layer import get_maxpool_nd, get_avgpool_nd
 from .diffusion_layer import LinearAttention, Attention, AttentionBlock, MaxPool2d, AvgPool2d, MultiInputSequential
 from .diffusion_layer import default, prob_mask_like, LearnedSinusoidalPosEmb, SinusoidalPosEmb, GroupNorm32, MultiDeepLabV3PlusDecoder
 from .diffusion_layer import feature_z_normalize, z_normalize
-from .diffusion_layer import ClassificationHeadDeep
+from .diffusion_layer import ClassificationHeadDeepLab
 from .sub_models import MLPSkipNet, Classifier
 from src.model.inception_resnet_v2.common_module.layers import get_act, get_norm
 from einops import rearrange, repeat
@@ -197,8 +197,10 @@ class InceptionResNetV2_UNet(nn.Module):
         if get_seg:
             self.seg_decoder = self.get_seg_deeplab_v3_plus_decoder(seg_out_channel, seg_act, is_diffusion=False)
         if get_class:
-            self.class_head = ClassificationHeadDeep(self.feature_channel,
-                                                      class_out_channel, drop_prob / 4, class_act, img_dim)
+            self.class_head = ClassificationHeadDeepLab(self.skip_channel_list, self.feature_channel,
+                                                        num_classes=class_out_channel, norm=self.norm, act=self.act,
+                                                        dropout_proba=drop_prob / 4, class_act=class_act, image_shape=self.image_shape,
+                                                        use_checkpoint=use_checkpoint, img_dim=self.img_dim)
         if get_recon:
             recon_out_channel = recon_out_channel or in_channel
             self.recon_decoder_list = self.get_decoder(recon_out_channel, recon_act,
@@ -307,10 +309,10 @@ class InceptionResNetV2_UNet(nn.Module):
         encode_feature, skip_connect_list = self.encode_forward(x, *non_diffusion_emb_list)
         output["encoded_feature"] = skip_connect_list + [encode_feature]
         if self.get_seg:
-            seg_decode_feature = self.decode_seg_forward(self.seg_decoder, encode_feature, skip_connect_list, *non_diffusion_emb_list)
+            seg_decode_feature = self.decode_seg_forward(self.seg_decoder, encode_feature, skip_connect_list[::-1], *non_diffusion_emb_list)
             output["seg_pred"] = seg_decode_feature
         if self.get_class:
-            class_output = self.class_head(encode_feature)
+            class_output = self.class_head(skip_connect_list[::-1], encode_feature)
             output["class_pred"] = class_output
         if self.get_recon:
             recon_decode_feature = self.decode_forward(self.recon_decoder_list, encode_feature, skip_connect_list, *non_diffusion_emb_list)
@@ -457,7 +459,7 @@ class InceptionResNetV2_UNet(nn.Module):
         return x
     
     def decode_seg_forward(self, seg_decoder, encode_feature, skip_connect_list, *args):
-        decode_feature = seg_decoder(skip_connect_list[::-1], *args)
+        decode_feature = seg_decoder(skip_connect_list, *args)
         return decode_feature
             
     def decode_forward(self, decoder_list, encode_feature, skip_connect_list, *args):
@@ -661,29 +663,29 @@ class InceptionResNetV2_UNet(nn.Module):
             stem_layer_5_init_channel += self.decode_init_channel // (2 ** 4)
         return nn.ModuleDict({
             'stem_layer_0_0': conv_block(in_channel, block_size * 8, 3, stride=1,
-                                        attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
+                                        attn_info=get_attn_info(attn_info_list[0], self.num_head_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
             'stem_layer_0_1': conv_block(stem_layer_0_1_init_channel, block_size * 8, 3, stride=1,
-                                        attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
+                                        attn_info=get_attn_info(attn_info_list[0], self.num_head_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
             'stem_layer_1_0': conv_block(block_size * 8, block_size * 8, 3, stride=1,
-                                        attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
+                                        attn_info=get_attn_info(attn_info_list[0], self.num_head_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
             'stem_layer_1_1': conv_block(block_size * 8, block_size * 8, 3, stride=2, padding=self.padding_3x3,
-                                        attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
+                                        attn_info=get_attn_info(attn_info_list[0], self.num_head_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(0), **common_kwarg_dict),
             'stem_layer_2': conv_block(block_size * 8, block_size * 8, 3,
-                                        attn_info=get_attn_info(emb_type_list, attn_info_list[0], self.attn_dim_head[0]),
+                                        attn_info=get_attn_info(attn_info_list[0], self.num_head_list[0], self.attn_dim_head[0]),
                                         use_checkpoint=self.use_checkpoint[0], image_shape=self.get_image_shape(1), **common_kwarg_dict),
             'stem_layer_3': conv_block(block_size * 8, block_size * 8, 3,
-                                        attn_info=get_attn_info(emb_type_list, attn_info_list[1], self.attn_dim_head[1]),
+                                        attn_info=get_attn_info(attn_info_list[1], self.num_head_list[1], self.attn_dim_head[1]),
                                         use_checkpoint=self.use_checkpoint[1], image_shape=self.get_image_shape(1), **common_kwarg_dict),
             'stem_layer_4': get_maxpool_nd(self.img_dim)(3, stride=2, padding=self.padding_3x3),
             'stem_layer_5': conv_block(stem_layer_5_init_channel, block_size * 8, 1,
-                                        attn_info=get_attn_info(emb_type_list, attn_info_list[1], self.attn_dim_head[1]),
+                                        attn_info=get_attn_info(attn_info_list[1], self.num_head_list[1], self.attn_dim_head[1]),
                                         use_checkpoint=self.use_checkpoint[1], image_shape=self.get_image_shape(2), **common_kwarg_dict),
             'stem_layer_6': conv_block(block_size * 8, block_size * 12, 3,
-                                        attn_info=get_attn_info(emb_type_list, attn_info_list[2], self.attn_dim_head[2]),
+                                        attn_info=get_attn_info(attn_info_list[2], self.num_head_list[2], self.attn_dim_head[2]),
                                         use_checkpoint=self.use_checkpoint[2], image_shape=self.get_image_shape(2), **common_kwarg_dict),
             'stem_layer_7': get_maxpool_nd(self.img_dim)(3, stride=2, padding=self.padding_3x3)
         })
@@ -716,7 +718,7 @@ class InceptionResNetV2_UNet(nn.Module):
                                                    mixed_5b_branch_pool_1]),
         })
         if self.attn_info_list[layer_idx] is not None:
-            attn_info = self.get_attn_info(self.attn_info_list[layer_idx], self.num_head_list[layer_idx])
+            attn_info = self.get_attn_info(self.attn_info_list[layer_idx], self.num_head_list[layer_idx], self.attn_dim_head[layer_idx])
             attn_layer = ConvBlockND(block_size * 20, block_size * 20, 1, attn_info=attn_info, **common_kwarg_dict)
         else:
             attn_layer = nn.Identity()
@@ -748,7 +750,7 @@ class InceptionResNetV2_UNet(nn.Module):
             "mixed_6a_branch_pool": nn.ModuleList([mixed_6a_branch_pool_0]),
         })
         if self.attn_info_list[layer_idx] is not None:
-            attn_info = self.get_attn_info(self.attn_info_list[layer_idx], self.num_head_list[layer_idx])
+            attn_info = self.get_attn_info(self.attn_info_list[layer_idx], self.num_head_list[layer_idx], self.attn_dim_head[layer_idx])
             attn_layer = ConvBlockND(block_size * 68, block_size * 68, 1, attn_info=attn_info, **common_kwarg_dict)
         else:
             attn_layer = nn.Identity()
@@ -788,7 +790,7 @@ class InceptionResNetV2_UNet(nn.Module):
             "mixed_7a_branch_pool": nn.ModuleList([mixed_7a_branch_pool_0]),
         })
         if self.attn_info_list[layer_idx] is not None:
-            attn_info = self.get_attn_info(self.attn_info_list[layer_idx], self.num_head_list[layer_idx])
+            attn_info = self.get_attn_info(self.attn_info_list[layer_idx], self.num_head_list[layer_idx], self.attn_dim_head[layer_idx])
             attn_layer = ConvBlockND(attn_block_size, block_size * 130, 1, attn_info=attn_info, **common_kwarg_dict)
         else:
             attn_layer = nn.Identity()
