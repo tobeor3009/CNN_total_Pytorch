@@ -5,7 +5,9 @@ import json
 import nibabel as nib
 from collections.abc import Mapping
 from pathlib import Path
-
+from natsort import natsorted
+from glob import glob
+from random import random
 
 def imread(img_path, policy=None, channel=None):
     ext = os.path.splitext(img_path)[1]
@@ -128,3 +130,40 @@ def find_directory_upwards(target_dir_name):
 
     # 대상 디렉토리를 찾지 못하면 None을 반환합니다.
     return None
+
+def get_split_json(target_folder, data_list, train_valid_test_ratio=(0.8, 0.1, 0.1)):
+    split_json_path = f"{target_folder}/split.json"
+    assert sum(train_valid_test_ratio) == 1.0, "train_valid_test_ratio should be sum to 1.0"
+    if not os.path.exists(split_json_path):
+        train_ratio, val_ratio, test_ratio = train_valid_test_ratio
+        data_num = len(data_list)
+        random_idx_list = list(range(data_num))
+        random.shuffle(random_idx_list)
+        train_num = round(data_num * train_ratio)
+        val_num = round(data_num * val_ratio)
+        test_num = data_num - train_num - val_num
+        train_idx_list = random_idx_list[:train_num]
+        val_idx_list = random_idx_list[train_num:train_num + val_num]
+        test_idx_list = random_idx_list[-test_num:]
+
+        # 딕셔너리에 담기
+        split_dict = {
+            "train": train_idx_list,
+            "val": val_idx_list,
+            "test": test_idx_list
+        }
+
+        # JSON 파일로 저장
+        with open(split_json_path, "w", encoding="utf-8") as f:
+            json.dump(split_dict, f, indent=4)
+    else:
+        with open(split_json_path, "r", encoding="utf-8") as f:
+            split_dict = json.load(f)
+
+        train_idx_list = split_dict["train"]
+        val_idx_list = split_dict["val"]
+        test_idx_list = split_dict["test"]
+    return train_idx_list, val_idx_list, test_idx_list
+
+def sorted_glob(path_wildcard_str):
+    return natsorted(glob(path_wildcard_str))

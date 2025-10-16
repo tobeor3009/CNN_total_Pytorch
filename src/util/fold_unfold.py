@@ -207,7 +207,7 @@ def _process_patch_array_dynamic(patch_tensor, target_model, process_at_once, pa
             pred_patch_array_part = part_process_fn(pred_patch_array_part)
         pred_patch_array_part = pred_patch_array_part.cpu()
         pred_patch_array.append(pred_patch_array_part)
-    pred_patch_array = torch.cat(pred_patch_array, axis=0)
+    pred_patch_array = torch.cat(pred_patch_array, axis=0).to(device)
     return pred_patch_array
 
 def _process_patch_array_normal(patch_tensor, target_model, process_at_once, part_process_fn=None):

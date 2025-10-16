@@ -125,7 +125,21 @@ class FusedRMSNorm(nn.Module):
         norm = x.pow(2).mean(-1, keepdim=True).add(self.eps).sqrt()
         x = x / norm
         return x * self.weight * self.scale
-        
+
+class FusedRMSNormND(nn.Module):
+    def __init__(self, dim, eps=1e-8):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.scale = dim ** 0.5
+
+    def forward(self, x):
+        # x: [batch_size, dim]
+        norm = x.pow(2).mean(1, keepdim=True).add(self.eps).sqrt()
+        x = x / norm
+        return x * self.weight * self.scale
+    
+
 print_once = once(print)
 
 # main class

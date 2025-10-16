@@ -10,7 +10,7 @@ from pathlib import Path
 
 # in seg, corrupt_img means source image and clean_img is mask
 def sample_batch(data, corrupt_method, corrupt_str, device):
-    if corrupt_str == "mixture":
+    if corrupt_str in ["mixture", "predict"]:
         clean_img, corrupt_img = data
         mask = None
     elif "inpaint" in corrupt_str:
@@ -28,11 +28,17 @@ def sample_batch(data, corrupt_method, corrupt_str, device):
     # tu.save_image((corrupt_img+1)/2, ".debug/corrupt.png", nrow=4)
     # debug()
     x0 = clean_img.detach().to(device)
-    x1 = corrupt_img.detach().to(device)
+    if corrupt_img is not None:
+        x1 = corrupt_img.detach().to(device)
     if mask is not None:
         mask = mask.detach().to(device)
         x1 = (1. - mask) * x1 + mask * torch.randn_like(x1)
-    cond = x1.detach() if opt.cond_x1 else None
+    
+    if opt.cond_x1:
+        assert x1 is not None
+        cond = x1.detach()
+    else:
+        cond = None
 
     if opt.add_x1_noise: # only for decolor
         x1 = x1 + torch.randn_like(x1)
