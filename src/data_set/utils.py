@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from natsort import natsorted
 from glob import glob
-from random import random
+import random
 
 def imread(img_path, policy=None, channel=None):
     ext = os.path.splitext(img_path)[1]
