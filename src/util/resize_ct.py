@@ -6,7 +6,19 @@ import uuid
 import pydicom
 from pydicom.dataelem import DataElement
 
-def resize_dicom_series(image, resize_factor_list):
+def resize_dicom_series(image, resize_factor_list, interpolation_method="BSpline"):
+    """
+    Docstring for resize_dicom_series
+    
+    :param image: sitk Image Object with Patient CT info
+    :param resize_factor_list: resize factor list for (X, Y, Z) axes, len 3 tuple or list
+    0 < resize_factor <= 1.0 : downsampling
+    resize_factor > 1.0 : upsampling
+    :param interpolation_method: interpolation method for resampling, "nearest" or "BSpline"
+    :return: new_img: sitk Image Object after resampling
+    """
+    interpolation_method_list = ["nearest", "BSpline"]
+    assert interpolation_method in interpolation_method_list, f"Check interpolation_method. Available methods: {interpolation_method_list}"
 
     dimension = image.GetDimension()
 
@@ -40,7 +52,10 @@ def resize_dicom_series(image, resize_factor_list):
     min_value = float(np.min(sitk.GetArrayFromImage(image)))
     
     # source_image, refrence, transform, interpolation method, default value
-    new_img = sitk.Resample(image, reference_image, centered_transform, sitk.sitkBSpline, min_value)
+    if interpolation_method == "nearest":
+        new_img = sitk.Resample(image, reference_image, centered_transform, sitk.sitkNearestNeighbor, min_value)
+    elif interpolation_method == "BSpline":
+        new_img = sitk.Resample(image, reference_image, centered_transform, sitk.sitkBSpline, min_value)
     # Ensure the image is in grayscale (1-channel) if not already
     if new_img.GetNumberOfComponentsPerPixel() > 1:
         # Convert multi-channel image to grayscale by averaging channels
